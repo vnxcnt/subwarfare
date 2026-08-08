@@ -1,0 +1,8 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm blockt Install-Scripts standardmäßig; esbuild (von Vite) braucht seinen
+# Postinstall-Schritt, um das native Binary zu entpacken.
+allowBuilds:
+  esbuild: true

@@ -1,0 +1,35 @@
+# Zeilenenden im Repo einheitlich LF, im Working Tree plattformüblich.
+* text=auto eol=lf
+
+# Explizit Text
+*.ts      text
+*.vue     text
+*.js      text
+*.json    text
+*.yaml    text
+*.yml     text
+*.css     text
+*.html    text
+*.md      text
+
+# Explizit binär — niemals durch die Zeilenenden-Konvertierung schicken.
+# (Sonst werden Assets still beschädigt, ohne dass Git etwas meldet.)
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.ico     binary
+*.woff    binary
+*.woff2   binary
+*.ttf     binary
+*.otf     binary
+*.mp3     binary
+*.ogg     binary
+*.wav     binary
+*.mp4     binary
+*.webm    binary
+*.zip     binary
+
+# Lockfile: nicht als Konflikt-Kandidat mergen, sondern neu generieren.
+pnpm-lock.yaml -diff linguist-generated=true

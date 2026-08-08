@@ -1,0 +1,19 @@
+{
+  "name": "subwarfare",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sub Warfare — persistentes Multiplayer-Browsergame (Monorepo)",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:shared": "pnpm --filter @subwarfare/shared build",
+    "dev": "pnpm build:shared && pnpm -r --parallel dev",
+    "build": "pnpm build:shared && pnpm --filter @subwarfare/game-server build && pnpm --filter @subwarfare/client build",
+    "typecheck": "pnpm build:shared && pnpm -r typecheck",
+    "start": "pnpm --filter @subwarfare/game-server start",
+    "clean": "pnpm -r --parallel clean"
+  }
+}
