@@ -1,5 +1,5 @@
 import type { Container } from 'pixi.js';
-import type { Vessel } from './Vessel';
+import type { Vessel } from '@subwarfare/shared';
 import { VesselView } from './VesselView';
 
 interface Entry {

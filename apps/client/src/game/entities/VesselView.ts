@@ -3,7 +3,7 @@ import { Container, Graphics, Sprite } from 'pixi.js';
 import { HULL, WATER } from '../../config';
 import { getTilt, heightOffsetPerMetre } from '../Projection';
 import { getHullTexture, hullSpriteSize } from '../textures';
-import type { Vessel } from './Vessel';
+import type { Vessel } from '@subwarfare/shared';
 
 const HALF = HULL.length / 2;
 const BEAM = HULL.beam / 2;

@@ -1,8 +1,13 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** WebSocket-URL des Game-Servers, z. B. `ws://localhost:8080`. */
-  readonly VITE_GAME_SERVER_URL?: string;
+  /**
+   * Basis-URL des Backends, z. B. `http://localhost:8090`. Leer oder
+   * weggelassen bedeutet gleiche Herkunft (VPS hinter dem Reverse-Proxy).
+   */
+  readonly VITE_API_URL?: string;
+  /** Google-OAuth-Client-ID. Ohne sie erscheint der Google-Knopf nicht. */
+  readonly VITE_GOOGLE_CLIENT_ID?: string;
 }
 
 interface ImportMeta {

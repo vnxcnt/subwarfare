@@ -1,6 +1,6 @@
 import type { GameMap } from '@subwarfare/shared';
 import { PATROL_MARGIN } from '../config';
-import type { Vessel } from './entities/Vessel';
+import type { Vessel } from '@subwarfare/shared';
 
 /**
  * Hält die Demo-Kontakte in Bewegung: wer sein Ziel erreicht hat, bekommt ein

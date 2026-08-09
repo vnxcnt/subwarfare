@@ -3,16 +3,34 @@ import { DEMO_TRAFFIC, DEMO_VESSEL, RENDERER, SIM, VESSEL_DEMO } from '../config
 import { writeHud } from '../state/hud';
 import { CameraController } from './CameraController';
 import { DemoTraffic } from './DemoTraffic';
-import { Vessel } from './entities/Vessel';
+import type { OwnStatePayload, StatePayload } from '@subwarfare/shared';
+import { Vessel } from '@subwarfare/shared';
+import { GameSocket } from '../network/GameSocket';
 import { OrderController } from './OrderController';
 import { getTilt, setTilt } from './Projection';
 import { loadVesselTextures } from './textures';
 import { World } from './World';
 import { isTextEntry } from '../ui/dom';
 
+/** Zugangsdaten für den Online-Betrieb — Ticket aus der Lobby. */
+export interface OnlineSession {
+  gameUrl: string;
+  ticket: string;
+  /** Wird gerufen, wenn die Partie endet — Rauswurf oder Verbindungsabriss. */
+  onEnded: (message: string) => void;
+}
+
 /**
  * Bindeglied zwischen Vue und PixiJS: initialisiert den Renderer, hängt das
  * Canvas in ein DOM-Element und treibt die Welt über den Pixi-Ticker an.
+ *
+ * Zwei Betriebsarten, entschieden bei `init`:
+ * - **Online** ist der Normalfall: der Server simuliert, hier wird nur
+ *   dargestellt. Kein lokales Spawnen, kein Demoverkehr, kein `simulate()` —
+ *   die Fahrzeuge übernehmen mit `applyState`, was der Broadcast liefert.
+ * - **Offline** ist der bisherige Demobetrieb mit lokaler Simulation. Er
+ *   bleibt erreichbar, weil er ohne jeden Server läuft — zum Entwickeln der
+ *   Darstellung und als Vorführmodus.
  */
 export class Game {
   private app: Application | null = null;
@@ -24,6 +42,16 @@ export class Game {
   private traffic: DemoTraffic | null = null;
   private accumulator = 0;
 
+  private socket: GameSocket | null = null;
+  private selfId: string = DEMO_VESSEL.id;
+  /**
+   * `own` kann vor dem ersten `state` eintreffen — dann existiert das eigene
+   * Fahrzeug noch nicht. Der letzte Stand wird beim Spawn nachgetragen.
+   */
+  private pendingOwn: OwnStatePayload | null = null;
+  /** Kamera einmalig aufs eigene Boot setzen, sobald es im Broadcast steht. */
+  private awaitingFirstSelf = false;
+
   get application(): Application | null {
     return this.app;
   }
@@ -33,9 +61,13 @@ export class Game {
     return this.world;
   }
 
-  /** Das steuerbare Boot. Vorerst genau eines. */
+  /** Das eigene Boot. Online erst vorhanden, wenn der erste `state` da ist. */
   get ownVessel(): Vessel | undefined {
-    return this.world?.entities.get(DEMO_VESSEL.id);
+    return this.world?.entities.get(this.selfId);
+  }
+
+  get isOnline(): boolean {
+    return this.socket !== null;
   }
 
   /**
@@ -50,7 +82,7 @@ export class Game {
     setTilt(value);
   }
 
-  async init(host: HTMLElement): Promise<void> {
+  async init(host: HTMLElement, session: OnlineSession | null = null): Promise<void> {
     if (this.app) return;
 
     const app = new Application();
@@ -83,26 +115,13 @@ export class Game {
     app.stage.addChild(world.container);
     this.world = world;
 
-    const demo = world.entities.spawn(new Vessel({ ...DEMO_VESSEL }, VESSEL_DEMO));
+    if (session) this.initOnline(session);
+    else this.initOffline();
 
-    // Fremde Kontakte, damit das Sonar etwas anzeigt. Echte Fahrzeuge mit
-    // derselben Physik — nur die Zielwahl ist zufällig.
-    const traffic = new DemoTraffic();
-    for (const entry of DEMO_TRAFFIC) {
-      const vessel = world.entities.spawn(new Vessel({ ...entry }, VESSEL_DEMO));
-      if (entry.patrol) traffic.add(vessel);
-    }
-    this.traffic = traffic;
-
-    world.setZoom(0.55);
-    world.centerOn(demo.x, demo.y);
-    world.follow(demo);
     world.applyCamera(app.screen.width, app.screen.height);
 
     this.camera = new CameraController(app.canvas, world, () => world.stopFollowing());
-    this.orders = new OrderController(app.canvas, world, (x, y) => {
-      this.ownVessel?.orderMoveTo(x, y);
-    });
+    this.orders = new OrderController(app.canvas, world, (x, y) => this.orderWaypoint(x, y));
 
     app.ticker.add((ticker) => this.step(ticker.deltaMS / 1000));
 
@@ -126,6 +145,127 @@ export class Game {
     }
   }
 
+  /** Offline-Demobetrieb: lokales Boot, Demoverkehr, eigene Simulation. */
+  private initOffline(): void {
+    const world = this.world!;
+    this.selfId = DEMO_VESSEL.id;
+
+    const demo = world.entities.spawn(new Vessel({ ...DEMO_VESSEL }, VESSEL_DEMO));
+
+    // Fremde Kontakte, damit das Sonar etwas anzeigt. Echte Fahrzeuge mit
+    // derselben Physik — nur die Zielwahl ist zufällig.
+    const traffic = new DemoTraffic();
+    for (const entry of DEMO_TRAFFIC) {
+      const vessel = world.entities.spawn(new Vessel({ ...entry }, VESSEL_DEMO));
+      if (entry.patrol) traffic.add(vessel);
+    }
+    this.traffic = traffic;
+
+    world.setZoom(0.55);
+    world.centerOn(demo.x, demo.y);
+    world.follow(demo);
+  }
+
+  /** Online: Karte und Fahrzeuge kommen vollständig vom Server. */
+  private initOnline(session: OnlineSession): void {
+    const world = this.world!;
+    this.awaitingFirstSelf = true;
+
+    const socket = new GameSocket();
+    this.socket = socket;
+
+    socket.connect(session.gameUrl, session.ticket, {
+      onWelcome: (payload) => {
+        this.selfId = payload.selfId;
+        world.setMap(payload.map);
+      },
+      onState: (payload) => this.applyStateBroadcast(payload),
+      onOwn: (payload) => {
+        this.pendingOwn = payload;
+        this.ownVessel?.applyOwnState(payload);
+      },
+      onPlayerLeft: (id) => {
+        if (id !== this.selfId) world.entities.remove(id);
+      },
+      onEnded: (message) => session.onEnded(message),
+    });
+
+    world.setZoom(0.55);
+  }
+
+  /**
+   * Ein `state`-Broadcast: Abgleich statt Neuaufbau. Neue Kennungen spawnen,
+   * bekannte übernehmen die Werte, verschwundene werden entfernt.
+   */
+  private applyStateBroadcast(payload: StatePayload): void {
+    const world = this.world;
+    if (!world) return;
+
+    const seen = new Set<string>();
+    for (const player of payload.players) {
+      seen.add(player.id);
+      const existing = world.entities.get(player.id);
+      if (existing) {
+        existing.applyState(player);
+        continue;
+      }
+
+      const vessel = world.entities.spawn(
+        new Vessel(
+          { id: player.id, name: player.name, x: player.x, y: player.y, rotation: player.rotation },
+          VESSEL_DEMO,
+        ),
+      );
+      vessel.applyState(player);
+
+      if (player.id === this.selfId) {
+        // Der zwischengespeicherte Besitzer-Zustand gehört auf das frisch
+        // gespawnte Boot — er kam möglicherweise vor diesem Broadcast an.
+        if (this.pendingOwn) vessel.applyOwnState(this.pendingOwn);
+        if (this.awaitingFirstSelf) {
+          this.awaitingFirstSelf = false;
+          world.centerOn(vessel.x, vessel.y);
+          world.follow(vessel);
+        }
+      }
+    }
+
+    // Rückwärts unnötig — `remove` über eine Kopie der Kennungen.
+    for (const vessel of [...world.entities.models()]) {
+      if (!seen.has(vessel.id)) world.entities.remove(vessel.id);
+    }
+  }
+
+  /* --- Befehle -------------------------------------------------------- */
+
+  /**
+   * Fahrbefehl. Online geht NUR die Absicht ans Netz; die Bestätigung kommt
+   * über das `own`-Ereignis zurück. Offline wirkt der Befehl direkt.
+   */
+  orderWaypoint(x: number, y: number): void {
+    if (this.socket) {
+      this.socket.sendWaypoint(x, y);
+      return;
+    }
+    this.ownVessel?.orderMoveTo(x, y);
+  }
+
+  orderTelegraph(step: number): void {
+    if (this.socket) {
+      this.socket.sendTelegraph(step);
+      return;
+    }
+    this.ownVessel?.setTelegraph(step);
+  }
+
+  nudgeTelegraph(delta: number): void {
+    const own = this.ownVessel;
+    if (!own) return;
+    // Auch online auf dem letzten bekannten Stand aufsetzen — der Server
+    // klemmt ohnehin auf den gültigen Bereich.
+    this.orderTelegraph(own.telegraphStep + delta);
+  }
+
   /**
    * Ein vollständiger Frame. Hängt am Pixi-Ticker, ist aber bewusst eine eigene
    * Methode: so lässt sich das Spiel ohne `requestAnimationFrame` weiterdrehen,
@@ -136,21 +276,25 @@ export class Game {
     const world = this.world;
     if (!app || !world) return;
 
-    // Feste Schritte: das Fahrmodell ist nichtlinear und mit variablem dt nicht
-    // reproduzierbar. Der Deckel begrenzt das Aufholen nach einem Tab-Wechsel.
-    this.accumulator += Math.min(frameSeconds, 0.1);
-    let steps = 0;
-    while (this.accumulator >= SIM.fixedDt && steps < SIM.maxCatchupSteps) {
-      world.simulate(SIM.fixedDt);
-      this.accumulator -= SIM.fixedDt;
-      steps += 1;
+    if (!this.socket) {
+      // Feste Schritte: das Fahrmodell ist nichtlinear und mit variablem dt
+      // nicht reproduzierbar. Der Deckel begrenzt das Aufholen nach einem
+      // Tab-Wechsel. Online entfällt das komplett — der Server simuliert, und
+      // ein zweiter Rechner hier wäre eine zweite Wahrheit.
+      this.accumulator += Math.min(frameSeconds, 0.1);
+      let steps = 0;
+      while (this.accumulator >= SIM.fixedDt && steps < SIM.maxCatchupSteps) {
+        world.simulate(SIM.fixedDt);
+        this.accumulator -= SIM.fixedDt;
+        steps += 1;
+      }
+      this.traffic?.update(world.currentMap);
     }
 
     // Reihenfolge ist zwingend: erst simulieren, dann die Ansichten nachziehen,
     // dann die Kamera folgen lassen, dann die Matrizen bauen. Andersherum folgt
     // die Kamera der Position des Vorframes und der nächste Rechtsklick rechnet
     // mit einer veralteten Matrix.
-    this.traffic?.update(world.currentMap);
     world.update(frameSeconds);
     world.syncViews(frameSeconds);
     world.updateFollow(frameSeconds);
@@ -161,6 +305,8 @@ export class Game {
   }
 
   destroy(): void {
+    this.socket?.disconnect();
+    this.socket = null;
     if (this.tiltKeys) window.removeEventListener('keydown', this.tiltKeys);
     this.tiltKeys = null;
     this.resizeObserver?.disconnect();

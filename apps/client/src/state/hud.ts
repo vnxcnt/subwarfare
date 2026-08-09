@@ -186,11 +186,15 @@ function writeContacts(state: HudState, ownId: string, ownX: number, ownY: numbe
 
 /* --- Befehle aus der GUI ins Spiel ------------------------------------- */
 
+/**
+ * Über die Game-Methoden statt direkt aufs Fahrzeug: online geht der Befehl
+ * damit als Absicht ans Netz, offline wirkt er lokal — die GUI muss den
+ * Unterschied nicht kennen.
+ */
 export function orderTelegraph(step: number): void {
-  game?.ownVessel?.setTelegraph(step);
+  game?.orderTelegraph(step);
 }
 
 export function nudgeTelegraph(delta: number): void {
-  const own = game?.ownVessel;
-  if (own) own.setTelegraph(own.telegraphStep + delta);
+  game?.nudgeTelegraph(delta);
 }

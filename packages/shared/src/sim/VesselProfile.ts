@@ -26,6 +26,14 @@ export interface VesselProfile {
   rudderAuthority: number;
   /** Restdistanz in Metern, ab der ein Wegpunkt als erreicht gilt. */
   arriveRadius: number;
+  /**
+   * Ortungsreichweite des Sonars in Metern.
+   *
+   * Server-seitig die Wahrheit: nur was innerhalb dieser Reichweite liegt,
+   * wird dem Spieler überhaupt ins Netz gelegt. Die Sonaranzeige des Clients
+   * ist bloß die Darstellung derselben Zahl.
+   */
+  sensorRange: number;
 }
 
 /** Veränderlicher Bewegungszustand. Wird von `stepVessel` in-place fortgeschrieben. */

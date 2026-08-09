@@ -2,7 +2,7 @@ import type { GameMap } from '@subwarfare/shared';
 import { Container, Matrix, Point } from 'pixi.js';
 import { FALLBACK_MAP, FOLLOW, VIEW } from '../config';
 import { EntityLayer } from './entities/EntityLayer';
-import type { Vessel } from './entities/Vessel';
+import type { Vessel } from '@subwarfare/shared';
 import { Ocean } from './Ocean';
 import { PROJECTION, getTilt, project } from './Projection';
 

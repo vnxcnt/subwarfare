@@ -1,14 +1,7 @@
-import type { PlayerState, VesselMotion, VesselProfile, Waypoint } from '@subwarfare/shared';
-import {
-  TELEGRAPH_CRUISE,
-  TELEGRAPH_STOP,
-  clampStep,
-  distanceTo,
-  hasArrived,
-  helmCommand,
-  orderedSpeed,
-  stepVessel,
-} from '@subwarfare/shared';
+import type { PlayerState } from '../types/Player.js';
+import { distanceTo, hasArrived, stepVessel } from './movement.js';
+import { TELEGRAPH_CRUISE, TELEGRAPH_STOP, clampStep, helmCommand, orderedSpeed } from './telegraph.js';
+import type { VesselMotion, VesselProfile, Waypoint } from './VesselProfile.js';
 
 export interface VesselInit {
   id: string;
@@ -19,12 +12,13 @@ export interface VesselInit {
 }
 
 /**
- * Ein Fahrzeug als reines Datenmodell — importiert bewusst kein PixiJS.
+ * Ein Fahrzeug als reines Datenmodell — ohne PixiJS, ohne DOM.
  *
- * ⚠️ `simulate()` ist DEMO-Physik und läuft client-seitig. Das widerspricht der
- * Architekturregel „der Server ist die einzige Quelle der Wahrheit". Sobald der
- * Server rechnet, tritt `applyState()` an ihre Stelle; die Klasse muss dafür
- * nicht aufgetrennt werden. Bis dahin: nicht als Vorbild nehmen.
+ * Liegt in `shared`, weil beide Seiten es brauchen, aber mit
+ * unterschiedlicher Rolle:
+ * - **Server:** ruft `simulate(dt)` und ist damit die Quelle der Wahrheit.
+ * - **Client:** ruft `applyState()` mit dem, was über das Netz kommt, und
+ *   rendert nur. `simulate()` nutzt er ausschließlich im Offline-Demobetrieb.
  */
 export class Vessel implements VesselMotion {
   readonly id: string;
@@ -69,6 +63,11 @@ export class Vessel implements VesselMotion {
 
   get maxForward(): number {
     return this.profile.maxForward;
+  }
+
+  /** Ortungsreichweite des eigenen Sonars in Metern. */
+  get sensorRange(): number {
+    return this.profile.sensorRange;
   }
 
   orderMoveTo(x: number, y: number): void {
@@ -129,12 +128,45 @@ export class Vessel implements VesselMotion {
     }
   }
 
-  /** Übernimmt einen Serverzustand. Ersetzt später `simulate()`. */
+  /**
+   * Zustand für den Broadcast.
+   *
+   * Bewusst OHNE Wegpunkt und Telegrafenstufe: die verraten die Absicht und
+   * gehen nur an den Besitzer selbst (`own`-Ereignis).
+   */
+  toState(): PlayerState {
+    return {
+      id: this.id,
+      name: this.name,
+      x: this.x,
+      y: this.y,
+      rotation: this.rotation,
+      speed: this.speed,
+    };
+  }
+
+  /**
+   * Übernimmt einen Serverzustand. Auf dem Client tritt das an die Stelle von
+   * `simulate()` — dort wird nicht gerechnet, sondern nur dargestellt.
+   */
   applyState(state: PlayerState): void {
     this.name = state.name;
     this.x = state.x;
     this.y = state.y;
     this.rotation = state.rotation;
     this.speed = state.speed;
+  }
+
+  /**
+   * Übernimmt den Besitzer-Zustand aus dem `own`-Ereignis (Gegenstück zu
+   * `applyState`, das nur die Broadcast-Felder trägt). Damit funktionieren
+   * Wegpunkt-Marker, Telegrafenanzeige und das Einfrieren der Gesamtstrecke
+   * über `serial` online unverändert — die Werte kommen nur vom Server statt
+   * aus der eigenen Simulation.
+   */
+  applyOwnState(state: { telegraphStep: number; waypoint: Waypoint | null; serial: number }): void {
+    this.telegraphStep = state.telegraphStep;
+    this.waypoint = state.waypoint ? { ...state.waypoint } : null;
+    this.orderSerial = state.serial;
   }
 }

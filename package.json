@@ -11,7 +11,7 @@
   "scripts": {
     "build:shared": "pnpm --filter @subwarfare/shared build",
     "dev": "pnpm build:shared && pnpm -r --parallel dev",
-    "build": "pnpm build:shared && pnpm --filter @subwarfare/game-server build && pnpm --filter @subwarfare/client build",
+    "build": "pnpm build:shared && pnpm --filter @subwarfare/game-server build && pnpm --filter @subwarfare/api build && pnpm --filter @subwarfare/client build",
     "typecheck": "pnpm build:shared && pnpm -r typecheck",
     "start": "pnpm --filter @subwarfare/game-server start",
     "clean": "pnpm -r --parallel clean"

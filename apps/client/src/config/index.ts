@@ -1,11 +1,9 @@
 import type { GameMap, VesselProfile } from '@subwarfare/shared';
+import { DESTROYER } from '@subwarfare/shared';
 import decoyIcon from '../assets/icons/decoy.png';
 import gunIcon from '../assets/icons/gun.png';
 import torpedoIcon from '../assets/icons/torpedo.png';
 import waterbombIcon from '../assets/icons/waterbomb.png';
-
-/** WebSocket-Endpunkt des Game-Servers. Über `VITE_GAME_SERVER_URL` überschreibbar. */
-export const GAME_SERVER_URL = import.meta.env.VITE_GAME_SERVER_URL ?? 'ws://localhost:8080';
 
 /** Startwerte für den PixiJS-Renderer. */
 export const RENDERER = {
@@ -80,30 +78,14 @@ export const SIM = {
 } as const;
 
 /**
- * Fahrleistung des Demoboots.
+ * Fahrleistung des eigenen Boots.
  *
- * ⚠️ `maxForward` ist eine DESIGN-Entscheidung, keine technische: ein echtes
- * U-Boot fährt rund 17 m/s (33 kn), damit dauert eine Kartenkante 9,8 Minuten.
- * 30 m/s (58 kn) ist Faktor 1,8 darüber — Kartenkante 5,6 min, eine typische
- * Gefechtsdistanz von 1–3 km in 30–100 s. Ändern kostet genau diese Zeile;
- * der Wendekreis bleibt konstant, die Bahnform also identisch.
- *
- * Die Werte bleiben vorerst hier und nicht in `@subwarfare/shared`: Tuning
- * läuft dadurch über Vite-HMR statt über einen tsc-Rebuild des Shared-Pakets.
- * Sobald der Server autoritativ rechnet, ziehen sie dorthin um.
+ * Die Zahlen stehen jetzt in `@subwarfare/shared` (`sim/profiles.ts`) — der
+ * **Server** rechnet damit und ist die Quelle der Wahrheit. Der Client braucht
+ * sie nur für seine Anzeigen und den Offline-Demobetrieb, deshalb hier nur noch
+ * ein Verweis statt einer zweiten Wertetabelle.
  */
-export const VESSEL_DEMO: VesselProfile = {
-  maxForward: 30,
-  maxReverse: -8,
-  accel: 1.0,
-  brake: 2.0,
-  drag: 0.45,
-  turnRadius: 220,
-  thrusterRate: 3,
-  maxTurnRate: 8,
-  rudderAuthority: 25,
-  arriveRadius: 25,
-};
+export const VESSEL_DEMO: VesselProfile = DESTROYER;
 
 /** Startzustand des Demoboots — zeichengenau der Spawnpunkt `spawn-north`. */
 export const DEMO_VESSEL = {
@@ -143,8 +125,13 @@ export const PATROL_MARGIN = 600;
  * dadurch bis zu eine Umlaufdauer veraltet sein.
  */
 export const SONAR = {
-  /** Erfassungsreichweite in Metern. */
-  range: 4_000,
+  /**
+   * Erfassungsreichweite in Metern — dieselbe Zahl, mit der der Server den
+   * Netzverkehr filtert (`sensorRange` im Profil). Nicht hier ändern: eine
+   * größere Anzeige-Reichweite bliebe leer, eine kleinere würde georteten
+   * Kontakten die Anzeige verweigern.
+   */
+  range: DESTROYER.sensorRange,
   /** Abstand der Entfernungsringe in Metern. */
   ringSpacing: 1_000,
   /** Sekunden je Umlauf. Bei 30 m/s legt ein Ziel dabei bis zu 240 m zurück. */

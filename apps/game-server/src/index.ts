@@ -1,10 +1,10 @@
+import { warnAboutDefaults } from './env.js';
 import { GameServer } from './server/GameServer.js';
 
-const port = Number.parseInt(process.env['PORT'] ?? '8080', 10);
-const host = process.env['HOST'] ?? '0.0.0.0';
+warnAboutDefaults();
 
-const server = new GameServer({ port, host });
-server.start();
+const server = new GameServer();
+await server.start();
 
 let shuttingDown = false;
 const shutdown = (signal: string): void => {
