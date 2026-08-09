@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import { GAME_SERVER_URL } from './config';
 import { Game } from './game/Game';
+import { bindGame } from './state/hud';
+import HudOverlay from './ui/HudOverlay.vue';
 
 const stage = ref<HTMLDivElement | null>(null);
 const error = ref<string | null>(null);
+
 let game: Game | null = null;
 
 onMounted(async () => {
@@ -12,6 +14,9 @@ onMounted(async () => {
   try {
     game = new Game();
     await game.init(stage.value);
+    // Ab hier schreibt der Pixi-Ticker den HUD-Zustand — es gibt bewusst keine
+    // zweite Uhr mehr, die unabhängig vom Rendering liest.
+    bindGame(game);
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
     console.error('[client] PixiJS konnte nicht initialisiert werden:', cause);
@@ -19,6 +24,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  bindGame(null);
   game?.destroy();
   game = null;
 });
@@ -27,13 +33,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="app">
     <div ref="stage" class="app__stage"></div>
-
-    <header class="hud">
-      <span class="hud__title">Sub Warfare</span>
-      <span class="hud__meta">{{ GAME_SERVER_URL }}</span>
-    </header>
-
-    <p v-if="error" class="app__error">Renderer-Fehler: {{ error }}</p>
+    <HudOverlay :error="error" />
   </div>
 </template>
 
@@ -51,37 +51,5 @@ onBeforeUnmount(() => {
 
 .app__stage :deep(canvas) {
   display: block;
-}
-
-.hud {
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: flex;
-  gap: 0.75rem;
-  align-items: baseline;
-  padding: 0.75rem 1rem;
-  pointer-events: none;
-  font-size: 0.8125rem;
-  letter-spacing: 0.04em;
-}
-
-.hud__title {
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.hud__meta {
-  opacity: 0.5;
-}
-
-.app__error {
-  position: absolute;
-  inset: auto 1rem 1rem 1rem;
-  margin: 0;
-  padding: 0.75rem 1rem;
-  border-left: 3px solid #e2555a;
-  background: rgb(0 0 0 / 45%);
-  font-size: 0.875rem;
 }
 </style>

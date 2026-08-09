@@ -1,0 +1,196 @@
+import { shallowRef, triggerRef } from 'vue';
+import { SONAR } from '../config';
+import type { Game } from '../game/Game';
+import { getTilt } from '../game/Projection';
+
+/** Ein Sonarkontakt, relativ zum eigenen Boot. Alle Längen in Metern. */
+export interface SonarContact {
+  id: string;
+  dx: number;
+  dy: number;
+  distance: number;
+  /** Kurs des Kontakts in Grad. */
+  rotation: number;
+}
+
+export interface HudState {
+  ready: boolean;
+  /** Spielzeit in Sekunden seit dem Start. Taktquelle für Animationen. */
+  time: number;
+  mapId: string;
+  x: number;
+  y: number;
+  /** Kurs in Grad. */
+  course: number;
+  /** Tatsächliche Fahrt in m/s. */
+  speed: number;
+  /** Befohlene Fahrt in m/s. */
+  orderedSpeed: number;
+  maxForward: number;
+  telegraphStep: number;
+  zoom: number;
+  tilt: number;
+  following: boolean;
+  /** Restdistanz zum Wegpunkt in Metern, oder null. */
+  waypointDistance: number | null;
+  /** Gesamtstrecke beim Erteilen des Befehls — Bezugsgröße für den Fortschritt. */
+  waypointTotal: number | null;
+  contacts: SonarContact[];
+}
+
+/**
+ * Einziger Zustand, den die GUI liest.
+ *
+ * Bewusst ein `shallowRef` auf ein Objekt, das in place fortgeschrieben wird:
+ * es wird pro Frame nichts alloziert, und Vue wird nur gedrosselt geweckt. Ein
+ * tiefes `reactive()` wäre hier falsch — es würde für jedes berührte
+ * Pixi-Objekt einen Proxy anlegen.
+ *
+ * ⚠️ Die Objektidentität bleibt dabei konstant. Deshalb darf dieser Zustand
+ * NICHT als Prop an Kindkomponenten durchgereicht werden: Vue vergleicht Props
+ * mit `===`, fände sie unverändert und überspränge das Update. Jede Komponente
+ * importiert `hud` stattdessen selbst, dann hängt ihr eigener Render-Effekt am
+ * Ref und `triggerRef` erreicht sie.
+ */
+export const hud = shallowRef<HudState>({
+  ready: false,
+  time: 0,
+  mapId: '—',
+  x: 0,
+  y: 0,
+  course: 0,
+  speed: 0,
+  orderedSpeed: 0,
+  maxForward: 1,
+  telegraphStep: 0,
+  zoom: 1,
+  tilt: 0.42,
+  following: false,
+  waypointDistance: null,
+  waypointTotal: null,
+  contacts: [],
+});
+
+export type FrameListener = (frameSeconds: number, state: HudState) => void;
+
+/**
+ * Wer jeden Frame zeichnen muss, hängt sich hier ein — nicht an Vues
+ * Reaktivität und erst recht nicht an eine eigene `requestAnimationFrame`-
+ * Schleife. Die Weckung von Vue ist auf 20 Hz gedrosselt, was für Text reicht,
+ * für einen drehenden Sonarstrahl aber sichtbar ruckeln würde.
+ *
+ * Taktquelle bleibt derselbe Pixi-Ticker — es kommt keine zweite Uhr dazu.
+ */
+const frameListeners = new Set<FrameListener>();
+
+export function onFrame(listener: FrameListener): () => void {
+  frameListeners.add(listener);
+  return () => frameListeners.delete(listener);
+}
+
+let game: Game | null = null;
+let sinceWake = 0;
+let lastSerial = -1;
+
+/**
+ * Weckfrequenz für Vue. Der Snapshot selbst wird jeden Frame geschrieben.
+ *
+ * 20 Hz und nicht 10, weil das Sonar daran hängt: die Bugmarke dreht mit bis zu
+ * 8°/s, bei 10 Hz liefe sie am Rand des Rundsichtgeräts in sichtbaren Sprüngen.
+ */
+const WAKE_HZ = 20;
+
+export function bindGame(next: Game | null): void {
+  game = next;
+  lastSerial = -1;
+  if (!next) hud.value.ready = false;
+}
+
+/** Läuft am Ende des Ticker-Callbacks — dieselbe Uhr wie das Rendering. */
+export function writeHud(frameSeconds: number): void {
+  const scene = game?.scene;
+  const own = game?.ownVessel;
+  if (!scene || !own) return;
+
+  const state = hud.value;
+  state.ready = true;
+  state.time += frameSeconds;
+  state.mapId = scene.currentMap.id;
+  state.x = own.x;
+  state.y = own.y;
+  state.course = own.rotation;
+  state.speed = own.speed;
+  state.orderedSpeed = own.orderedSpeed;
+  state.maxForward = own.maxForward;
+  state.telegraphStep = own.telegraphStep;
+  state.zoom = scene.camera.zoom;
+  state.tilt = getTilt();
+  state.following = scene.isFollowing;
+
+  const remaining = own.distanceToWaypoint;
+  state.waypointDistance = remaining;
+  if (remaining === null) {
+    state.waypointTotal = null;
+    lastSerial = -1;
+  } else if (own.serial !== lastSerial) {
+    // Gesamtstrecke beim Erteilen des Befehls einfrieren — sonst wäre der
+    // Fortschritt im Auftragsbuch immer 0 %.
+    lastSerial = own.serial;
+    state.waypointTotal = remaining;
+  }
+
+  writeContacts(state, own.id, own.x, own.y);
+
+  // Zeichnende Abnehmer bekommen jeden Frame, Vue nur gedrosselt.
+  for (const listener of frameListeners) listener(frameSeconds, state);
+
+  sinceWake += frameSeconds;
+  if (sinceWake >= 1 / WAKE_HZ) {
+    sinceWake = 0;
+    triggerRef(hud);
+  }
+}
+
+function writeContacts(state: HudState, ownId: string, ownX: number, ownY: number): void {
+  const entities = game?.scene?.entities;
+  if (!entities) return;
+
+  const rangeSquared = SONAR.range * SONAR.range;
+  const list = state.contacts;
+  let count = 0;
+
+  for (const vessel of entities.models()) {
+    if (vessel.id === ownId) continue;
+
+    const dx = vessel.x - ownX;
+    const dy = vessel.y - ownY;
+    const squared = dx * dx + dy * dy;
+    // Quadratvergleich statt Wurzel — das läuft für jeden Kontakt in jedem Frame.
+    if (squared > rangeSquared) continue;
+
+    const slot = list[count];
+    if (slot) {
+      slot.id = vessel.id;
+      slot.dx = dx;
+      slot.dy = dy;
+      slot.distance = Math.sqrt(squared);
+      slot.rotation = vessel.rotation;
+    } else {
+      list.push({ id: vessel.id, dx, dy, distance: Math.sqrt(squared), rotation: vessel.rotation });
+    }
+    count += 1;
+  }
+
+  list.length = count;
+}
+
+/* --- Befehle aus der GUI ins Spiel ------------------------------------- */
+
+export function orderTelegraph(step: number): void {
+  game?.ownVessel?.setTelegraph(step);
+}
+
+export function nudgeTelegraph(delta: number): void {
+  const own = game?.ownVessel;
+  if (own) own.setTelegraph(own.telegraphStep + delta);
+}

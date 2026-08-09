@@ -1,0 +1,68 @@
+/*
+ * Gemeinsame Panel-Optik. Bewusst global statt scoped, damit alle Panels
+ * dieselbe Kante haben und Abweichungen auffallen.
+ */
+
+:root {
+  --ui-accent: #6fd0bd;
+  --ui-text: #cfe6f2;
+  --ui-bg: rgb(4 20 31 / 72%);
+  --ui-border: rgb(111 208 189 / 22%);
+  --ui-gap: 12px;
+  /*
+   * Nur nach unten skalieren. Hochskalieren würde den Flächenverbrauch bei
+   * großen Fenstern unnötig treiben, ohne dass etwas besser lesbar wird.
+   *
+   * Bewusst in Stufen und NICHT als Formel: `100vw / 1280` ergibt in CSS eine
+   * LÄNGE, keine Zahl. Ein `clamp(0.8, <Länge>, 1)` ist ungültig, und jedes
+   * `calc(Xpx * var(--ui-scale))` fällt dann still auf den geerbten Wert
+   * zurück — die gesamte Typo-Skala landet unbemerkt bei 16 px.
+   */
+  --ui-scale: 1;
+}
+
+@media (max-width: 1360px), (max-height: 820px) {
+  :root {
+    --ui-scale: 0.92;
+  }
+}
+
+@media (max-width: 1100px), (max-height: 700px) {
+  :root {
+    --ui-scale: 0.84;
+  }
+}
+
+.hud__panel {
+  box-sizing: border-box;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--ui-border);
+  border-radius: 2px;
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  font-size: calc(0.75rem * var(--ui-scale));
+  letter-spacing: 0.03em;
+  user-select: none;
+  /* Panels fangen Eingaben ab; der Rest des Overlays lässt sie durch. */
+  pointer-events: auto;
+  backdrop-filter: blur(2px);
+}
+
+.hud__panel-title {
+  margin: 0 0 0.4rem;
+  font-size: calc(0.6875rem * var(--ui-scale));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  opacity: 0.55;
+}
+
+.hud__empty {
+  margin: 0;
+  opacity: 0.5;
+  line-height: 1.45;
+}
+
+.hud__num {
+  font-variant-numeric: tabular-nums;
+}
