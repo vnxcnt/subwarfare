@@ -17,7 +17,7 @@ const devMenu = ref<InstanceType<typeof DevMenu> | null>(null);
 
 /**
  * Das Browser-Kontextmenü wird bisher nur auf dem Canvas unterdrückt
- * (OrderController). Über einem Panel ginge es sonst auf.
+ * (Game.init). Über einem Panel ginge es sonst auf.
  */
 function suppressContextMenu(event: MouseEvent): void {
   if (isTextEntry(event.target)) return;

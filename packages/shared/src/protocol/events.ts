@@ -109,9 +109,13 @@ export interface DestroyedPayload {
   respawnSeconds: number;
 }
 
-export interface WaypointOrder {
-  x: number;
-  y: number;
+/**
+ * Handruderlage −1 (Backbord) .. 1 (Steuerbord), 0 = mittschiffs. Ersetzt seit
+ * Protokoll v6 die Wegpunktsteuerung per Rechtsklick — Spieler lenken mit
+ * Tasten, nur Bots fahren noch Wegpunkte (server-intern, nie übers Netz).
+ */
+export interface SteerOrder {
+  value: number;
 }
 
 export interface TelegraphOrder {
@@ -154,16 +158,20 @@ export interface PeriscopeOrder {
 }
 
 /**
- * Feuerbefehl — reine Absicht: WELCHE Waffe, sonst nichts. Abschussposition,
- * Richtung und Munitionsstand rechnet der Server; er prüft die Waffe gegen
- * die Bewaffnung des Schiffs (ships-Tabelle), Vorrat und Rohr-Sperre.
+ * Feuerbefehl — reine Absicht: WELCHE Waffe und (bei Überwasserschiffen) die
+ * gezielte PEILUNG in Kursgrad. Der Server prüft Bewaffnung (ships-Tabelle),
+ * Vorrat, Rohr-Sperre UND den Feuersektor: Geschütz nur im Bugsektor,
+ * Torpedo/Täuschkörper nur seitlich — außerhalb fällt kein Schuss.
+ * U-Boote senden keine Peilung (Bugrohr voraus, Täuschkörper achtern).
  */
 export interface FireOrder {
   weapon: WeaponId;
+  /** Zielpeilung in Grad (0 = Nord). Pflicht für Überwasserschiffe. */
+  bearingDegrees?: number;
 }
 
 export interface ClientToServerEvents {
-  'order:waypoint': (payload: WaypointOrder) => void;
+  'order:steer': (payload: SteerOrder) => void;
   'order:telegraph': (payload: TelegraphOrder) => void;
   'order:dive': (payload: DiveOrder) => void;
   'order:periscope': (payload: PeriscopeOrder) => void;

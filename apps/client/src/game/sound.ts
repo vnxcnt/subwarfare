@@ -4,6 +4,7 @@ import ambientUnderwaterUrl from '../assets/audio/ambient_underwater01.mp3';
 import ambientWaterUrl from '../assets/audio/ambient_water.mp3';
 import engineShipUrl from '../assets/audio/engine_ship.mp3';
 import engineSubmarineUrl from '../assets/audio/engine_submarine.mp3';
+import fireGunUrl from '../assets/audio/firing_gun.mp3';
 import fireSubmarineUrl from '../assets/audio/firing_torpedo01.mp3';
 import fireShipUrl from '../assets/audio/firing_torpedo02.mp3';
 import impactUrl from '../assets/audio/impact_shell02.mp3';
@@ -46,6 +47,7 @@ export class GameAudio {
 
   private fireShipBuffer: AudioBuffer | null = null;
   private fireSubmarineBuffer: AudioBuffer | null = null;
+  private fireGunBuffer: AudioBuffer | null = null;
   private impactBuffer: AudioBuffer | null = null;
 
   private resumeListener: (() => void) | null = null;
@@ -79,7 +81,7 @@ export class GameAudio {
       return context.decodeAudioData(await response.arrayBuffer());
     };
 
-    const [water, underwater, ship, submarine, fireShip, fireSubmarine, impact] =
+    const [water, underwater, ship, submarine, fireShip, fireSubmarine, fireGun, impact] =
       await Promise.all([
         load(ambientWaterUrl),
         load(ambientUnderwaterUrl),
@@ -87,6 +89,7 @@ export class GameAudio {
         load(engineSubmarineUrl),
         load(fireShipUrl),
         load(fireSubmarineUrl),
+        load(fireGunUrl),
         load(impactUrl),
       ]);
 
@@ -95,6 +98,7 @@ export class GameAudio {
 
     this.fireShipBuffer = fireShip;
     this.fireSubmarineBuffer = fireSubmarine;
+    this.fireGunBuffer = fireGun;
     this.impactBuffer = impact;
 
     this.ambientWater = this.startLoop(context, water);
@@ -125,6 +129,11 @@ export class GameAudio {
       fromSubmarine ? this.fireSubmarineBuffer : this.fireShipBuffer,
       AUDIO.fire * falloff(distanceMetres),
     );
+  }
+
+  /** Geschützschuss — kurzer Knall, gleiche Entfernungsdämpfung. */
+  playGunFire(distanceMetres: number): void {
+    this.playOnce(this.fireGunBuffer, AUDIO.fire * falloff(distanceMetres));
   }
 
   /** Torpedoeinschlag (auch Versenkung — die ist nur der letzte Einschlag). */

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { DAMAGE } from '@subwarfare/shared';
 import { computed } from 'vue';
 import { hud, orderDive } from '../state/hud';
 
@@ -10,6 +11,14 @@ import { hud, orderDive } from '../state/hud';
  */
 const label = computed(() => (hud.value.diveTarget ? 'Auftauchen' : 'Abtauchen'));
 
+/**
+ * Schwer beschädigt (unter der Auftauch-Schwelle) ist Abtauchen gesperrt —
+ * der Server verwirft den Befehl ohnehin, der Knopf sagt es ehrlich vorher.
+ */
+const tauchsperre = computed(
+  () => !hud.value.diveTarget && hud.value.hp < hud.value.maxHp * DAMAGE.surfaceHpRatio,
+);
+
 /** Übergang läuft, solange Tiefe und Ziel nicht deckungsgleich sind. */
 const inTransition = computed(() => {
   const ziel = hud.value.diveTarget ? 1 : 0;
@@ -19,6 +28,7 @@ const inTransition = computed(() => {
 const depthPercent = computed(() => Math.round(hud.value.depth * 100));
 
 function toggle(): void {
+  if (tauchsperre.value) return;
   orderDive(!hud.value.diveTarget);
 }
 </script>
@@ -27,7 +37,15 @@ function toggle(): void {
   <section v-if="hud.canDive" class="hud__panel dive" aria-label="Tauchsteuerung">
     <h2 class="hud__panel-title">Tauchen</h2>
 
-    <button class="dive__button" type="button" @click="toggle">{{ label }}</button>
+    <button
+      class="dive__button"
+      type="button"
+      :disabled="tauchsperre"
+      :title="tauchsperre ? 'Zu schwer beschädigt zum Tauchen' : undefined"
+      @click="toggle"
+    >
+      {{ tauchsperre ? 'Leck!' : label }}
+    </button>
 
     <div class="dive__gauge" :class="{ 'dive__gauge--active': inTransition }">
       <div class="dive__fill" :style="{ height: `${depthPercent}%` }"></div>
@@ -64,6 +82,13 @@ function toggle(): void {
 
 .dive__button:hover {
   background: rgb(111 208 189 / 20%);
+}
+
+.dive__button:disabled {
+  border-color: #e2555a;
+  color: #f4b3b5;
+  background: rgb(226 85 90 / 10%);
+  cursor: not-allowed;
 }
 
 /* Tiefenanzeige: füllt sich von OBEN — das Boot sinkt ja hinab. */

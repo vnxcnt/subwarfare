@@ -65,17 +65,21 @@ export function orderedSpeed(profile: VesselProfile, step: number): number {
  * - **Maschine stopp mit Ziel** fällt automatisch richtig aus: die Obergrenze 0
  *   nimmt die Fahrt weg, das Ruder hält weiter aufs Ziel. Der Wegpunkt bleibt
  *   stehen, die Fahrt geht auf der nächsten Stufe einfach weiter.
+ * - **Ohne Ziel** gilt die HANDRUDERLAGE (`steer`, −1..1) — seit dem Umbau auf
+ *   Tastensteuerung der Normalfall für Spieler. Bots fahren weiter Wegpunkte,
+ *   und dort hat der Autopilot das Ruder.
  */
 export function helmCommand(
   profile: VesselProfile,
   motion: VesselMotion,
   waypoint: Waypoint | null,
   step: number,
+  steer = 0,
 ): Command {
   const ordered = orderedSpeed(profile, step);
 
   if (!waypoint || ordered < 0) {
-    return { throttle: throttleFor(profile, motion.speed, ordered), rudder: 0 };
+    return { throttle: throttleFor(profile, motion.speed, ordered), rudder: steer };
   }
 
   return autopilot(profile, motion, waypoint, ordered);

@@ -6,16 +6,33 @@ import type {
   SpawnPoint,
   VesselModel,
 } from '@subwarfare/shared';
-import { DEFAULT_VESSEL_MODEL, DEG, HULL_DIMENSIONS, TORPEDO, Vessel } from '@subwarfare/shared';
+import {
+  DAMAGE,
+  DECOY,
+  DEFAULT_VESSEL_MODEL,
+  DEG,
+  GUN,
+  HULL_DIMENSIONS,
+  SHIP_TYPE_SUBMARINE,
+  TORPEDO,
+  Vessel,
+  norm360,
+  smokeLevelForHp,
+} from '@subwarfare/shared';
 import type { ShipCatalog } from '../sim/ShipCatalog.js';
 
 /**
- * Ein laufender Torpedo. Lebt NUR auf dem Server — der Client bekommt pro
+ * Ein laufendes Projektil. Lebt NUR auf dem Server — der Client bekommt pro
  * Broadcast eine `ProjectileState`-Momentaufnahme und interpoliert dazwischen,
  * gerechnet wird ausschließlich hier.
+ *
+ * Zwei Arten: Der **Torpedo** trifft Schiffsrümpfe. Der **Täuschkörper**
+ * trifft nichts — aber ein Torpedo, der ihm zu nahe kommt, detoniert mitsamt
+ * ihm (Annäherungszündung, beide weg).
  */
 interface Projectile {
   id: string;
+  kind: 'torpedo' | 'decoy' | 'shell';
   /** Wer ihn abgefeuert hat — der Schütze trifft sich nicht selbst. */
   ownerId: PlayerId;
   model: string;
@@ -118,7 +135,11 @@ export class World {
   /** Setzt die Lebenspunkte auf das Maximum des aktuellen Modells — Modellwechsel. */
   resetHp(id: PlayerId): void {
     const vessel = this.vessels.get(id);
-    if (vessel) this.hitpoints.set(id, this.ships.get(vessel.model).hp);
+    if (!vessel) return;
+    this.hitpoints.set(id, this.ships.get(vessel.model).hp);
+    // Frische HP = frisches Schiff: kein Rauch mehr. Das Fahrprofil setzt der
+    // Aufrufer (dev:model) ohnehin neu — die Drossel fällt damit mit.
+    vessel.smoke = 0;
   }
 
   /**
@@ -139,27 +160,100 @@ export class World {
    * Berechtigung (Bewaffnung, Munition, Sperre) prüft der Aufrufer — hier
    * entsteht nur die Physik.
    */
-  fireTorpedo(shooter: Vessel): void {
-    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
-    const heading = shooter.rotation * DEG;
-    // Kurz VOR dem Bug, damit der erste Kollisionstest nicht den eigenen —
-    // ohnehin ausgenommenen — Rumpf streift.
-    const offset = dims.length / 2 + TORPEDO.hitRadius * 2;
-
+  /**
+   * Gemeinsamer Abschuss: spawnt ein Projektil `offsetMetres` vom Schützen
+   * entfernt in `bearingDegrees` und lässt es geradeaus laufen. Berechtigung
+   * und Sektorprüfung liegen beim Aufrufer (GameServer) — hier entsteht nur
+   * die Physik.
+   */
+  private launch(
+    shooter: Vessel,
+    kind: Projectile['kind'],
+    model: string,
+    bearingDegrees: number,
+    offsetMetres: number,
+    speed: number,
+    damage: number,
+    hitRadius: number,
+    rangeMetres: number,
+  ): void {
+    const bearing = norm360(bearingDegrees);
+    const heading = bearing * DEG;
     const projectile: Projectile = {
       id: `t-${this.nextProjectileId++}`,
+      kind,
       ownerId: shooter.id,
-      model: TORPEDO.model,
-      x: shooter.x + Math.sin(heading) * offset,
-      y: shooter.y - Math.cos(heading) * offset,
-      rotation: shooter.rotation,
-      speed: TORPEDO.speed,
-      damage: TORPEDO.damage,
-      hitRadius: TORPEDO.hitRadius,
+      model,
+      x: shooter.x + Math.sin(heading) * offsetMetres,
+      y: shooter.y - Math.cos(heading) * offsetMetres,
+      rotation: bearing,
+      speed,
+      damage,
+      hitRadius,
       travelled: 0,
-      rangeMetres: TORPEDO.rangeMetres,
+      rangeMetres,
     };
     this.projectiles.set(projectile.id, projectile);
+  }
+
+  /** U-Boot: Torpedo aus dem Bugrohr, geradeaus in Kursrichtung. */
+  fireTorpedo(shooter: Vessel): void {
+    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    // Kurz VOR dem Bug, damit der erste Kollisionstest nicht den eigenen —
+    // ohnehin ausgenommenen — Rumpf streift.
+    this.launch(
+      shooter, 'torpedo', TORPEDO.model, shooter.rotation,
+      dims.length / 2 + TORPEDO.hitRadius * 2,
+      TORPEDO.speed, TORPEDO.damage, TORPEDO.hitRadius, TORPEDO.rangeMetres,
+    );
+  }
+
+  /**
+   * U-Boot: Täuschkörper nach ACHTERN — er läuft entgegen dem Kurs davon,
+   * dorthin, wo verfolgende Torpedos herkommen.
+   */
+  fireDecoy(shooter: Vessel): void {
+    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    this.launch(
+      shooter, 'decoy', DECOY.model, shooter.rotation + 180,
+      dims.length / 2 + DECOY.triggerRadius * 0.2,
+      DECOY.speed, 0, 0, DECOY.rangeMetres,
+    );
+  }
+
+  /** Überwasserschiff: Torpedo über die SEITE abgeworfen, in Zielpeilung. */
+  fireTorpedoSide(shooter: Vessel, bearingDegrees: number): void {
+    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    this.launch(
+      shooter, 'torpedo', TORPEDO.model, bearingDegrees,
+      dims.beam / 2 + TORPEDO.hitRadius * 2,
+      TORPEDO.speed, TORPEDO.damage, TORPEDO.hitRadius, TORPEDO.rangeMetres,
+    );
+  }
+
+  /** Überwasserschiff: Täuschkörper über die SEITE, in Zielpeilung. */
+  fireDecoySide(shooter: Vessel, bearingDegrees: number): void {
+    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    this.launch(
+      shooter, 'decoy', DECOY.model, bearingDegrees,
+      dims.beam / 2 + DECOY.triggerRadius * 0.2,
+      DECOY.speed, 0, 0, DECOY.rangeMetres,
+    );
+  }
+
+  /**
+   * Geschützgranate in Zielpeilung — Sektorprüfung liegt beim GameServer.
+   * Kleiner Spawn-Offset (Beam-basiert wie die Seitwerfer): der Schütze ist
+   * in der Kollision ohnehin ausgenommen, und ein length/2-Offset (72 m bei
+   * der Fregatte) machte alles Nähere prinzipiell unbeschießbar.
+   */
+  fireShell(shooter: Vessel, bearingDegrees: number): void {
+    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    this.launch(
+      shooter, 'shell', GUN.model, bearingDegrees,
+      dims.beam / 2 + GUN.hitRadius * 2,
+      GUN.speed, GUN.damage, GUN.hitRadius, GUN.rangeMetres,
+    );
   }
 
   /** Reihum der nächste Spawnpunkt, damit sich Spieler nicht stapeln. */
@@ -198,6 +292,8 @@ export class World {
     /** In DIESEM Schritt versenkt — ein Wrack fängt keinen zweiten Torpedo. */
     const sunkThisStep = new Set<PlayerId>();
 
+    // 1) Bewegen; Blindgänger (Laufstrecke erschöpft, weit hinterm Kartenrand)
+    //    verschwinden lautlos.
     for (const projectile of this.projectiles.values()) {
       const step = projectile.speed * deltaSeconds;
       const heading = projectile.rotation * DEG;
@@ -205,21 +301,6 @@ export class World {
       projectile.y -= Math.cos(heading) * step;
       projectile.travelled += step;
 
-      const victim = this.findHit(projectile, sunkThisStep);
-      if (victim) {
-        events.impacts.push({ x: projectile.x, y: projectile.y });
-        this.projectiles.delete(projectile.id);
-
-        const remaining = (this.hitpoints.get(victim.id) ?? 0) - projectile.damage;
-        this.hitpoints.set(victim.id, Math.max(remaining, 0));
-        if (remaining <= 0) {
-          sunkThisStep.add(victim.id);
-          events.destroyed.push({ id: victim.id, x: victim.x, y: victim.y });
-        }
-        continue;
-      }
-
-      // Blindgänger: Laufstrecke erschöpft oder weit hinter dem Kartenrand.
       if (
         projectile.travelled >= projectile.rangeMetres ||
         projectile.x < -500 ||
@@ -231,7 +312,94 @@ export class World {
       }
     }
 
+    // 2) Annäherungszündung VOR dem Rumpftreffer: der Täuschkörper soll den
+    //    Torpedo abfangen, BEVOR der im selben Schritt noch ein Schiff trifft.
+    //    Bewusst ohne Schützen-Ausnahme — ein Täuschkörper unterscheidet nicht,
+    //    wessen Torpedo ihm zu nahe kommt.
+    let torpedoes: Projectile[] | null = null;
+    let decoys: Projectile[] | null = null;
+    for (const projectile of this.projectiles.values()) {
+      if (projectile.kind === 'torpedo') (torpedoes ??= []).push(projectile);
+      else if (projectile.kind === 'decoy') (decoys ??= []).push(projectile);
+      // Granaten interessieren den Täuschkörper nicht — sie fliegen durch.
+    }
+    if (torpedoes && decoys) {
+      const trigger = DECOY.triggerRadius * DECOY.triggerRadius;
+      for (const torpedo of torpedoes) {
+        for (const decoy of decoys) {
+          if (!this.projectiles.has(torpedo.id) || !this.projectiles.has(decoy.id)) continue;
+          const dx = torpedo.x - decoy.x;
+          const dy = torpedo.y - decoy.y;
+          if (dx * dx + dy * dy <= trigger) {
+            // Beide detonieren — zwei Einschläge, kein Schaden an Schiffen.
+            events.impacts.push({ x: torpedo.x, y: torpedo.y });
+            events.impacts.push({ x: decoy.x, y: decoy.y });
+            this.projectiles.delete(torpedo.id);
+            this.projectiles.delete(decoy.id);
+          }
+        }
+      }
+    }
+
+    // 3) Rumpftreffer — Torpedos und Granaten; Täuschkörper treffen nichts.
+    for (const projectile of this.projectiles.values()) {
+      if (projectile.kind === 'decoy') continue;
+
+      // Granaten machen 6-m-Schritte (120 m/s) — der Mittelpunkt des Schritts
+      // wird mitgetestet, sonst rutschen Streiftreffer an den Kapselkappen
+      // zwischen zwei Ticks hindurch.
+      let victim = this.findHit(projectile, sunkThisStep, projectile.x, projectile.y);
+      if (!victim && projectile.kind === 'shell') {
+        const heading = projectile.rotation * DEG;
+        const half = (projectile.speed * deltaSeconds) / 2;
+        victim = this.findHit(
+          projectile,
+          sunkThisStep,
+          projectile.x - Math.sin(heading) * half,
+          projectile.y + Math.cos(heading) * half,
+        );
+      }
+      if (!victim) continue;
+
+      events.impacts.push({ x: projectile.x, y: projectile.y });
+      this.projectiles.delete(projectile.id);
+
+      const remaining = (this.hitpoints.get(victim.id) ?? 0) - projectile.damage;
+      this.hitpoints.set(victim.id, Math.max(remaining, 0));
+      if (remaining <= 0) {
+        sunkThisStep.add(victim.id);
+        events.destroyed.push({ id: victim.id, x: victim.x, y: victim.y });
+      } else {
+        this.applyDamageEffects(victim, remaining);
+      }
+    }
+
     return events;
+  }
+
+  /**
+   * Schadensfolgen nach einem überlebten Treffer: Rauchstufe für alle
+   * sichtbar in den Broadcast, unter der Drossel-Schwelle nur noch halbe
+   * Fahrt, und ein schwer beschädigtes U-Boot wird zwangsaufgetaucht (den
+   * erneuten Tauchbefehl blockt der GameServer am order:dive-Handler).
+   */
+  private applyDamageEffects(vessel: Vessel, hp: number): void {
+    const stats = this.ships.get(vessel.model);
+    vessel.smoke = smokeLevelForHp(hp, stats.hp);
+
+    if (hp < stats.hp * DAMAGE.slowHpRatio) {
+      const base = this.ships.profile(vessel.model);
+      vessel.applyProfile({
+        ...base,
+        maxForward: base.maxForward * DAMAGE.slowFactor,
+        maxReverse: base.maxReverse * DAMAGE.slowFactor,
+      });
+    }
+
+    if (stats.type === SHIP_TYPE_SUBMARINE && hp < stats.hp * DAMAGE.surfaceHpRatio) {
+      vessel.orderDive(false);
+      vessel.orderPeriscope(false);
+    }
   }
 
   /**
@@ -240,23 +408,32 @@ export class World {
    * Der Rumpf ist eine KAPSEL: Strecke der Länge (length − beam) längs des
    * Kurses, verdickt um beam/2 — Bug und Heck enden damit in Halbkreisen.
    * Getestet wird die aktuelle Projektilposition gegen diese Strecke; bei
-   * 45 m/s und 20 Ticks/s legt ein Torpedo 2,25 m pro Schritt zurück, deutlich
-   * weniger als jeder Trefferradius — Durchtunneln ist damit ausgeschlossen.
+   * 67,5 m/s und 20 Ticks/s legt ein Torpedo ~3,4 m pro Schritt zurück —
+   * weniger als der kleinste Kapseldurchmesser (speedster01: 9 m), ein
+   * Schritt kann die Kapsel also nicht überspringen. Wer die Torpedo-
+   * geschwindigkeit weiter erhöht, muss hier auf Streckentest umbauen.
    *
-   * v1 ignoriert die Tauchtiefe: ein Torpedo trifft auch ein getauchtes Boot.
-   * Tiefeneinstellung am Torpedo ist ein späteres Feature.
+   * v1 ignoriert die Tauchtiefe für TORPEDOS (Tiefeneinstellung ist ein
+   * späteres Feature). Die GRANATE dagegen ist eine Überwasserwaffe: mehr
+   * als halb getauchte Boote fliegt sie über — Tauchen schützt vorm Geschütz.
    */
-  private findHit(projectile: Projectile, exclude: Set<PlayerId>): Vessel | null {
+  private findHit(
+    projectile: Projectile,
+    exclude: Set<PlayerId>,
+    x: number,
+    y: number,
+  ): Vessel | null {
     for (const vessel of this.vessels.values()) {
       if (vessel.id === projectile.ownerId || exclude.has(vessel.id)) continue;
+      if (projectile.kind === 'shell' && vessel.depth > 0.5) continue;
 
       const dims = HULL_DIMENSIONS[vessel.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
       const reach = dims.beam / 2 + projectile.hitRadius;
 
       // Billiger Vorfilter: außerhalb des umschließenden Kreises kann nichts
       // treffen. Läuft für jedes Paar aus Projektil und Fahrzeug pro Tick.
-      const dx = projectile.x - vessel.x;
-      const dy = projectile.y - vessel.y;
+      const dx = x - vessel.x;
+      const dy = y - vessel.y;
       const outer = dims.length / 2 + projectile.hitRadius;
       if (dx * dx + dy * dy > outer * outer) continue;
 
@@ -269,8 +446,8 @@ export class World {
       const along = Math.min(Math.max(dx * axisX + dy * axisY, -half), half);
       const nearestX = vessel.x + axisX * along;
       const nearestY = vessel.y + axisY * along;
-      const ox = projectile.x - nearestX;
-      const oy = projectile.y - nearestY;
+      const ox = x - nearestX;
+      const oy = y - nearestY;
       if (ox * ox + oy * oy <= reach * reach) return vessel;
     }
     return null;

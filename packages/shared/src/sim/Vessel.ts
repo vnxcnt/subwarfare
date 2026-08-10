@@ -52,6 +52,18 @@ export class Vessel implements VesselMotion {
   /** Gewollter Periskop-Zustand. Setzen nur über `orderPeriscope`. */
   periscopeTarget = false;
 
+  /**
+   * Rauchstufe 0/1/2 — setzt der Server aus den HP (smokeLevelForHp), der
+   * Client übernimmt sie aus dem Broadcast und rendert nur.
+   */
+  smoke = 0;
+
+  /**
+   * Handruderlage −1 (Backbord) .. 1 (Steuerbord). Wirkt nur ohne Wegpunkt —
+   * mit Ziel (Bots) steuert der Autopilot. Setzen über `setSteer`.
+   */
+  steer = 0;
+
   private profile: VesselProfile;
   /** Wie oft der Wegpunkt seit dem letzten Befehl neu gesetzt wurde. */
   private orderSerial = 0;
@@ -128,6 +140,11 @@ export class Vessel implements VesselMotion {
     this.periscopeTarget = extended;
   }
 
+  /** Handruderlage setzen, geklemmt auf −1..1. Der Aufrufer schickt Absicht. */
+  setSteer(value: number): void {
+    this.steer = Math.min(Math.max(value, -1), 1);
+  }
+
   setTelegraph(step: number): void {
     this.telegraphStep = clampStep(step);
     // Rückwärts ist ein Handmanöver. Einen Wegpunkt rückwärts anzusteuern ergibt
@@ -139,7 +156,7 @@ export class Vessel implements VesselMotion {
     stepVessel(
       this.profile,
       this,
-      helmCommand(this.profile, this, this.waypoint, this.telegraphStep),
+      helmCommand(this.profile, this, this.waypoint, this.telegraphStep, this.steer),
       dt,
     );
 
@@ -203,6 +220,7 @@ export class Vessel implements VesselMotion {
       speed: this.speed,
       depth: this.depth,
       periscope: this.periscope,
+      smoke: this.smoke,
     };
   }
 
@@ -219,6 +237,7 @@ export class Vessel implements VesselMotion {
     this.speed = state.speed;
     this.depth = state.depth;
     this.periscope = state.periscope;
+    this.smoke = state.smoke ?? 0;
   }
 
   /**

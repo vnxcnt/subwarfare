@@ -7,6 +7,7 @@ import type { AccountStore } from './accounts/store.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { migrate } from './db/migrate.js';
 import { env, warnAboutDefaults } from './env.js';
+import { fetchGameServerStatus } from './gameserver/status.js';
 import { LobbyGateway } from './lobby/socket.js';
 import { MemoryQueue } from './lobby/queue.js';
 import { loadShipStats } from './ships/store.js';
@@ -41,9 +42,38 @@ await app.register(
       }
       return { ships: await loadShipStats() };
     });
+
+    // Kartenauslastung fürs Hauptmenü. Kurz gecacht UND mit geteiltem
+    // In-flight-Promise: läuft die Abfrage gerade (bis zu 2 s bei hängendem
+    // Spielserver), hängen sich weitere Anfragen an dieselbe — sonst würde
+    // genau im Störfall jede Menü-Anfrage einen eigenen Upstream-Fetch starten.
+    let mapsCache: { at: number; payload: MapsStatusPayload } | null = null;
+    let mapsInFlight: Promise<MapsStatusPayload> | null = null;
+    scope.get('/maps/status', (): Promise<MapsStatusPayload> | MapsStatusPayload => {
+      if (mapsCache && Date.now() - mapsCache.at < 3_000) return mapsCache.payload;
+      mapsInFlight ??= (async () => {
+        try {
+          const status = await fetchGameServerStatus();
+          const payload: MapsStatusPayload = {
+            maps: status
+              ? [{ mapId: status.mapId, players: status.players, capacity: status.capacity }]
+              : [],
+          };
+          mapsCache = { at: Date.now(), payload };
+          return payload;
+        } finally {
+          mapsInFlight = null;
+        }
+      })();
+      return mapsInFlight;
+    });
   },
   { prefix: '/api' },
 );
+
+interface MapsStatusPayload {
+  maps: Array<{ mapId: string; players: number; capacity: number }>;
+}
 
 // socket.io hängt sich an den fertigen HTTP-Server von Fastify. Das geht erst
 // nach `ready()` — vorher existiert `app.server` zwar, hat aber noch nicht alle

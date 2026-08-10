@@ -159,6 +159,8 @@ export function writeHud(frameSeconds: number): void {
   state.hp = game?.hp ?? state.maxHp;
   // In place statt neues Objekt — das läuft jeden Frame (Muster dieser Datei).
   state.ammo['torpedo'] = game?.ammoFor('torpedo') ?? 0;
+  state.ammo['taeuschkoerper'] = game?.ammoFor('taeuschkoerper') ?? 0;
+  state.ammo['geschuetz'] = game?.ammoFor('geschuetz') ?? 0;
   state.canDive = game?.shipStats(own.model).type === SHIP_TYPE_SUBMARINE;
   state.depth = own.depth;
   state.diveTarget = own.diveTarget;

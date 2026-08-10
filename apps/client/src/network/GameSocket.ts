@@ -27,9 +27,8 @@ export interface GameSocketHandlers {
 /**
  * Verbindung zum Spielserver.
  *
- * Dünne Schale um socket.io mit genau zwei Senderichtungen — Wegpunkt und
- * Telegrafenstufe. Mehr gibt das Protokoll bewusst nicht her: über das Netz
- * gehen nur Absichten, der Server rechnet.
+ * Dünne Schale um socket.io. Über das Netz gehen ausschließlich Absichten —
+ * Ruderlage, Telegrafenstufe, Tauch-/Feuerbefehle — der Server rechnet.
  *
  * `reconnection: false` ist kein Versäumnis: das Join-Ticket gilt genau
  * einmal, ein automatischer Wiederaufbau würde also sicher abgelehnt. Der
@@ -73,8 +72,9 @@ export class GameSocket {
     });
   }
 
-  sendWaypoint(x: number, y: number): void {
-    this.socket?.emit('order:waypoint', { x, y });
+  /** Handruderlage −1..1 — gesendet bei jeder Änderung, der Server klemmt. */
+  sendSteer(value: number): void {
+    this.socket?.emit('order:steer', { value });
   }
 
   sendTelegraph(step: number): void {
@@ -91,9 +91,12 @@ export class GameSocket {
     this.socket?.emit('order:periscope', { extended });
   }
 
-  /** Feuerbefehl — reine Absicht; Bewaffnung, Munition und Sperre prüft der Server. */
-  sendFire(weapon: WeaponId): void {
-    this.socket?.emit('order:fire', { weapon });
+  /**
+   * Feuerbefehl — reine Absicht; Bewaffnung, Munition, Sperre und Feuersektor
+   * prüft der Server. Überwasserschiffe geben die gezielte Peilung mit.
+   */
+  sendFire(weapon: WeaponId, bearingDegrees?: number): void {
+    this.socket?.emit('order:fire', { weapon, bearingDegrees });
   }
 
   /** Entwickler: eigenes Schiffsmodell wechseln. Der Server prüft die Rolle. */

@@ -35,5 +35,11 @@ export * from './sim/Vessel.js';
  * 3: Schiffsmodell im PlayerState, Rolle im Ticket, dev:model-Befehl.
  * 4: Bewaffnung — order:fire, Projektile im State, HP und Munition im own,
  *    fx- und destroyed-Ereignisse.
+ * 5: Rauchstufe im PlayerState; Schadensfolgen (Drossel, Zwangsauftauchen)
+ *    server-seitig erzwungen.
+ * 6: Handruder statt Wegpunkt — order:steer ersetzt order:waypoint;
+ *    Täuschkörper als zweite Waffe (order:fire 'taeuschkoerper').
+ * 7: Geschütz (order:fire 'geschuetz') und gezielte Peilung im Feuerbefehl —
+ *    Überwasserschiffe feuern sektorgebunden (Bug ±20°, Seiten ±10°).
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 7;

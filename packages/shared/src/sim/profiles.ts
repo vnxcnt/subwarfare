@@ -8,13 +8,14 @@ import type { VesselProfile } from './VesselProfile.js';
  * seine Anzeigen (Telegraf) und den Offline-Demobetrieb.
  *
  * ⚠️ `maxForward` ist eine Design-Entscheidung, keine technische: ein echtes
- * U-Boot fährt rund 17 m/s, damit dauert eine Kartenkante 9,8 Minuten. 30 m/s
- * ist Faktor 1,8 darüber — eine typische Gefechtsdistanz von 1–3 km in 30–100 s.
+ * U-Boot fährt rund 17 m/s. 34,5 m/s ist die Grundgeschwindigkeit für
+ * speed-Faktor 1 der ships-Tabelle (30 × 1,15 seit 2026-08-10, +15 % auf
+ * Wunsch; Rückwärtsfahrt proportional mit, damit das Handling gleich bleibt).
  * Der Wendekreis bleibt beim Ändern konstant, die Bahnform also identisch.
  */
 export const DESTROYER: VesselProfile = {
-  maxForward: 30,
-  maxReverse: -8,
+  maxForward: 34.5,
+  maxReverse: -9.2,
   accel: 1.0,
   brake: 2.0,
   drag: 0.45,

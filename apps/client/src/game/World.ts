@@ -1,6 +1,6 @@
 import type { GameMap } from '@subwarfare/shared';
 import { Container, Graphics, Matrix, Point } from 'pixi.js';
-import { FALLBACK_MAP, FOLLOW, VIEW, VISION } from '../config';
+import { FALLBACK_MAP, FOLLOW, HULL, VIEW, VISION } from '../config';
 import { EntityLayer } from './entities/EntityLayer';
 import type { Vessel } from '@subwarfare/shared';
 import { Ocean } from './Ocean';
@@ -62,6 +62,13 @@ export class World {
   private readonly fx = new Graphics();
   private readonly fxEntries: Array<{ x: number; y: number; age: number; big: boolean }> = [];
 
+  /**
+   * Ziellinie des Waffen-Zielmodus (Q): vom eigenen Boot zur Maus, in der
+   * Wasserebene wie die frühere Wegpunktlinie. Rot, wenn die Peilung in
+   * keinem gültigen Feuersektor liegt.
+   */
+  private readonly aimLine = new Graphics();
+
   private map: GameMap = FALLBACK_MAP;
   private ocean: Ocean | null = null;
   private followTarget: Vessel | null = null;
@@ -81,6 +88,9 @@ export class World {
     // umgekehrt. `hullLayer` sortiert nach zIndex — hoch genug wählen.
     this.fx.zIndex = 1_000_000;
     this.hullLayer.addChild(this.fx);
+    // Ziellinie knapp darunter — über allen Spuren, unter den Explosionen.
+    this.aimLine.zIndex = 999_999;
+    this.hullLayer.addChild(this.aimLine);
     // Wegpunktgrafik in die Wasserebene, Richtungs-Billboards in die
     // aufrechte Ebene — siehe EntityLayer.
     this.entities = new EntityLayer(this.hullLayer, this.entityLayer);
@@ -248,6 +258,29 @@ export class World {
         x + Math.cos(kurs + half) * l, y + Math.sin(kurs + half) * l,
       ]).cut();
     }
+  }
+
+  /**
+   * Zeichnet die Ziellinie neu — oder löscht sie (`null`). Der Stil folgt der
+   * früheren Wegpunktlinie; ungültige Peilung wird rot.
+   */
+  setAimLine(
+    line: { x0: number; y0: number; x1: number; y1: number; valid: boolean } | null,
+  ): void {
+    const g = this.aimLine;
+    g.clear();
+    if (!line) return;
+
+    const color = line.valid ? HULL.markerColor : 0xe2555a;
+    g.moveTo(line.x0, line.y0)
+      .lineTo(line.x1, line.y1)
+      .stroke({ color, alpha: line.valid ? 0.55 : 0.7, pixelLine: true });
+    // Kleine Marke am Zielpunkt — dieselbe Sprache wie der alte Wegpunktring.
+    g.circle(line.x1, line.y1, Math.max(18, 10 / this.camera.zoom)).stroke({
+      color,
+      alpha: 0.8,
+      pixelLine: true,
+    });
   }
 
   /** Tauchtiefe des eigenen Boots (0..1) — steuert den Unterwasser-Schleier. */

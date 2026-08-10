@@ -1,5 +1,5 @@
 import type { GameMap, VesselProfile } from '@subwarfare/shared';
-import { DESTROYER, TORPEDO } from '@subwarfare/shared';
+import { DECOY, DESTROYER, GUN, TORPEDO } from '@subwarfare/shared';
 import decoyIcon from '../assets/icons/decoy.png';
 import gunIcon from '../assets/icons/gun.png';
 import torpedoIcon from '../assets/icons/torpedo.png';
@@ -222,8 +222,8 @@ export const WEAPON_SLOTS: Record<
 > = {
   torpedo: { label: 'Torpedo', short: 'TRP', count: TORPEDO.capacity, icon: torpedoIcon },
   wasserbombe: { label: 'Wasserbombe', short: 'WBO', count: 24, icon: waterbombIcon },
-  taeuschkoerper: { label: 'Täuschkörper', short: 'TKR', count: 6, icon: decoyIcon },
-  geschuetz: { label: 'Geschütz', short: 'GES', count: 4, icon: gunIcon },
+  taeuschkoerper: { label: 'Täuschkörper', short: 'TKR', count: DECOY.capacity, icon: decoyIcon },
+  geschuetz: { label: 'Geschütz', short: 'GES', count: GUN.capacity, icon: gunIcon },
 };
 
 /**
@@ -266,12 +266,8 @@ export const FOLLOW = {
 } as const;
 
 export const INPUT = {
-  /** Maximale Mausbewegung in CSS-Pixeln, die noch als Klick zählt. */
-  clickMaxPixels: 5,
   /** Ab dieser Pan-Distanz schaltet die Kameranachführung ab. */
   followBreakPixels: 5,
-  /** Maustaste für Fahrbefehle: 2 = rechts. */
-  orderButton: 2,
 } as const;
 
 /** m/s je Knoten. 1 sm = 1852 m. Nur für die HUD-Anzeige. */

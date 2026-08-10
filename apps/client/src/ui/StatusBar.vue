@@ -38,7 +38,7 @@ const tilt = computed(
     </span>
     <span v-if="isDev" class="status__item hud__num">Neigung {{ tilt }}</span>
     <span class="status__hint">
-      Rechtsklick fährt, Rad zoomt, Ziehen verschiebt<template v-if="isDev">, [ ] neigt</template>
+      A/D steuern, W/S Telegraf, Rad zoomt, Ziehen verschiebt<template v-if="isDev">, [ ] neigt</template>
     </span>
     <!--
       Entwicklerwerkzeuge — nur mit Entwicklerrolle sichtbar. Die Anzeige ist

@@ -39,4 +39,10 @@ export interface PlayerState {
   depth: number;
   /** Periskop-Ausfahrstand 0..1 — nur bei U-Booten je > 0. */
   periscope: number;
+  /**
+   * Rauchstufe 0/1/2 (keiner/weiß/schwarz) — die einzige HP-Information über
+   * FREMDE Schiffe im Broadcast: bewusst grob quantisiert, sichtbarer Schaden
+   * ist gewollte Aufklärung, der exakte Zustand nicht.
+   */
+  smoke: number;
 }

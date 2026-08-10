@@ -43,7 +43,7 @@ const order = computed(() => {
 
     <p v-else class="hud__empty">
       Keine Aufträge.<br />
-      Rechtsklick auf die Karte setzt einen Fahrbefehl.
+      A/D steuern das Ruder, W/S den Telegrafen.
     </p>
   </section>
 </template>

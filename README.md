@@ -272,7 +272,7 @@ automatisch.
 │   │       │   ├── Projection.ts   Welt -> Bildschirm als eine Matrix
 │   │       │   ├── Ocean.ts        Wasserfläche, prozeduraler Shader
 │   │       │   ├── CameraController.ts  Zoom per Rad, Pan per Ziehen
-│   │       │   ├── OrderController.ts   Fahrbefehl per Rechtsklick
+│   │       │   ├── sound.ts        Spielklang (Web Audio): Ambient, Motor, Gefecht
 │   │       │   └── entities/
 │   │       │       ├── Vessel.ts       Fahrzeugmodell, kein PixiJS
 │   │       │       ├── VesselView.ts   Rumpf, Zielmarker, Kurslinie

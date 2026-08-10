@@ -9,6 +9,8 @@ import speedsterData from '../assets/vessels/speedster01/atlas.json';
 import speedsterUrl from '../assets/vessels/speedster01/atlas.webp';
 import submarineData from '../assets/vessels/submarine01/atlas.json';
 import submarineUrl from '../assets/vessels/submarine01/atlas.webp';
+import shellData from '../assets/vessels/he_round01/atlas.json';
+import shellUrl from '../assets/vessels/he_round01/atlas.webp';
 import torpedoData from '../assets/vessels/torpedo01/atlas.json';
 import torpedoUrl from '../assets/vessels/torpedo01/atlas.webp';
 import decoyData from '../assets/vessels/torpedo02/atlas.json';
@@ -81,6 +83,13 @@ const DEFINITIONS: Record<string, ModelDefinition> = {
     url: decoyUrl,
     lengthMetres: 10,
     sideProfilePx: 371,
+  },
+  // Geschützgranate: real ~0,5 m — gameplay-sichtbar auf 4 m gezogen.
+  he_round01: {
+    data: shellData as unknown as SpritesheetData,
+    url: shellUrl,
+    lengthMetres: 4,
+    sideProfilePx: 369,
   },
 };
 

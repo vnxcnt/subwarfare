@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { WeaponId } from '@subwarfare/shared';
 import { computed, onBeforeUnmount, onMounted } from 'vue';
 import { WEAPON_SLOTS } from '../config';
 import { hud, orderFire } from '../state/hud';
@@ -10,16 +11,18 @@ import { isTextEntry } from './dom';
  * aus dem `own`-Ereignis. Gefeuert wird über Absichts-Events; ob ein Schuss
  * wirklich fällt, entscheidet allein der Server (Munition, Rohr-Sperre).
  *
- * v1 feuert nur der Torpedo. Die übrigen Waffen zeigen ihre Platzhalterzahl
- * gedimmt, bis sie server-seitig existieren.
+ * Feuerbar sind Torpedo und Täuschkörper. Die übrigen Waffen zeigen ihre
+ * Platzhalterzahl gedimmt, bis sie server-seitig existieren.
  */
+const FIREABLE = new Set(['torpedo', 'taeuschkoerper', 'geschuetz']);
+
 const slots = computed(() =>
   hud.value.armament
     .map((id) => ({
       id,
       def: WEAPON_SLOTS[id],
       count: hud.value.ammo[id] ?? WEAPON_SLOTS[id]?.count ?? 0,
-      fireable: id === 'torpedo',
+      fireable: FIREABLE.has(id),
     }))
     .filter((eintrag) => eintrag.def !== undefined),
 );
@@ -40,7 +43,7 @@ const hullColor = computed(() => {
 
 function fire(slot: { id: string; fireable: boolean; count: number }): void {
   if (!slot.fireable || slot.count <= 0) return;
-  orderFire('torpedo');
+  orderFire(slot.id as WeaponId);
 }
 
 /** Ziffern 1..n feuern den jeweiligen Slot, Leertaste den Torpedo. */

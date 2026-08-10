@@ -7,12 +7,18 @@ import type {
   VesselModel,
 } from '@subwarfare/shared';
 import {
+  DAMAGE,
+  DECOY,
+  GUN,
   PROTOCOL_VERSION,
   RESPAWN_SECONDS,
   ROLE_DEVELOPER,
+  SECTOR_TOLERANCE_DEG,
   SHIP_TYPE_SUBMARINE,
+  SIDE_LAUNCH_HALF_ANGLE_DEG,
   SIM_STEP_SECONDS,
   TORPEDO,
+  angleDelta,
   clampStep,
   isVesselModel,
 } from '@subwarfare/shared';
@@ -65,10 +71,16 @@ export class GameServer {
    */
   private readonly detected = new Map<string, Set<string>>();
 
-  /** Restmunition Torpedo je Account. Angelegt beim Spawn, aufgefüllt beim Respawn. */
-  private readonly torpedoAmmo = new Map<string, number>();
-  /** Rohr-Sperre: frühester Tick, ab dem wieder gefeuert werden darf. */
-  private readonly nextFireTick = new Map<string, number>();
+  /** Restmunition je Account und Waffe. Angelegt beim Spawn, aufgefüllt beim Respawn. */
+  private readonly ammo = new Map<
+    string,
+    { torpedo: number; taeuschkoerper: number; geschuetz: number }
+  >();
+  /** Rohr-Sperren je Waffe: frühester Tick, ab dem wieder gefeuert werden darf. */
+  private readonly nextFireTick = new Map<
+    string,
+    { torpedo: number; taeuschkoerper: number; geschuetz: number }
+  >();
   /** Versenkte Spieler, die auf ihren Wiedereinstieg warten. */
   private readonly pendingRespawns = new Map<string, { seconds: number; model: VesselModel }>();
 
@@ -189,8 +201,7 @@ export class GameServer {
 
     this.sockets.set(accountId, socket);
     const vessel = this.world.spawn(accountId, name);
-    this.torpedoAmmo.set(accountId, TORPEDO.capacity);
-    this.nextFireTick.delete(accountId);
+    this.refillAmmo(accountId);
     console.log(`[game-server] ${name} (${accountId}) verbunden — ${this.sockets.size} Spieler.`);
 
     socket.emit('welcome', {
@@ -202,12 +213,12 @@ export class GameServer {
     });
     this.sendOwn(socket, vessel);
 
-    socket.on('order:waypoint', (payload) => {
+    socket.on('order:steer', (payload) => {
       const own = this.world.get(accountId);
-      if (!own || !isFiniteNumber(payload?.x) || !isFiniteNumber(payload?.y)) return;
-      const target = this.world.clampToMap(payload.x, payload.y);
-      own.orderMoveTo(target.x, target.y);
-      this.sendOwn(socket, own);
+      if (!own || !isFiniteNumber(payload?.value)) return;
+      // setSteer klemmt selbst auf −1..1. Kein sendOwn nötig — die Ruderlage
+      // ist keine Anzeige, ihr Ergebnis (der Kurs) läuft im Broadcast mit.
+      own.setSteer(payload.value);
     });
 
     socket.on('order:telegraph', (payload) => {
@@ -223,7 +234,16 @@ export class GameServer {
       // Tauchen können nur Schiffe vom Typ Submarine — der Katalog entscheidet,
       // nicht der Client. Alles andere wird kommentarlos verworfen.
       if (this.ships.get(own.model).type !== SHIP_TYPE_SUBMARINE) return;
-      own.orderDive(payload?.submerged === true);
+      const submerged = payload?.submerged === true;
+      // Schwer beschädigt (unter der Auftauch-Schwelle) bleibt das Boot oben:
+      // Abtauchen wird verworfen, Auftauchen geht immer.
+      if (
+        submerged &&
+        this.world.hp(accountId) < this.ships.get(own.model).hp * DAMAGE.surfaceHpRatio
+      ) {
+        return;
+      }
+      own.orderDive(submerged);
       this.sendOwn(socket, own);
     });
 
@@ -240,24 +260,56 @@ export class GameServer {
       const own = this.world.get(accountId);
       // Versenkt oder nicht gespawnt — keine Waffe ohne Schiff.
       if (!own) return;
-      // v1 feuert ausschließlich den Torpedo; weitere Waffen kommen mit
-      // eigenen Kennwerten und eigener Abschussphysik.
-      if (payload?.weapon !== 'torpedo') return;
+      // Feuerbare Waffen: Torpedo, Täuschkörper, Geschütz. Die Wasserbombe
+      // kommt später mit eigener Abschussphysik.
+      const weapon = payload?.weapon;
+      if (weapon !== 'torpedo' && weapon !== 'taeuschkoerper' && weapon !== 'geschuetz') return;
       // Ob das Schiff die Waffe überhaupt führt, sagt der Katalog — nicht
       // der Client. Ein gebasteltes Ereignis wird kommentarlos verworfen.
-      if (!this.ships.get(own.model).armament.includes('torpedo')) return;
+      const stats = this.ships.get(own.model);
+      if (!stats.armament.includes(weapon)) return;
 
-      const ammo = this.torpedoAmmo.get(accountId) ?? 0;
-      if (ammo <= 0) return;
-      // Rohr-Sperre in Server-Ticks — der Knopf im Client ist Höflichkeit.
-      if (this.tick < (this.nextFireTick.get(accountId) ?? 0)) return;
+      const ammo = this.ammo.get(accountId);
+      if (!ammo || ammo[weapon] <= 0) return;
+      // Rohr-Sperre je Waffe in Server-Ticks — der Knopf im Client ist Höflichkeit.
+      const gates =
+        this.nextFireTick.get(accountId) ?? { torpedo: 0, taeuschkoerper: 0, geschuetz: 0 };
+      if (this.tick < gates[weapon]) return;
 
-      this.torpedoAmmo.set(accountId, ammo - 1);
-      this.nextFireTick.set(
-        accountId,
-        this.tick + Math.round(TORPEDO.cooldownSeconds / SIM_STEP_SECONDS),
-      );
-      this.world.fireTorpedo(own);
+      const isSubmarine = stats.type === SHIP_TYPE_SUBMARINE;
+
+      if (isSubmarine) {
+        // U-Boote zielen nicht: Torpedo aus dem Bugrohr voraus, Täuschkörper
+        // achtern. Ein Geschütz führt kein U-Boot (Katalog fängt das schon).
+        if (weapon === 'geschuetz') return;
+        if (weapon === 'torpedo') this.world.fireTorpedo(own);
+        else this.world.fireDecoy(own);
+      } else {
+        // Überwasserschiffe feuern SEKTORGEBUNDEN auf die gezielte Peilung:
+        // Geschütz im Bugsektor, Torpedo/Täuschkörper über die Seiten.
+        // Außerhalb fällt kein Schuss — verwerfen, nicht klemmen: der Client
+        // zeigt den ungültigen Winkel als rote Ziellinie.
+        const bearing = payload?.bearingDegrees;
+        if (!isFiniteNumber(bearing)) return;
+        // Mit Toleranz: der Client zielt mit der Render-Rotation (~125 ms
+        // Verzug) — am Sektorrand wäre die grüne Linie sonst eine Lüge.
+        const offset = angleDelta(own.rotation, bearing);
+        if (weapon === 'geschuetz') {
+          if (Math.abs(offset) > GUN.arcHalfAngleDeg + SECTOR_TOLERANCE_DEG) return;
+          this.world.fireShell(own, bearing);
+        } else {
+          if (Math.abs(Math.abs(offset) - 90) > SIDE_LAUNCH_HALF_ANGLE_DEG + SECTOR_TOLERANCE_DEG) {
+            return;
+          }
+          if (weapon === 'torpedo') this.world.fireTorpedoSide(own, bearing);
+          else this.world.fireDecoySide(own, bearing);
+        }
+      }
+
+      const spec = weapon === 'torpedo' ? TORPEDO : weapon === 'taeuschkoerper' ? DECOY : GUN;
+      ammo[weapon] -= 1;
+      gates[weapon] = this.tick + Math.round(spec.cooldownSeconds / SIM_STEP_SECONDS);
+      this.nextFireTick.set(accountId, gates);
       // Munitionsstand sofort bestätigen, nicht erst mit dem nächsten Tick.
       this.sendOwn(socket, own);
     });
@@ -277,7 +329,7 @@ export class GameServer {
       // Ein Modellwechsel ist ein frisches Schiff: volle Lebenspunkte des
       // neuen Modells, volle Munition. Reines Entwickler-Werkzeug.
       this.world.resetHp(accountId);
-      this.torpedoAmmo.set(accountId, TORPEDO.capacity);
+      this.refillAmmo(accountId);
       // Wer vom U-Boot auf ein Überwasserschiff wechselt, taucht zwangsläufig
       // auf und fährt das Periskop ein — beides über die normalen Wege.
       if (this.ships.get(payload.model).type !== SHIP_TYPE_SUBMARINE) {
@@ -295,7 +347,7 @@ export class GameServer {
       this.sockets.delete(accountId);
       this.detected.delete(accountId);
       this.pendingRespawns.delete(accountId);
-      this.torpedoAmmo.delete(accountId);
+      this.ammo.delete(accountId);
       this.nextFireTick.delete(accountId);
       this.world.remove(accountId);
       this.notifyLeft(accountId);
@@ -303,15 +355,30 @@ export class GameServer {
     });
   }
 
+  /** Volle Munition und offene Rohre — Spawn, Respawn, Modellwechsel. */
+  private refillAmmo(accountId: string): void {
+    this.ammo.set(accountId, {
+      torpedo: TORPEDO.capacity,
+      taeuschkoerper: DECOY.capacity,
+      geschuetz: GUN.capacity,
+    });
+    this.nextFireTick.delete(accountId);
+  }
+
   private sendOwn(socket: GameSocket, vessel: Vessel): void {
     const accountId = socket.data.accountId;
+    const ammo = this.ammo.get(accountId);
     socket.emit('own', {
       telegraphStep: vessel.telegraphStep,
       waypoint: vessel.waypoint ? { ...vessel.waypoint } : null,
       diveTarget: vessel.diveTarget,
       periscopeTarget: vessel.periscopeTarget,
       hp: this.world.hp(accountId),
-      ammo: { torpedo: this.torpedoAmmo.get(accountId) ?? 0 },
+      ammo: {
+        torpedo: ammo?.torpedo ?? 0,
+        taeuschkoerper: ammo?.taeuschkoerper ?? 0,
+        geschuetz: ammo?.geschuetz ?? 0,
+      },
       serial: vessel.serial,
     });
   }
@@ -395,8 +462,7 @@ export class GameServer {
       if (!socket) continue;
 
       const vessel = this.world.spawn(accountId, socket.data.name, pending.model);
-      this.torpedoAmmo.set(accountId, TORPEDO.capacity);
-      this.nextFireTick.delete(accountId);
+      this.refillAmmo(accountId);
       this.sendOwn(socket, vessel);
     }
   }
@@ -454,7 +520,7 @@ export class GameServer {
       }
 
       // Projektile durch denselben Sonar-Filter — ohne Hysterese: sie laufen
-      // mit 45 m/s, ein Flackern an der Reichweitengrenze dauert Sekundenbruchteile.
+      // mit ~68 m/s, ein Flackern an der Reichweitengrenze dauert Sekundenbruchteile.
       const range = observer.sensorRange;
       const visible = projectiles.filter((p) => {
         const dx = p.x - observer.x;
@@ -525,10 +591,12 @@ export class GameServer {
    * gehören dazu — ein Treffer muss das `own` genauso auslösen wie eine Ankunft.
    */
   private ownSignature(accountId: string, vessel: Vessel): string {
+    const ammo = this.ammo.get(accountId);
     return (
       `${vessel.serial}:${vessel.telegraphStep}:${vessel.waypoint ? 'z' : '-'}:` +
       `${vessel.diveTarget ? 't' : 'o'}:${vessel.periscopeTarget ? 'p' : '-'}:` +
-      `${this.world.hp(accountId)}:${this.torpedoAmmo.get(accountId) ?? 0}`
+      `${this.world.hp(accountId)}:${ammo?.torpedo ?? 0}:${ammo?.taeuschkoerper ?? 0}:` +
+      `${ammo?.geschuetz ?? 0}`
     );
   }
 

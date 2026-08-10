@@ -3,7 +3,7 @@ import { progressionFromXp } from '@subwarfare/shared';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import menuMusicUrl from '../assets/audio/mainmenu.mp3';
-import { account, logout } from '../state/auth';
+import { API_URL, account, logout } from '../state/auth';
 import {
   joinQueue,
   lastEndReason,
@@ -26,6 +26,30 @@ const MAPS = [
 ] as const;
 
 const selectedMap = ref<string>(MAPS[0].id);
+
+/**
+ * Auslastung je Karte (Spieler an Bord) — vom Backend, alle 10 s
+ * aufgefrischt. Null, solange noch keine Antwort da ist.
+ */
+const mapStatus = ref<Record<string, { players: number; capacity: number }>>({});
+let statusTimer: number | null = null;
+
+async function refreshMapStatus(): Promise<void> {
+  try {
+    const response = await fetch(`${API_URL}/api/maps/status`);
+    if (!response.ok) return;
+    const data = (await response.json()) as {
+      maps?: Array<{ mapId: string; players: number; capacity: number }>;
+    };
+    const next: Record<string, { players: number; capacity: number }> = {};
+    for (const map of data.maps ?? []) {
+      next[map.mapId] = { players: map.players, capacity: map.capacity };
+    }
+    mapStatus.value = next;
+  } catch {
+    // Menü bleibt benutzbar — die Anzeige zeigt dann schlicht nichts.
+  }
+}
 
 /** Einmalig anzeigen, warum die letzte Partie endete, dann vergessen. */
 const endReason = ref(lastEndReason.value);
@@ -116,11 +140,17 @@ onMounted(() => {
     (window as unknown as { __menuMusic?: HTMLAudioElement }).__menuMusic = music;
   }
   startMusic();
+
+  void refreshMapStatus();
+  statusTimer = window.setInterval(() => void refreshMapStatus(), 10_000);
 });
 
 onBeforeUnmount(() => {
   // Wer das Menü verlässt, ohne zu spielen, steht nicht weiter in der Schlange.
   if (queueState.value === 'waiting' || queueState.value === 'connecting') leaveQueue();
+
+  if (statusTimer !== null) clearInterval(statusTimer);
+  statusTimer = null;
 
   // Musik gehört zum Menü — auf der Karte zählt das Sonar, nicht der Score.
   if (fadeTimer !== null) clearInterval(fadeTimer);
@@ -201,6 +231,9 @@ onBeforeUnmount(() => {
           >
             <span class="menu__map-name">{{ map.label }}</span>
             <span class="menu__map-detail">{{ map.detail }}</span>
+            <span v-if="mapStatus[map.id]" class="menu__map-players">
+              {{ mapStatus[map.id]!.players }} / {{ mapStatus[map.id]!.capacity }} Spieler an Bord
+            </span>
           </button>
         </li>
       </ul>
@@ -460,6 +493,12 @@ onBeforeUnmount(() => {
 .menu__map-detail {
   font-size: 0.6875rem;
   opacity: 0.55;
+}
+
+.menu__map-players {
+  font-size: 0.6875rem;
+  color: var(--gold);
+  opacity: 0.85;
 }
 
 .menu__go {

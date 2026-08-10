@@ -29,6 +29,9 @@ const SILHOUETTE = [
 
 const PING_SECONDS = 0.3;
 
+/** Lebensdauer eines Rauchpartikels in Sekunden. */
+const SMOKE_MAX_AGE = 2.4;
+
 /**
  * Dauer der Überblendung beim Framewechsel. Kurz genug, um bei 8°/s Drehrate
  * (ein Wechsel alle ~2,8 s) längst fertig zu sein, bevor der nächste kommt —
@@ -85,6 +88,20 @@ export class VesselView {
   /** Periskop — sichtbar nur, wenn das Modell eines gesetzt hat (depth+periscope). */
   private readonly periscope: Sprite | null = null;
 
+  /**
+   * Schadensrauch: prozedurale Partikel (aufsteigende, wachsende, verblassende
+   * Kreise) ÜBER dem Rumpf. Lebt im aufrechten Billboard-Container — Rauch
+   * steigt senkrecht im Bild, die Wasserebene würde ihn flach scheren.
+   */
+  private readonly smoke = new Graphics();
+  private readonly smokeParticles: Array<{
+    x: number;
+    drift: number;
+    age: number;
+    dark: boolean;
+  }> = [];
+  private smokeSpawnIn = 0;
+
   private lastSerial = -1;
   private pingAge = PING_SECONDS;
 
@@ -104,6 +121,9 @@ export class VesselView {
         this.root.addChild(this.periscope);
       }
     }
+
+    // Rauch als OBERSTES Kind — er soll über Rumpf und Aufbauten liegen.
+    this.root.addChild(this.smoke);
   }
 
   /** Außerhalb der optischen Sicht wird gar nicht erst gezeichnet. */
@@ -228,6 +248,56 @@ export class VesselView {
 
     this.drawOrder(model, zoom, frameSeconds);
     this.drawWake(model, frameSeconds);
+    this.updateSmoke(model, frameSeconds);
+  }
+
+  /**
+   * Schadensrauch: Stufe 1 (weiß, HP < 50 %) qualmt gemächlich, Stufe 2
+   * (schwarz, HP < 20 %) dicht und dunkel. Partikel steigen auf, driften
+   * leicht nach Lee, wachsen und verblassen. Unter Wasser raucht nichts.
+   */
+  private updateSmoke(model: Vessel, frameSeconds: number): void {
+    const g = this.smoke;
+    const level = model.smoke;
+    const active = level > 0 && model.depth < 0.5;
+
+    for (const particle of this.smokeParticles) particle.age += frameSeconds;
+    while (this.smokeParticles.length > 0 && this.smokeParticles[0]!.age > SMOKE_MAX_AGE) {
+      this.smokeParticles.shift();
+    }
+
+    if (active) {
+      this.smokeSpawnIn -= frameSeconds;
+      if (this.smokeSpawnIn <= 0) {
+        this.smokeSpawnIn = level === 2 ? 0.16 : 0.32;
+        // `Math.random` ist hier erlaubt: reine Client-Optik, keine Simulation.
+        this.smokeParticles.push({
+          x: (Math.random() - 0.5) * 8,
+          drift: 3 + Math.random() * 5,
+          age: 0,
+          dark: level === 2,
+        });
+        if (this.smokeParticles.length > 24) this.smokeParticles.shift();
+      }
+    }
+
+    if (this.smokeParticles.length === 0) {
+      if (g.context.instructions.length > 0) g.clear();
+      return;
+    }
+
+    g.clear();
+    for (const particle of this.smokeParticles) {
+      const t = particle.age / SMOKE_MAX_AGE;
+      const alpha = (particle.dark ? 0.42 : 0.3) * (1 - t);
+      if (alpha < 0.015) continue;
+      const radius = 2.5 + t * 9;
+      const rise = 6 + particle.age * 14;
+      g.circle(particle.x + particle.drift * particle.age, -rise, radius).fill({
+        color: particle.dark ? 0x16181b : 0xdde3e8,
+        alpha,
+      });
+    }
   }
 
   detach(): void {

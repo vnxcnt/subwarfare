@@ -13,9 +13,13 @@ import type {
   WeaponId,
 } from '@subwarfare/shared';
 import {
+  DAMAGE,
+  DECOY,
   DEFAULT_SHIP_STATS,
   DESTROYER,
+  GUN,
   SHIP_TYPE_SUBMARINE,
+  SIDE_LAUNCH_HALF_ANGLE_DEG,
   TORPEDO,
   Vessel,
   angleDelta,
@@ -23,7 +27,6 @@ import {
   profileForShip,
 } from '@subwarfare/shared';
 import { GameSocket } from '../network/GameSocket';
-import { OrderController } from './OrderController';
 import { getTilt, setTilt } from './Projection';
 import { GameAudio } from './sound';
 import { loadVesselTextures } from './textures';
@@ -55,11 +58,33 @@ export class Game {
   private app: Application | null = null;
   private world: World | null = null;
   private camera: CameraController | null = null;
-  private orders: OrderController | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private tiltKeys: ((event: KeyboardEvent) => void) | null = null;
   private traffic: DemoTraffic | null = null;
   private accumulator = 0;
+
+  /** Handruder über A/D — gehaltene Tasten, zuletzt gesendete Ruderlage. */
+  private steerListeners: {
+    down: (event: KeyboardEvent) => void;
+    up: (event: KeyboardEvent) => void;
+    blur: () => void;
+  } | null = null;
+  private steerLeft = false;
+  private steerRight = false;
+  private sentSteer = 0;
+  /** Unterdrückt das Browser-Kontextmenü auf dem Canvas (Rechtsklick tut nichts mehr). */
+  private contextMenuBlocker: ((event: Event) => void) | null = null;
+
+  /**
+   * Waffen-Zielmodus (Q): Peilung zur Maus, sektorgebunden gefeuert. Nur für
+   * Überwasserschiffe — U-Boote zielen nicht (Bugrohr voraus).
+   */
+  private aiming = false;
+  /** Letzte Mausposition auf dem Canvas, in CSS-Pixeln. Null vor der ersten Bewegung. */
+  private mouseScreen: { x: number; y: number } | null = null;
+  private mouseMoveListener: ((event: PointerEvent) => void) | null = null;
+  /** Pro Frame berechnete Zielpeilung in Kursgrad — null, wenn nicht zielbar. */
+  private aimBearing: number | null = null;
 
   private socket: GameSocket | null = null;
   private selfId: string = DEMO_VESSEL.id;
@@ -144,11 +169,34 @@ export class Game {
     );
   }
 
-  /** Hält das Fahrprofil eines Fahrzeugs auf dem Stand seines Modells. */
+  /**
+   * Hält das Fahrprofil eines Fahrzeugs auf dem Stand seines Modells — und
+   * spiegelt beim EIGENEN Boot die Schadens-Drossel des Servers, damit die
+   * Telegraf-Anzeige (Höchstfahrt, befohlene Fahrt) dieselbe Wahrheit zeigt,
+   * mit der der Server tatsächlich fährt.
+   */
   private ensureProfile(vessel: Vessel): void {
-    if (this.appliedProfileModel.get(vessel.id) === vessel.model) return;
-    vessel.applyProfile(profileForShip(DESTROYER, this.shipStats(vessel.model)));
-    this.appliedProfileModel.set(vessel.id, vessel.model);
+    const stats = this.shipStats(vessel.model);
+    const throttled =
+      vessel.id === this.selfId &&
+      this.ownHp !== null &&
+      this.ownHp > 0 &&
+      this.ownHp < stats.hp * DAMAGE.slowHpRatio;
+
+    const key = `${vessel.model}:${throttled ? 'gedrosselt' : 'voll'}`;
+    if (this.appliedProfileModel.get(vessel.id) === key) return;
+
+    const base = profileForShip(DESTROYER, stats);
+    vessel.applyProfile(
+      throttled
+        ? {
+            ...base,
+            maxForward: base.maxForward * DAMAGE.slowFactor,
+            maxReverse: base.maxReverse * DAMAGE.slowFactor,
+          }
+        : base,
+    );
+    this.appliedProfileModel.set(vessel.id, key);
   }
 
   get isOnline(): boolean {
@@ -226,7 +274,21 @@ export class Game {
     world.applyCamera(app.screen.width, app.screen.height);
 
     this.camera = new CameraController(app.canvas, world, () => world.stopFollowing());
-    this.orders = new OrderController(app.canvas, world, (x, y) => this.orderWaypoint(x, y));
+
+    // Rechtsklick steuert seit Protokoll v6 nichts mehr — aber das Browser-
+    // Kontextmenü über der Karte wäre trotzdem nur im Weg.
+    this.contextMenuBlocker = (event: Event) => event.preventDefault();
+    app.canvas.addEventListener('contextmenu', this.contextMenuBlocker);
+
+    // Mausposition für den Zielmodus — pointermove statt mousemove, damit
+    // auch Stifte/Touchpads zählen. Nur merken, gerechnet wird pro Frame.
+    this.mouseMoveListener = (event: PointerEvent) => {
+      const rect = app.canvas.getBoundingClientRect();
+      this.mouseScreen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    };
+    app.canvas.addEventListener('pointermove', this.mouseMoveListener);
+
+    this.attachSteering();
 
     app.ticker.add((ticker) => this.step(ticker.deltaMS / 1000));
 
@@ -380,6 +442,9 @@ export class Game {
         world.centerOn(vessel.x, vessel.y);
         world.follow(vessel);
         setSunkNotice(null);
+        // Ruderlage neu ansagen: das frische Server-Boot steht mittschiffs,
+        // die gehaltene Taste soll sofort wieder greifen.
+        this.pushSteer(true);
       }
     }
 
@@ -415,13 +480,22 @@ export class Game {
           closest = player;
         }
       }
+      // Täuschkörper bleiben leise (Gegenmaßnahme, kein Alarm) — Torpedos
+      // und Geschütz haben je ihren eigenen Abschussklang.
+      if (projectile.model !== TORPEDO.model && projectile.model !== GUN.model) continue;
+
       // Abschussoffset liegt bei ~75 m plus ein Broadcast-Intervall Flugweg.
       if (closest && best < 200) {
         const own = this.ownVessel;
-        this.audio?.playFire(
-          this.shipStats(closest.model).type === SHIP_TYPE_SUBMARINE,
-          own ? Math.hypot(projectile.x - own.x, projectile.y - own.y) : 0,
-        );
+        const distance = own ? Math.hypot(projectile.x - own.x, projectile.y - own.y) : 0;
+        if (projectile.model === GUN.model) {
+          this.audio?.playGunFire(distance);
+        } else {
+          this.audio?.playFire(
+            this.shipStats(closest.model).type === SHIP_TYPE_SUBMARINE,
+            distance,
+          );
+        }
       }
     }
     this.previousProjectileIds = current;
@@ -496,15 +570,145 @@ export class Game {
   /* --- Befehle -------------------------------------------------------- */
 
   /**
-   * Fahrbefehl. Online geht NUR die Absicht ans Netz; die Bestätigung kommt
-   * über das `own`-Ereignis zurück. Offline wirkt der Befehl direkt.
+   * Handruder auf A (Backbord) und D (Steuerbord). Gehaltene Tasten werden zu
+   * einer Ruderlage −1/0/1 verrechnet, gesendet wird NUR bei Änderung — nicht
+   * pro Frame und nicht pro Auto-Repeat.
    */
-  orderWaypoint(x: number, y: number): void {
-    if (this.socket) {
-      this.socket.sendWaypoint(x, y);
+  private attachSteering(): void {
+    const down = (event: KeyboardEvent): void => {
+      if (isTextEntry(event.target) || event.repeat) return;
+      if (event.code === 'KeyA') this.steerLeft = true;
+      else if (event.code === 'KeyD') this.steerRight = true;
+      else if (event.code === 'KeyQ') {
+        this.toggleAiming();
+        event.preventDefault();
+        return;
+      } else return;
+      this.pushSteer();
+      event.preventDefault();
+    };
+    const up = (event: KeyboardEvent): void => {
+      if (event.code === 'KeyA') this.steerLeft = false;
+      else if (event.code === 'KeyD') this.steerRight = false;
+      else return;
+      this.pushSteer();
+    };
+    // Fensterwechsel mit gehaltener Taste: das keyup kommt nie an — ohne den
+    // Reset liefe das Boot ewig im Kreis.
+    const blur = (): void => {
+      this.steerLeft = false;
+      this.steerRight = false;
+      this.pushSteer();
+    };
+
+    this.steerListeners = { down, up, blur };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+  }
+
+  /**
+   * Ruderlage aus den gehaltenen Tasten senden — normal nur bei Änderung.
+   * `force` erzwingt den Send: nach Versenkung/Respawn spawnt der Server ein
+   * frisches Boot mit Ruder mittschiffs, während `sentSteer` noch den alten
+   * Wert hält — ohne Resync führe das Boot trotz gehaltener Taste geradeaus.
+   */
+  private pushSteer(force = false): void {
+    const value = (this.steerRight ? 1 : 0) - (this.steerLeft ? 1 : 0);
+    if (!force && value === this.sentSteer) return;
+    this.sentSteer = value;
+    if (this.socket) this.socket.sendSteer(value);
+    else this.ownVessel?.setSteer(value);
+  }
+
+  /* --- Zielmodus ------------------------------------------------------- */
+
+  /** Ob das eigene Boot überhaupt zielt — U-Boote haben keinen Zielmodus. */
+  private ownAimsWithMouse(): boolean {
+    const own = this.ownVessel;
+    return !!own && this.shipStats(own.model).type !== SHIP_TYPE_SUBMARINE;
+  }
+
+  /**
+   * Q schaltet den Zielmodus. Beim Einschalten zentriert die Kamera aufs
+   * eigene Boot und folgt ihm — gezielt wird relativ zum Schiff, die Karte
+   * soll dabei nicht wegdriften.
+   */
+  private toggleAiming(): void {
+    if (!this.ownAimsWithMouse()) return;
+    this.aiming = !this.aiming;
+    const own = this.ownVessel;
+    const world = this.world;
+    if (this.aiming && own && world) {
+      world.centerOn(own.x, own.y);
+      world.follow(own);
+    }
+    if (!this.aiming) {
+      this.world?.setAimLine(null);
+      this.aimBearing = null;
+    }
+  }
+
+  /**
+   * Pro Frame: Peilung zur Maus bestimmen, Ziellinie zeichnen. Grün in einem
+   * gültigen Feuersektor (Bug fürs Geschütz, Seiten für Torpedo/Täuschkörper —
+   * je nachdem, was das Schiff führt), sonst rot.
+   */
+  private updateAiming(): void {
+    const world = this.world;
+    if (!world) return;
+
+    // Der Zielmodus ERLISCHT, wenn das Boot ihn nicht mehr kann — Wechsel auf
+    // ein U-Boot oder Versenkung. Sonst bliebe das Flag hängen: Q wäre als
+    // U-Boot wirkungslos (Guard) und nach Respawn/Rückwechsel wäre der Modus
+    // ungefragt wieder aktiv, mit invertierter Q-Semantik.
+    if (this.aiming && !this.ownAimsWithMouse()) {
+      this.aiming = false;
+    }
+
+    const own = this.ownVessel;
+    if (!this.aiming || !own || !this.mouseScreen) {
+      if (this.aimBearing !== null) {
+        world.setAimLine(null);
+        this.aimBearing = null;
+      }
       return;
     }
-    this.ownVessel?.orderMoveTo(x, y);
+
+    const target = world.screenToWorld(this.mouseScreen.x, this.mouseScreen.y);
+    const dx = target.x - own.x;
+    const dy = target.y - own.y;
+    // Totzone direkt überm eigenen Boot: keine sinnvolle Peilung. Linie UND
+    // Peilung löschen — stehen lassen fröre beide auf altem Stand ein (die
+    // Kamera folgt dem Boot, der Punkt unter der ruhenden Maus wandert mit).
+    if (Math.hypot(dx, dy) < 1) {
+      world.setAimLine(null);
+      this.aimBearing = null;
+      return;
+    }
+
+    const bearing = norm360((Math.atan2(dx, -dy) * 180) / Math.PI);
+    this.aimBearing = bearing;
+
+    const armament = this.shipStats(own.model).armament;
+    const offset = angleDelta(own.rotation, bearing);
+    const inBow = armament.includes('geschuetz') && Math.abs(offset) <= GUN.arcHalfAngleDeg;
+    const inSide =
+      (armament.includes('torpedo') || armament.includes('taeuschkoerper')) &&
+      Math.abs(Math.abs(offset) - 90) <= SIDE_LAUNCH_HALF_ANGLE_DEG;
+
+    world.setAimLine({ x0: own.x, y0: own.y, x1: target.x, y1: target.y, valid: inBow || inSide });
+  }
+
+  /** Peilung, wenn sie für DIESE Waffe im gültigen Sektor liegt — sonst null. */
+  private aimFor(weapon: WeaponId): number | null {
+    const own = this.ownVessel;
+    if (!this.aiming || !own || this.aimBearing === null) return null;
+    const offset = angleDelta(own.rotation, this.aimBearing);
+    if (weapon === 'geschuetz') {
+      return Math.abs(offset) <= GUN.arcHalfAngleDeg ? this.aimBearing : null;
+    }
+    return Math.abs(Math.abs(offset) - 90) <= SIDE_LAUNCH_HALF_ANGLE_DEG ? this.aimBearing : null;
   }
 
   orderTelegraph(step: number): void {
@@ -535,10 +739,19 @@ export class Game {
 
   /**
    * Feuerbefehl — nur online, der Server rechnet Abschuss und Kollision.
-   * Offline (interner Darstellungsmodus) gibt es keine Projektile.
+   * U-Boote feuern ungerichtet (Bugrohr/achtern). Überwasserschiffe brauchen
+   * den Zielmodus (Q) und eine Peilung im gültigen Sektor — sonst fällt kein
+   * Schuss (die rote Linie zeigt warum). Der Server prüft dasselbe noch mal.
    */
   orderFire(weapon: WeaponId): void {
-    this.socket?.sendFire(weapon);
+    if (!this.socket) return;
+    if (!this.ownAimsWithMouse()) {
+      this.socket.sendFire(weapon);
+      return;
+    }
+    const bearing = this.aimFor(weapon);
+    if (bearing === null) return;
+    this.socket.sendFire(weapon, bearing);
   }
 
   /** Eigene Lebenspunkte laut Server; null, solange kein `own` ankam. */
@@ -548,7 +761,9 @@ export class Game {
 
   /** Restmunition einer Waffe laut Server; Kapazität als Startwert vor dem `own`. */
   ammoFor(weapon: WeaponId): number {
-    return this.ownAmmo[weapon] ?? (weapon === 'torpedo' ? TORPEDO.capacity : 0);
+    const fallback =
+      weapon === 'torpedo' ? TORPEDO.capacity : weapon === 'taeuschkoerper' ? DECOY.capacity : 0;
+    return this.ownAmmo[weapon] ?? fallback;
   }
 
   /**
@@ -638,6 +853,10 @@ export class Game {
       world.setVision(0, 0, 0, 0, 0);
     }
 
+    // Zielmodus: Peilung zur Maus + Ziellinie (nutzt die Kameramatrix des
+    // Vorframes — bei 60 Hz unsichtbar, dafür ohne doppelten Matrixbau).
+    this.updateAiming();
+
     // Reihenfolge ist zwingend: erst simulieren, dann die Ansichten nachziehen,
     // dann die Kamera folgen lassen, dann die Matrizen bauen. Andersherum folgt
     // die Kamera der Position des Vorframes und der nächste Rechtsklick rechnet
@@ -664,10 +883,25 @@ export class Game {
     setSunkNotice(null);
     if (this.tiltKeys) window.removeEventListener('keydown', this.tiltKeys);
     this.tiltKeys = null;
+    if (this.steerListeners) {
+      window.removeEventListener('keydown', this.steerListeners.down);
+      window.removeEventListener('keyup', this.steerListeners.up);
+      window.removeEventListener('blur', this.steerListeners.blur);
+      this.steerListeners = null;
+    }
+    if (this.contextMenuBlocker && this.app) {
+      this.app.canvas.removeEventListener('contextmenu', this.contextMenuBlocker);
+    }
+    this.contextMenuBlocker = null;
+    if (this.mouseMoveListener && this.app) {
+      this.app.canvas.removeEventListener('pointermove', this.mouseMoveListener);
+    }
+    this.mouseMoveListener = null;
+    this.aiming = false;
+    this.aimBearing = null;
+    this.mouseScreen = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
-    this.orders?.destroy();
-    this.orders = null;
     this.camera?.destroy();
     this.camera = null;
     this.world?.destroy();
@@ -694,6 +928,8 @@ function lerpState(a: PlayerState, b: PlayerState, t: number): PlayerState {
     speed: a.speed + (b.speed - a.speed) * t,
     depth: a.depth + (b.depth - a.depth) * t,
     periscope: a.periscope + (b.periscope - a.periscope) * t,
+    // Diskret wie das Modell: eine Rauchstufe „interpoliert" nicht.
+    smoke: b.smoke,
   };
 }
 
