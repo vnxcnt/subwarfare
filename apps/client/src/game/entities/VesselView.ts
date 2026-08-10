@@ -1,6 +1,6 @@
-import { DEG, DEFAULT_VESSEL_MODEL, angleDelta } from '@subwarfare/shared';
+import { DEG, DEFAULT_VESSEL_MODEL, HULL_DIMENSIONS, angleDelta } from '@subwarfare/shared';
 import { Container, Graphics, Sprite } from 'pixi.js';
-import { HULL } from '../../config';
+import { HULL, WAKE } from '../../config';
 import { getTilt } from '../Projection';
 import { directionFrame, hasVesselTextures, periscopeFrame } from '../textures';
 import type { Vessel } from '@subwarfare/shared';
@@ -62,6 +62,14 @@ export class VesselView {
   private readonly order = new Graphics();
 
   /**
+   * Kielwasser: Schaumspur aus der Positionshistorie plus Bugwellen-V. Liegt
+   * wie die Wegpunktgrafik IN der Wasserebene — Schaum liegt AUF dem Wasser
+   * und soll die Projektion mitmachen.
+   */
+  private readonly wake = new Graphics();
+  private readonly wakeSamples: Array<{ x: number; y: number; age: number }> = [];
+
+  /**
    * Überblendung beim Framewechsel: der ALTE Frame liegt kurz über dem neuen
    * und blendet aus. Ohne das wechselt die Perspektive als sichtbarer Blitz —
    * mit 130 ms Übergang löst sich das eine Foto ins nächste auf.
@@ -102,10 +110,12 @@ export class VesselView {
   setVisible(visible: boolean): void {
     this.root.visible = visible;
     this.order.visible = visible;
+    this.wake.visible = visible;
   }
 
   attach(waterLayer: Container, billboardLayer: Container): void {
-    waterLayer.addChild(this.order);
+    // Spur zuerst — sie soll UNTER Wegpunktgrafik und Effekten liegen.
+    waterLayer.addChild(this.wake, this.order);
     billboardLayer.addChild(this.root);
   }
 
@@ -217,10 +227,12 @@ export class VesselView {
     this.root.scale.set(Math.min(Math.max(boost, 1), HULL.maxBoost));
 
     this.drawOrder(model, zoom, frameSeconds);
+    this.drawWake(model, frameSeconds);
   }
 
   detach(): void {
     this.order.removeFromParent();
+    this.wake.removeFromParent();
     this.root.removeFromParent();
   }
 
@@ -229,7 +241,83 @@ export class VesselView {
     // `context: true` ist nötig — die eigenen GraphicsContexts hängen nicht an
     // den Default-DestroyOptions und blieben sonst samt Geometrie auf der GPU.
     this.order.destroy({ context: true });
+    this.wake.destroy({ context: true });
     this.root.destroy({ children: true, context: true });
+  }
+
+  /**
+   * Kielwasser: hinter dem Heck bleibt eine alternde Schaumspur liegen, vor
+   * dem Bug öffnet sich das V der Bugwelle. Alles ∝ Fahrt; ein getauchtes
+   * Boot hinterlässt an der Oberfläche nichts (Faktor 1 − depth).
+   */
+  private drawWake(model: Vessel, frameSeconds: number): void {
+    const g = this.wake;
+
+    for (const sample of this.wakeSamples) sample.age += frameSeconds;
+    while (this.wakeSamples.length > 0 && this.wakeSamples[0]!.age > WAKE.maxAgeSeconds) {
+      this.wakeSamples.shift();
+    }
+
+    const speedRatio =
+      model.maxForward > 0 ? Math.min(Math.abs(model.speed) / model.maxForward, 1) : 0;
+    const surface = 1 - Math.min(Math.max(model.depth, 0), 1);
+    const intensity = speedRatio * surface;
+
+    const dims = HULL_DIMENSIONS[model.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const heading = model.rotation * DEG;
+    const forwardX = Math.sin(heading);
+    const forwardY = -Math.cos(heading);
+    const sternX = model.x - forwardX * dims.length * 0.42;
+    const sternY = model.y - forwardY * dims.length * 0.42;
+
+    const newest = this.wakeSamples[this.wakeSamples.length - 1];
+    if (
+      intensity > 0.05 &&
+      (!newest || Math.hypot(sternX - newest.x, sternY - newest.y) > WAKE.minSampleDistance)
+    ) {
+      this.wakeSamples.push({ x: sternX, y: sternY, age: 0 });
+    }
+
+    g.clear();
+    if (this.wakeSamples.length === 0 && intensity <= 0.05) return;
+
+    // Schaumspur: jedes Segment verblasst quadratisch (Schaum zerfällt erst
+    // langsam, dann schnell) und läuft dabei in die Breite.
+    for (let i = 1; i < this.wakeSamples.length; i += 1) {
+      const a = this.wakeSamples[i - 1]!;
+      const b = this.wakeSamples[i]!;
+      const age = (a.age + b.age) / 2;
+      const t = age / WAKE.maxAgeSeconds;
+      const alpha = WAKE.foamAlpha * (1 - t) * (1 - t);
+      if (alpha < 0.015) continue;
+      const width = dims.beam * (0.45 + t * 1.1);
+      g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ color: WAKE.foamColor, alpha, width });
+    }
+    // Die jüngste Probe ans Heck anbinden, sonst klafft bei Fahrt eine Lücke.
+    if (newest && intensity > 0.05) {
+      const t = newest.age / WAKE.maxAgeSeconds;
+      g.moveTo(newest.x, newest.y)
+        .lineTo(sternX, sternY)
+        .stroke({
+          color: WAKE.foamColor,
+          alpha: WAKE.foamAlpha * (1 - t),
+          width: dims.beam * 0.45,
+        });
+    }
+
+    // Bugwellen-V: zwei Schenkel schräg nach achtern, Länge ∝ Fahrt.
+    if (intensity > 0.05) {
+      const bowX = model.x + forwardX * dims.length * 0.5;
+      const bowY = model.y + forwardY * dims.length * 0.5;
+      const length = dims.length * WAKE.bowLengthFactor * intensity;
+      const backDegrees = model.rotation + 180;
+      for (const side of [-1, 1]) {
+        const angle = (backDegrees + side * WAKE.bowAngleDeg) * DEG;
+        g.moveTo(bowX, bowY)
+          .lineTo(bowX + Math.sin(angle) * length, bowY - Math.cos(angle) * length)
+          .stroke({ color: WAKE.foamColor, alpha: 0.3 * intensity, width: dims.beam * 0.14 });
+      }
+    }
   }
 
   private drawOrder(model: Vessel, zoom: number, frameSeconds: number): void {
@@ -274,9 +362,10 @@ export class VesselView {
  */
 /**
  * Tönung nach Tiefe: von Weiß (keine Änderung) zu tiefem Grünblau. Multiplikativ
- * auf dem Container — färbt Rumpf UND Crossfade-Geist gleichermaßen.
+ * auf dem Container — färbt Rumpf UND Crossfade-Geist gleichermaßen. Exportiert,
+ * weil auch Projektile (Torpedos laufen UNTER Wasser) dieselbe Optik tragen.
  */
-function tintForDepth(depth: number): number {
+export function tintForDepth(depth: number): number {
   const r = Math.round(255 - depth * (255 - 0x4e));
   const g = Math.round(255 - depth * (255 - 0x7a));
   const b = Math.round(255 - depth * (255 - 0x8e));

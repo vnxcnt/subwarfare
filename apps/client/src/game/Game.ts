@@ -15,6 +15,7 @@ import type {
 import {
   DEFAULT_SHIP_STATS,
   DESTROYER,
+  SHIP_TYPE_SUBMARINE,
   TORPEDO,
   Vessel,
   angleDelta,
@@ -24,6 +25,7 @@ import {
 import { GameSocket } from '../network/GameSocket';
 import { OrderController } from './OrderController';
 import { getTilt, setTilt } from './Projection';
+import { GameAudio } from './sound';
 import { loadVesselTextures } from './textures';
 import { World } from './World';
 import { isTextEntry } from '../ui/dom';
@@ -61,6 +63,20 @@ export class Game {
 
   private socket: GameSocket | null = null;
   private selfId: string = DEMO_VESSEL.id;
+  private audio: GameAudio | null = null;
+  /**
+   * Projektil-Kennungen des letzten Broadcasts. Eine NEUE Kennung neben einem
+   * Schiff ist ein Abschuss — der Auslöser für den Abschussklang.
+   */
+  private previousProjectileIds = new Set<string>();
+  /**
+   * Abschussklänge sind erst scharf, wenn der VORIGE Broadcast das eigene
+   * Boot enthielt. Beim Join und nach dem Respawn ist sonst jeder bereits
+   * fliegende Torpedo „neu" und würde als Phantom-Abschuss knallen.
+   */
+  private launchSoundsArmed = false;
+  /** Von destroy() gesetzt — bricht ein noch laufendes init() sauber ab. */
+  private disposed = false;
   /**
    * `own` kann vor dem ersten `state` eintreffen — dann existiert das eigene
    * Fahrzeug noch nicht. Der letzte Stand wird beim Spawn nachgetragen.
@@ -153,6 +169,7 @@ export class Game {
 
   async init(host: HTMLElement, session: OnlineSession | null = null): Promise<void> {
     if (this.app) return;
+    this.disposed = false;
 
     const app = new Application();
     await app.init({
@@ -163,6 +180,14 @@ export class Game {
       autoDensity: true,
       resolution: Math.min(window.devicePixelRatio || 1, RENDERER.maxResolution),
     });
+
+    // destroy() kann während des awaits gelaufen sein (HMR, schneller
+    // Routenwechsel). `this.app` war da noch null — hier selbst aufräumen,
+    // sonst baut init() ein Zombie-Spiel an einen unmounteten Host.
+    if (this.disposed) {
+      app.destroy(true, { children: true });
+      return;
+    }
 
     host.appendChild(app.canvas);
     // `resizeTo` misst erst beim nächsten Resize-Event — einmal explizit anstoßen,
@@ -179,6 +204,17 @@ export class Game {
     // Muss VOR dem ersten spawn stehen — `VesselView` greift synchron auf die
     // Textur zu und fiele sonst auf das Vektorpolygon zurück.
     await loadVesselTextures();
+
+    // Lief destroy() während des Texturladens, hat es `this.app` (oben schon
+    // gesetzt) bereits abgeräumt — hier nur noch aussteigen.
+    if (this.disposed) return;
+
+    // Klang lädt nebenher — bis die Puffer da sind, schweigt er einfach.
+    // Ohne Klang bleibt das Spiel voll spielbar, deshalb nur eine Warnung.
+    this.audio = new GameAudio();
+    this.audio.init().catch((error) => {
+      console.warn('[client] Spielklang nicht ladbar — es bleibt still:', error);
+    });
 
     const world = new World();
     app.stage.addChild(world.container);
@@ -260,7 +296,19 @@ export class Game {
       onPlayerLeft: (id) => {
         if (id !== this.selfId) world.entities.remove(id);
       },
-      onFx: (payload) => world.spawnImpact(payload.x, payload.y, payload.kind === 'sunk'),
+      onFx: (payload) => {
+        world.spawnImpact(payload.x, payload.y, payload.kind === 'sunk');
+        // Klang NUR für 'impact': der tödliche Treffer schickt impact UND
+        // sunk im selben Tick — zweimal derselbe Knall wäre ein Doppelklang.
+        // 'sunk' bleibt (vorerst) rein visuell.
+        if (payload.kind !== 'impact') return;
+        // Hörer-Position: das eigene Boot, sonst die Kamera. Die steht beim
+        // eigenen Wrack (der eigene Untergang bleibt laut), aber ein fremder
+        // Einschlag kilometerweit weg bleibt auch im Respawn-Fenster leise —
+        // Distanz 0 als Fallback wäre ein Vollknall aus 4 km.
+        const listener = this.ownVessel ?? world.camera;
+        this.audio?.playImpact(Math.hypot(payload.x - listener.x, payload.y - listener.y));
+      },
       onDestroyed: (payload) => {
         // Das eigene Boot verschwindet mit dem nächsten Broadcast von selbst
         // aus dem Bestand — hier bleibt nur die Meldung an den Spieler.
@@ -294,7 +342,12 @@ export class Game {
       // Ältere Server (Protokoll < 4) schicken das Feld nicht — leer statt Crash.
       projectiles: new Map((payload.projectiles ?? []).map((p) => [p.id, p])),
     });
+    // Deckel: getrimmt wird sonst nur im Ticker (`applyInterpolated`), und der
+    // steht bei verborgenem Tab still — die 20 Hz kämen trotzdem weiter an.
+    while (this.snapshots.length > 40) this.snapshots.shift();
     if (this.renderTick < 0) this.renderTick = payload.tick - Game.DELAY_TICKS;
+
+    this.detectLaunches(payload);
 
     const seen = new Set<string>();
     for (const player of payload.players) {
@@ -334,6 +387,47 @@ export class Game {
     for (const vessel of [...world.entities.models()]) {
       if (!seen.has(vessel.id)) world.entities.remove(vessel.id);
     }
+  }
+
+  /**
+   * Abschusserkennung fürs Gehör: eine Projektil-Kennung, die es im vorigen
+   * Broadcast noch nicht gab UND die neben einem Schiff auftaucht, ist ein
+   * Abschuss. Die Nähe-Prüfung ist nötig, weil ein Torpedo auch mitten im
+   * Flug in die eigene Sonar-Reichweite einlaufen kann — der hat seinen
+   * Abschussknall woanders gehabt. Der Typ des nächsten Schiffs entscheidet,
+   * ob es nach U-Boot- oder Schiffsrohr klingt.
+   */
+  private detectLaunches(payload: StatePayload): void {
+    const current = new Set<string>();
+    for (const projectile of payload.projectiles ?? []) {
+      current.add(projectile.id);
+      if (this.previousProjectileIds.has(projectile.id)) continue;
+      // Nicht scharf (Join, Tod, erster Broadcast nach Respawn): nur den
+      // Bestand aufnehmen — diese Torpedos wurden irgendwann früher gefeuert.
+      if (!this.launchSoundsArmed) continue;
+
+      let closest: PlayerState | null = null;
+      let best = Number.POSITIVE_INFINITY;
+      for (const player of payload.players) {
+        const d = Math.hypot(projectile.x - player.x, projectile.y - player.y);
+        if (d < best) {
+          best = d;
+          closest = player;
+        }
+      }
+      // Abschussoffset liegt bei ~75 m plus ein Broadcast-Intervall Flugweg.
+      if (closest && best < 200) {
+        const own = this.ownVessel;
+        this.audio?.playFire(
+          this.shipStats(closest.model).type === SHIP_TYPE_SUBMARINE,
+          own ? Math.hypot(projectile.x - own.x, projectile.y - own.y) : 0,
+        );
+      }
+    }
+    this.previousProjectileIds = current;
+    // Scharf erst ab dem Broadcast NACH einem mit eigenem Boot — deckt Join,
+    // Versenkung (leere Zustände) und den ersten Respawn-Broadcast ab.
+    this.launchSoundsArmed = payload.players.some((player) => player.id === this.selfId);
   }
 
   /**
@@ -512,6 +606,17 @@ export class Game {
     const own = this.ownVessel;
     world.setUnderwaterDepth(own?.depth ?? 0);
 
+    // Klangkulisse: Ambient nach Tauchtiefe, Motor nach Fahrt und Bauart.
+    this.audio?.update(
+      own
+        ? {
+            depth: own.depth,
+            power: own.maxForward > 0 ? Math.abs(own.speed) / own.maxForward : 0,
+            submarine: this.shipStats(own.model).type === SHIP_TYPE_SUBMARINE,
+          }
+        : null,
+    );
+
     // Optische Sicht: an der Oberfläche ein Kreis, der mit der Tauchtiefe
     // schrumpft; unter Wasser nur der Periskop-Kegel in Fahrtrichtung, der
     // mit dem Ausfahren aufgeht. Beides zugleich während der Übergänge.
@@ -547,9 +652,13 @@ export class Game {
   }
 
   destroy(): void {
+    this.disposed = true;
     this.socket?.disconnect();
     this.socket = null;
     this.snapshots.length = 0;
+    this.previousProjectileIds.clear();
+    this.audio?.destroy();
+    this.audio = null;
     this.ownHp = null;
     this.ownAmmo = {};
     setSunkNotice(null);

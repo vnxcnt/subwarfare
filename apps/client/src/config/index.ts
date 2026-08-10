@@ -54,8 +54,8 @@ export const VIEW = {
 
 /** Aussehen der Wasserfläche. Farben als lineare RGB-Tripel für den Shader. */
 export const WATER = {
-  deep: [0.02, 0.09, 0.16],
-  shallow: [0.06, 0.26, 0.34],
+  deep: [0.008, 0.045, 0.095],
+  shallow: [0.03, 0.14, 0.21],
   /**
    * Richtung zur Sonne, als Weltvektor (x = Ost, y = Süd, z = oben).
    * Speist sowohl das Streiflicht im Wasser-Shader als auch die Schattenrichtung
@@ -117,6 +117,26 @@ export const DEMO_TRAFFIC = [
 export const PATROL_MARGIN = 600;
 
 /**
+ * Kielwasser: prozedural gezeichnete Schaumspur + Bugwellen-V je Fahrzeug.
+ * Rein optisch, client-seitig aus den interpolierten Positionen — keine
+ * Netzdaten, keine Assets. Intensität ∝ Fahrt, getaucht (depth→1) verschwindet
+ * die Oberflächenspur.
+ */
+export const WAKE = {
+  /** Lebensdauer einer Schaumprobe in Sekunden — danach ist sie verblasst. */
+  maxAgeSeconds: 3.5,
+  /** Mindestabstand zwischen zwei Proben in Metern (begrenzt die Segmentzahl). */
+  minSampleDistance: 12,
+  foamColor: 0xdfeef4,
+  /** Deckkraft der frischen Spur direkt am Heck. */
+  foamAlpha: 0.3,
+  /** Halber Öffnungswinkel des Bugwellen-V. Kelvin-Winkel ≈ 19,47°. */
+  bowAngleDeg: 19,
+  /** Länge der V-Schenkel bei voller Fahrt, in Schiffslängen. */
+  bowLengthFactor: 1.1,
+} as const;
+
+/**
  * Optische Sicht.
  *
  * REINE Darstellung: das Netz liefert ohnehin nur, was das Sonar ortet
@@ -133,6 +153,24 @@ export const VISION = {
   coneHalfAngleDeg: 26,
   /** Deckkraft der Verdunkelung außerhalb der Sicht. */
   darkness: 0.62,
+} as const;
+
+/**
+ * Lautstärken des Spiel-Sounds (0..1, multipliziert auf die Web-Audio-Gains).
+ * Die Kulisse bleibt bewusst unter der Ereignis-Ebene: Abschüsse und
+ * Einschläge müssen aus dem Dauerklang herausstechen.
+ */
+export const AUDIO = {
+  /** Wasseroberfläche — leises Grundrauschen. */
+  ambientWater: 0.22,
+  /** Unter Wasser — dichter, darf präsenter sein. */
+  ambientUnderwater: 0.4,
+  /** Motor bei Höchstfahrt; skaliert linear mit |Fahrt| / Höchstfahrt. */
+  engineMax: 0.4,
+  fire: 0.65,
+  impact: 0.8,
+  /** Hörweite für Abschüsse/Einschläge in Metern — linearer Abfall auf 0. */
+  hearingRangeMetres: 2_500,
 } as const;
 
 /**

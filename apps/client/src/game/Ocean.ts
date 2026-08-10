@@ -110,14 +110,16 @@ void main() {
   // liegen die Kämme als sichtbares Punktraster auf dem Wasser.
   float ampSum = a1 + a2 + a3 + a4 + a5;
   float patchiness = valueNoise(q * 0.02 + uTime * 0.05);
-  float crest = smoothstep(0.80, 0.99, chop.x / max(ampSum, 0.001))
-              * smoothstep(0.45, 0.80, patchiness);
+  // Etwas früher öffnendes Kamm-Fenster als früher (0.80/0.45) — die Kämme
+  // sollen als dezenter Schaum LESBAR sein, nicht nur als Ahnung.
+  float crest = smoothstep(0.74, 0.97, chop.x / max(ampSum, 0.001))
+              * smoothstep(0.40, 0.75, patchiness);
 
   float spec = pow(max(dot(n, halfway), 0.0), 140.0);
 
   vec3 col = base * (0.70 + 0.30 * max(dot(n, sun), 0.0))
            + vec3(0.60, 0.78, 0.92) * spec * 0.30
-           + vec3(0.70, 0.85, 0.95) * crest * 0.12;
+           + vec3(0.82, 0.90, 0.96) * crest * 0.20;
 
   finalColor = vec4(col, 1.0);
 }

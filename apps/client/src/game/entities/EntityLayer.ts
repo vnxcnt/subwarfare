@@ -89,7 +89,7 @@ export class EntityLayer {
         existing.state = state;
       } else {
         const view = new ProjectileView();
-        view.attach(this.billboardLayer);
+        view.attach(this.waterLayer, this.billboardLayer);
         this.projectiles.set(state.id, { state, view });
       }
     }
