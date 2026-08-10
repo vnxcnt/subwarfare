@@ -1,9 +1,26 @@
 import type { ProjectileState } from '@subwarfare/shared';
-import { DEG, GUN, angleDelta } from '@subwarfare/shared';
+import { DEG, GUN } from '@subwarfare/shared';
 import { Container, Graphics, Sprite } from 'pixi.js';
 import { getTilt } from '../Projection';
 import { directionFrame } from '../textures';
 import { tintForDepth } from './VesselView';
+
+/**
+ * Kamerahöhe der Turntable-Renders (View_x°___50°) als y-Stauchung. Die
+ * Karten-Projektion staucht mit `getTilt()` (~0,42) deutlich stärker — ein
+ * diagonaler Kurs erscheint am Bildschirm dadurch bis zu ~17° flacher, als
+ * die Sprite-Achse aus dem 50°-Render zeigt.
+ */
+const RENDER_ELEVATION = Math.sin((50 * Math.PI) / 180);
+
+/**
+ * Bildschirmwinkel (0 = hoch, im Uhrzeigersinn, Radiant) einer Weltrichtung,
+ * deren y-Anteil mit `squash` gestaucht dargestellt wird.
+ */
+function screenAxisAngle(courseDegrees: number, squash: number): number {
+  const course = courseDegrees * DEG;
+  return Math.atan2(Math.sin(course), Math.cos(course) * squash);
+}
 
 /**
  * Mindestlänge eines Projektils auf dem Bildschirm. Ein 10-m-Torpedo wäre bei
@@ -81,12 +98,20 @@ export class ProjectileView {
           this.sprite.texture = frame.texture;
           this.sprite.anchor.set(frame.anchor.x, frame.anchor.y);
         }
-        this.sprite.rotation = angleDelta(frame.angleDegrees, state.rotation) * DEG;
+        // Achs-Ausrichtung statt bloßem Restwinkel: die SICHTBARE Längsachse
+        // des Frames (50°-Render) wird exakt auf die PROJIZIERTE Bahn gedreht
+        // (tilt ~0,42). Ohne die Korrektur „krabbte" ein diagonal laufendes
+        // Projektil bis ~17° schräg neben seiner eigenen Spur her — bei den
+        // stabförmigen Projektilen ist die Nachdrehung dagegen unsichtbar.
+        // Schiffe bleiben bewusst beim alten Verfahren (komplexe Silhouette).
+        this.sprite.rotation =
+          screenAxisAngle(state.rotation, getTilt()) -
+          screenAxisAngle(frame.angleDegrees, RENDER_ELEVATION);
         this.sprite.width = frame.texture.width * frame.metresPerPx;
         this.sprite.height = frame.texture.height * frame.metresPerPx;
       }
     } else {
-      this.sprite.rotation = state.rotation * DEG;
+      this.sprite.rotation = screenAxisAngle(state.rotation, getTilt());
     }
 
     // Mindestgrößen-Wächter gegen das Verschwinden bei Übersichtszoom —

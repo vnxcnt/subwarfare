@@ -53,14 +53,15 @@ export const DECOY = {
  * Das Geschütz (Grafik-Atlas `he_round01`): flach fliegende Granate im
  * BUGSEKTOR (±arcHalfAngleDeg um den Kurs). Die Peilung kommt vom Zielen mit
  * der Maus; außerhalb des Sektors verweigert der Server den Schuss.
- * ⚠️ Geschwindigkeit im Blick behalten: 120 m/s × 0,05 s = 6 m Tick-Schritt —
- * noch unter dem kleinsten Kapseldurchmesser (9 m). Schneller nur mit
- * Strecken-Kollisionstest.
+ * 360 m/s = 18 m Tick-Schritt — deshalb testet die Kollision die Flugbahn
+ * als STRECKE mit Unterproben (World, PROJECTILE_SAMPLE_SPACING), nicht mehr
+ * nur die Endposition.
  */
 export const GUN = {
   weapon: 'geschuetz',
   model: 'he_round01',
-  speed: 120,
+  /** 120 → 360 am 2026-08-10 (×3 auf Wunsch). */
+  speed: 360,
   rangeMetres: 1_200,
   damage: 40,
   cooldownSeconds: 1.5,

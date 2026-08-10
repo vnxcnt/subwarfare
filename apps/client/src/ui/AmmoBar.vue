@@ -76,15 +76,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 <template>
   <section class="ammo" aria-label="Munition">
     <!-- Rumpfzustand — dieselbe Wahrheit, die der Server für Treffer führt. -->
-    <div v-if="hud.ready" class="ammo__hull hud__panel" aria-label="Rumpf">
-      <span class="ammo__hull-label">Rumpf</span>
+    <div v-if="hud.ready" class="ammo__hull" aria-label="Rumpf">
       <span class="ammo__hull-track">
         <span
           class="ammo__hull-fill"
           :style="{ width: `${hull * 100}%`, background: hullColor }"
         ></span>
+        <span class="ammo__hull-num hud__num">{{ Math.round(hud.hp) }}</span>
       </span>
-      <span class="ammo__hull-num hud__num">{{ Math.round(hud.hp) }}</span>
     </div>
 
     <ul class="ammo__slots">
@@ -121,57 +120,63 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   pointer-events: none;
 }
 
+/*
+ * Rumpfleiste im eigenen health.png-Rahmen (9-Slice): die Ecken bleiben
+ * maßstäblich, nur die Bänder dehnen sich. `fill` zieht die (transparente)
+ * Bildmitte als Hintergrund mit — darunter liegt unser eigener dunkler Track.
+ */
 .ammo__hull {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0.25rem 0.6rem;
-  width: min(260px, 100%);
-}
-
-.ammo__hull-label {
-  font-size: calc(0.5625rem * var(--ui-scale));
-  opacity: 0.55;
+  width: min(300px, 100%);
+  padding: 4px 6px;
+  border: 14px solid transparent;
+  border-image: url('../assets/ui/health.png') 70 fill / 14px 20px;
+  pointer-events: auto;
 }
 
 .ammo__hull-track {
-  flex: 1;
-  height: 5px;
-  border-radius: 3px;
-  background: rgb(9 20 28 / 85%);
+  position: relative;
+  display: block;
+  height: calc(16px * var(--ui-scale));
+  background: rgb(7 14 20 / 90%);
   overflow: hidden;
 }
 
 .ammo__hull-fill {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
+  position: absolute;
+  inset: 0 auto 0 0;
   transition: width 0.25s ease-out;
 }
 
+/* HP-Zahl zentriert IN der Leiste — mit Schattenkante, damit sie auf der
+   grünen Füllung wie auf dem dunklen Rest lesbar bleibt. */
 .ammo__hull-num {
-  font-size: calc(0.6875rem * var(--ui-scale));
-  min-width: 2.2em;
-  text-align: right;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(0.75rem * var(--ui-scale));
+  color: #eef4f8;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 85%);
 }
 
+/*
+ * Munitionsblock im middlemenu.png-Rahmen (9-Slice, halbtransparente Mitte
+ * als Hintergrund). Die Kacheln liegen als Flex-Zeile darin.
+ */
 .ammo__slots {
-  /*
-   * Flex-Zeile statt auto-fit-Grid: der Container ist eine zentrierende
-   * Flex-Spalte, die Liste bekommt dadurch nur ihre Inhaltsbreite — ein
-   * auto-fit-Raster kollabierte darin zu EINER Spalte (Kacheln stapelten
-   * sich senkrecht durchs Bild).
-   */
   display: flex;
   justify-content: center;
   gap: 8px;
   margin: 0;
-  padding: 0;
+  padding: 4px 6px;
   list-style: none;
+  border: 18px solid transparent;
+  border-image: url('../assets/ui/middlemenu.png') 90 fill / 18px 26px;
 }
 
 .ammo__slot {

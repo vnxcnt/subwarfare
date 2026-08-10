@@ -48,6 +48,14 @@ interface Projectile {
   rangeMetres: number;
 }
 
+/**
+ * Höchstabstand zweier Kollisionsproben entlang der Projektilbahn in Metern.
+ * Muss klar unter dem kleinsten Trefferzonen-Durchmesser liegen (speedster01
+ * gegen Granate: 8 m) — 3 m lässt selbst Streiftreffer an den Kapselkappen
+ * nicht durchrutschen. Kostet bei 360 m/s sechs Proben pro Granate und Tick.
+ */
+const PROJECTILE_SAMPLE_SPACING = 3;
+
 /** Was ein Simulationsschritt an Kampfereignissen hervorgebracht hat. */
 export interface WorldEvents {
   /** Einschläge (Torpedo trifft Rumpf) an ihren Weltpunkten. */
@@ -286,7 +294,17 @@ export class World {
    * fx-Meldungen, Versenkungen und Respawns.
    */
   update(deltaSeconds: number): WorldEvents {
-    for (const vessel of this.vessels.values()) vessel.simulate(deltaSeconds);
+    for (const vessel of this.vessels.values()) {
+      vessel.simulate(deltaSeconds);
+      // Der Kartenrand ist eine Wand. Seit der Tastensteuerung (v6) klemmt
+      // kein Wegpunkt mehr — ohne das hier führe jedes Boot endlos in die
+      // Leere hinaus, und Abschüsse jenseits der ±500-m-Zone stürben sofort
+      // als Blindgänger (in der Praxis passiert: 5 km außerhalb gefunden).
+      if (vessel.x < 0) vessel.x = 0;
+      else if (vessel.x > this.map.width) vessel.x = this.map.width;
+      if (vessel.y < 0) vessel.y = 0;
+      else if (vessel.y > this.map.height) vessel.y = this.map.height;
+    }
 
     const events: WorldEvents = { impacts: [], destroyed: [] };
     /** In DIESEM Schritt versenkt — ein Wrack fängt keinen zweiten Torpedo. */
@@ -342,26 +360,36 @@ export class World {
     }
 
     // 3) Rumpftreffer — Torpedos und Granaten; Täuschkörper treffen nichts.
+    //    Die Flugbahn des Ticks wird als STRECKE geprüft: in Unterproben von
+    //    höchstens PROJECTILE_SAMPLE_SPACING Metern, vom Schrittanfang zur
+    //    aktuellen Position. Die Granate legt bei 360 m/s 18 m pro Tick
+    //    zurück — mehr als der kleinste Trefferzonen-Durchmesser (8 m), ein
+    //    reiner Endpunkt-Test flöge mitten durch Rümpfe hindurch.
     for (const projectile of this.projectiles.values()) {
       if (projectile.kind === 'decoy') continue;
 
-      // Granaten machen 6-m-Schritte (120 m/s) — der Mittelpunkt des Schritts
-      // wird mitgetestet, sonst rutschen Streiftreffer an den Kapselkappen
-      // zwischen zwei Ticks hindurch.
-      let victim = this.findHit(projectile, sunkThisStep, projectile.x, projectile.y);
-      if (!victim && projectile.kind === 'shell') {
-        const heading = projectile.rotation * DEG;
-        const half = (projectile.speed * deltaSeconds) / 2;
-        victim = this.findHit(
-          projectile,
-          sunkThisStep,
-          projectile.x - Math.sin(heading) * half,
-          projectile.y + Math.cos(heading) * half,
-        );
+      const step = projectile.speed * deltaSeconds;
+      const heading = projectile.rotation * DEG;
+      const samples = Math.max(1, Math.ceil(step / PROJECTILE_SAMPLE_SPACING));
+
+      let victim: Vessel | null = null;
+      let hitX = projectile.x;
+      let hitY = projectile.y;
+      for (let i = samples - 1; i >= 0 && !victim; i -= 1) {
+        // Rückwärts entlang des Schritts aufgelistet, geprüft wird von der
+        // ÄLTESTEN Position aus — der erste Kontakt auf der Bahn gewinnt.
+        const back = (step * i) / samples;
+        const x = projectile.x - Math.sin(heading) * back;
+        const y = projectile.y + Math.cos(heading) * back;
+        victim = this.findHit(projectile, sunkThisStep, x, y);
+        if (victim) {
+          hitX = x;
+          hitY = y;
+        }
       }
       if (!victim) continue;
 
-      events.impacts.push({ x: projectile.x, y: projectile.y });
+      events.impacts.push({ x: hitX, y: hitY });
       this.projectiles.delete(projectile.id);
 
       const remaining = (this.hitpoints.get(victim.id) ?? 0) - projectile.damage;
@@ -407,11 +435,10 @@ export class World {
    *
    * Der Rumpf ist eine KAPSEL: Strecke der Länge (length − beam) längs des
    * Kurses, verdickt um beam/2 — Bug und Heck enden damit in Halbkreisen.
-   * Getestet wird die aktuelle Projektilposition gegen diese Strecke; bei
-   * 67,5 m/s und 20 Ticks/s legt ein Torpedo ~3,4 m pro Schritt zurück —
-   * weniger als der kleinste Kapseldurchmesser (speedster01: 9 m), ein
-   * Schritt kann die Kapsel also nicht überspringen. Wer die Torpedo-
-   * geschwindigkeit weiter erhöht, muss hier auf Streckentest umbauen.
+   * Getestet wird EIN Punkt (x, y) gegen diese Strecke; dass die gesamte
+   * Flugbahn eines Ticks abgedeckt ist, stellt der Aufrufer über die
+   * Unterproben sicher (PROJECTILE_SAMPLE_SPACING) — Geschwindigkeits-
+   * erhöhungen brauchen hier deshalb keinen Umbau mehr.
    *
    * v1 ignoriert die Tauchtiefe für TORPEDOS (Tiefeneinstellung ist ein
    * späteres Feature). Die GRANATE dagegen ist eine Überwasserwaffe: mehr
