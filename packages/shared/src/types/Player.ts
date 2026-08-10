@@ -6,7 +6,16 @@ export type PlayerId = string;
  * Der Server validiert Modellwechsel gegen diese Liste — was hier nicht
  * steht, fährt nicht.
  */
-export const VESSEL_MODELS = ['fregatte01', 'yachtgun01', 'submarine01', 'speedster01'] as const;
+export const VESSEL_MODELS = [
+  'fregatte01',
+  'yachtgun01',
+  'submarine01',
+  'speedster01',
+  'tanker01',
+  'fregatte02',
+  'submarine02',
+  'destroyer01',
+] as const;
 export type VesselModel = (typeof VESSEL_MODELS)[number];
 
 export const DEFAULT_VESSEL_MODEL: VesselModel = 'fregatte01';

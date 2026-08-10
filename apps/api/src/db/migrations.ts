@@ -103,4 +103,18 @@ export const MIGRATIONS: readonly Migration[] = [
        ON DUPLICATE KEY UPDATE model = model`,
     ],
   },
+  {
+    id: 6,
+    name: 'schiffe-welle-zwei',
+    statements: [
+      // Zweite Modellwelle. Werte wie in DEFAULT_SHIP_STATS — danach führt
+      // wie immer die Tabelle (Anpassungen per phpMyAdmin).
+      `INSERT INTO ships (model, hp, type, armament, speed) VALUES
+         ('tanker01', 800, 1, '[]', 0.50),
+         ('fregatte02', 550, 3, '["torpedo","wasserbombe","taeuschkoerper","geschuetz"]', 0.95),
+         ('submarine02', 450, 2, '["torpedo","taeuschkoerper"]', 0.65),
+         ('destroyer01', 650, 3, '["torpedo","wasserbombe","taeuschkoerper","geschuetz"]', 1.10)
+       ON DUPLICATE KEY UPDATE model = model`,
+    ],
+  },
 ];

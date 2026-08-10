@@ -300,10 +300,16 @@ export class World {
       // kein Wegpunkt mehr — ohne das hier führe jedes Boot endlos in die
       // Leere hinaus, und Abschüsse jenseits der ±500-m-Zone stürben sofort
       // als Blindgänger (in der Praxis passiert: 5 km außerhalb gefunden).
-      if (vessel.x < 0) vessel.x = 0;
-      else if (vessel.x > this.map.width) vessel.x = this.map.width;
-      if (vessel.y < 0) vessel.y = 0;
-      else if (vessel.y > this.map.height) vessel.y = this.map.height;
+      let angeschlagen = false;
+      if (vessel.x < 0) { vessel.x = 0; angeschlagen = true; }
+      else if (vessel.x > this.map.width) { vessel.x = this.map.width; angeschlagen = true; }
+      if (vessel.y < 0) { vessel.y = 0; angeschlagen = true; }
+      else if (vessel.y > this.map.height) { vessel.y = this.map.height; angeschlagen = true; }
+      // Die Wand stoppt auch die FAHRT: ohne das stünde das Boot mit voller
+      // angezeigter Fahrt auf der Stelle — „der Schub geht nicht". Mit
+      // Fahrt ≈ 0 stimmt die Anzeige, und der Bugstrahler (thrusterRate)
+      // dreht das Boot im Stand wieder von der Wand weg.
+      if (angeschlagen) vessel.speed *= 0.5;
     }
 
     const events: WorldEvents = { impacts: [], destroyed: [] };

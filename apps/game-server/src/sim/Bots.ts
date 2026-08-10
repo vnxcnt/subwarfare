@@ -17,7 +17,7 @@ const NAMES = [
 const MARGIN = 600;
 
 /** Bots fahren die NPC-Schiffe aus der ships-Tabelle (Typ 1). */
-const NPC_MODELS: VesselModel[] = ['speedster01', 'yachtgun01'];
+const NPC_MODELS: VesselModel[] = ['speedster01', 'yachtgun01', 'tanker01'];
 
 /**
  * Fremdverkehr, damit die Karte nicht leer ist und das Sonar etwas anzeigt.

@@ -69,6 +69,35 @@ export const DEFAULT_SHIP_STATS: Record<VesselModel, ShipStats> = {
     armament: ['geschuetz'],
     speedFactor: 1.3,
   },
+  /** Unbewaffneter Frachtverkehr — groß, zäh, langsam. */
+  tanker01: {
+    model: 'tanker01',
+    hp: 800,
+    type: SHIP_TYPE_NPC,
+    armament: [],
+    speedFactor: 0.5,
+  },
+  fregatte02: {
+    model: 'fregatte02',
+    hp: 550,
+    type: SHIP_TYPE_VESSEL,
+    armament: ['torpedo', 'wasserbombe', 'taeuschkoerper', 'geschuetz'],
+    speedFactor: 0.95,
+  },
+  submarine02: {
+    model: 'submarine02',
+    hp: 450,
+    type: SHIP_TYPE_SUBMARINE,
+    armament: ['torpedo', 'taeuschkoerper'],
+    speedFactor: 0.65,
+  },
+  destroyer01: {
+    model: 'destroyer01',
+    hp: 650,
+    type: SHIP_TYPE_VESSEL,
+    armament: ['torpedo', 'wasserbombe', 'taeuschkoerper', 'geschuetz'],
+    speedFactor: 1.1,
+  },
 };
 
 /**

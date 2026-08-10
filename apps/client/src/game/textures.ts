@@ -1,14 +1,22 @@
 import { DEFAULT_VESSEL_MODEL, HULL_DIMENSIONS } from '@subwarfare/shared';
 import { Assets, Spritesheet, Texture, type SpritesheetData } from 'pixi.js';
 
+import destroyerData from '../assets/vessels/destroyer01/atlas.json';
+import destroyerUrl from '../assets/vessels/destroyer01/atlas.webp';
 import fregatteData from '../assets/vessels/fregatte01/atlas.json';
 import fregatteUrl from '../assets/vessels/fregatte01/atlas.webp';
+import fregatte2Data from '../assets/vessels/fregatte02/atlas.json';
+import fregatte2Url from '../assets/vessels/fregatte02/atlas.webp';
 import periscopeData from '../assets/vessels/periscope/atlas.json';
 import periscopeUrl from '../assets/vessels/periscope/atlas.webp';
 import speedsterData from '../assets/vessels/speedster01/atlas.json';
 import speedsterUrl from '../assets/vessels/speedster01/atlas.webp';
 import submarineData from '../assets/vessels/submarine01/atlas.json';
 import submarineUrl from '../assets/vessels/submarine01/atlas.webp';
+import submarine2Data from '../assets/vessels/submarine02/atlas.json';
+import submarine2Url from '../assets/vessels/submarine02/atlas.webp';
+import tankerData from '../assets/vessels/tanker01/atlas.json';
+import tankerUrl from '../assets/vessels/tanker01/atlas.webp';
 import shellData from '../assets/vessels/he_round01/atlas.json';
 import shellUrl from '../assets/vessels/he_round01/atlas.webp';
 import torpedoData from '../assets/vessels/torpedo01/atlas.json';
@@ -69,6 +77,30 @@ const DEFINITIONS: Record<string, ModelDefinition> = {
     url: speedsterUrl,
     lengthMetres: HULL_DIMENSIONS.speedster01.length,
     sideProfilePx: 344,
+  },
+  tanker01: {
+    data: tankerData as unknown as SpritesheetData,
+    url: tankerUrl,
+    lengthMetres: HULL_DIMENSIONS.tanker01.length,
+    sideProfilePx: 373,
+  },
+  fregatte02: {
+    data: fregatte2Data as unknown as SpritesheetData,
+    url: fregatte2Url,
+    lengthMetres: HULL_DIMENSIONS.fregatte02.length,
+    sideProfilePx: 748,
+  },
+  submarine02: {
+    data: submarine2Data as unknown as SpritesheetData,
+    url: submarine2Url,
+    lengthMetres: HULL_DIMENSIONS.submarine02.length,
+    sideProfilePx: 780,
+  },
+  destroyer01: {
+    data: destroyerData as unknown as SpritesheetData,
+    url: destroyerUrl,
+    lengthMetres: HULL_DIMENSIONS.destroyer01.length,
+    sideProfilePx: 394,
   },
   // Projektile: gleiche Atlas-Pipeline, nur kein fahrbares Schiff. Länge ist
   // Spielsichtbarkeit (echte Torpedos wären auf Kartenzoom unsichtbar klein).

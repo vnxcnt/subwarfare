@@ -99,6 +99,10 @@ export const HULL_DIMENSIONS: Record<VesselModel, { length: number; beam: number
   yachtgun01: { length: 55, beam: 14 },
   submarine01: { length: 110, beam: 13 },
   speedster01: { length: 18, beam: 6 },
+  tanker01: { length: 180, beam: 30 },
+  fregatte02: { length: 145, beam: 26 },
+  submarine02: { length: 120, beam: 14 },
+  destroyer01: { length: 160, beam: 24 },
 };
 
 /**
