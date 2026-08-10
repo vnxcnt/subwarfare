@@ -134,6 +134,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
   padding: 4px 6px;
   border: 14px solid transparent;
   border-image: url('../assets/ui/health.png') 70 fill / 14px 20px;
+  /* VOLLE Füllung bis unter die Rahmenbänder (die sind halbtransparent).
+     Der Radius zieht die Ecken der Füllung ein, damit sie nicht hinter den
+     schrägen Eckbeschlägen des PNGs hervorblitzen — border-image selbst
+     bleibt von border-radius unberührt. */
+  background-color: #141310;
+  border-radius: 10px;
   pointer-events: auto;
 }
 
@@ -177,6 +183,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
   list-style: none;
   border: 18px solid transparent;
   border-image: url('../assets/ui/middlemenu.png') 90 fill / 18px 26px;
+  /* Wie bei der Rumpfleiste: volle Füllung unterm Rahmen, Ecken eingezogen. */
+  background-color: #141310;
+  border-radius: 12px;
 }
 
 .ammo__slot {
