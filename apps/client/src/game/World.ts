@@ -1,6 +1,6 @@
 import type { GameMap } from '@subwarfare/shared';
-import { Container, Matrix, Point } from 'pixi.js';
-import { FALLBACK_MAP, FOLLOW, VIEW } from '../config';
+import { Container, Graphics, Matrix, Point } from 'pixi.js';
+import { FALLBACK_MAP, FOLLOW, VIEW, VISION } from '../config';
 import { EntityLayer } from './entities/EntityLayer';
 import type { Vessel } from '@subwarfare/shared';
 import { Ocean } from './Ocean';
@@ -38,6 +38,30 @@ export class World {
   readonly camera: Camera = { x: 0, y: 0, zoom: 1 };
   readonly entities: EntityLayer;
 
+  /**
+   * Unterwasser-Schleier — liegt ÜBER allen Weltebenen und unter dem HUD.
+   * Alpha folgt der Tauchtiefe des eigenen Boots: je tiefer, desto mehr
+   * kippt die ganze Karte in die Unterwasser-Stimmung.
+   */
+  private readonly underwater = new Graphics();
+  private underwaterDepth = 0;
+  private underwaterSize = { width: 0, height: 0 };
+
+  /**
+   * Sicht-Verdunkelung — liegt IN der Wasserebene (gekippt), damit der
+   * Sichtkreis als Welt-Kreis gezeichnet werden kann und die Projektion die
+   * richtige Ellipse daraus macht. Über dem Ozean, unter den Schiffen.
+   */
+  private readonly visionShade = new Graphics();
+
+  /**
+   * Kampf-Effekte (Einschläge, Versenkungen): kurzlebige, jeden Frame neu
+   * gezeichnete Ringe in der Wasserebene — eine Explosion liegt AUF dem
+   * Wasser, die Projektion macht die Ellipse daraus.
+   */
+  private readonly fx = new Graphics();
+  private readonly fxEntries: Array<{ x: number; y: number; age: number; big: boolean }> = [];
+
   private map: GameMap = FALLBACK_MAP;
   private ocean: Ocean | null = null;
   private followTarget: Vessel | null = null;
@@ -48,11 +72,18 @@ export class World {
   private readonly scratch = new Point();
 
   constructor() {
-    this.container.addChild(this.groundLayer, this.hullLayer, this.entityLayer);
+    this.container.addChild(this.groundLayer, this.hullLayer, this.entityLayer, this.underwater);
+    this.underwater.visible = false;
 
     this.ocean = new Ocean(this.map);
-    this.groundLayer.addChild(this.ocean.mesh);
-    this.entities = new EntityLayer(this.hullLayer);
+    this.groundLayer.addChild(this.ocean.mesh, this.visionShade);
+    // Effekte über die Rümpfe: eine Explosion verdeckt das Schiff, nicht
+    // umgekehrt. `hullLayer` sortiert nach zIndex — hoch genug wählen.
+    this.fx.zIndex = 1_000_000;
+    this.hullLayer.addChild(this.fx);
+    // Wegpunktgrafik in die Wasserebene, Richtungs-Billboards in die
+    // aufrechte Ebene — siehe EntityLayer.
+    this.entities = new EntityLayer(this.hullLayer, this.entityLayer);
 
     this.centerOnMap();
   }
@@ -136,6 +167,94 @@ export class World {
   /** Rein visuelle Animation mit echter Frame-Zeit. */
   update(frameSeconds: number): void {
     this.ocean?.update(frameSeconds, this.camera.zoom);
+    this.updateFx(frameSeconds);
+  }
+
+  /**
+   * Startet einen Kampf-Effekt: Einschlag (klein) oder Versenkung (groß).
+   * Der Zeitpunkt kommt vom Server (fx-Ereignis) — hier wird nur gezeichnet.
+   */
+  spawnImpact(x: number, y: number, big: boolean): void {
+    this.fxEntries.push({ x, y, age: 0, big });
+  }
+
+  /** Malt alle laufenden Effekte neu und wirft abgelaufene ab. */
+  private updateFx(frameSeconds: number): void {
+    const g = this.fx;
+    if (this.fxEntries.length === 0) {
+      // Nur einmal leeren, nicht jeden Frame neu — clear() invalidiert Geometrie.
+      if (g.context.instructions.length > 0) g.clear();
+      return;
+    }
+
+    g.clear();
+    for (let i = this.fxEntries.length - 1; i >= 0; i -= 1) {
+      const fx = this.fxEntries[i]!;
+      fx.age += frameSeconds;
+      const dauer = fx.big ? 1.6 : 0.9;
+      if (fx.age >= dauer) {
+        this.fxEntries.splice(i, 1);
+        continue;
+      }
+
+      const t = fx.age / dauer;
+      const maxRadius = fx.big ? 120 : 55;
+      const radius = 8 + t * maxRadius;
+      const fade = 1 - t;
+
+      // Heller Kern, der schnell verglüht, plus auslaufender Druckring.
+      if (t < 0.35) {
+        const kern = 1 - t / 0.35;
+        g.circle(fx.x, fx.y, radius * 0.5).fill({ color: 0xffd27a, alpha: 0.75 * kern });
+      }
+      g.circle(fx.x, fx.y, radius).stroke({
+        color: fx.big ? 0xff9a4a : 0xf2e8c8,
+        alpha: 0.8 * fade,
+        width: fx.big ? 6 : 3,
+      });
+      if (fx.big) {
+        g.circle(fx.x, fx.y, radius * 0.62).stroke({ color: 0xffd27a, alpha: 0.5 * fade, width: 3 });
+      }
+    }
+  }
+
+  /**
+   * Zeichnet die Sicht-Verdunkelung neu: alles außerhalb von Kreis und
+   * Periskop-Kegel liegt im Dunkeln. Radius/Kegellänge 0 lässt das jeweilige
+   * Loch weg — bei beidem 0 ist die ganze See dunkel („man sieht nichts").
+   */
+  setVision(x: number, y: number, headingDegrees: number, circleRadius: number, coneLength: number): void {
+    const g = this.visionShade;
+    g.clear();
+
+    // Großzügig über die Karte hinaus — der Rand außerhalb ist ohnehin dunkel.
+    // Pixi-v8-Muster: erst füllen, dann je Loch Form zeichnen und `cut()`.
+    const M = 6_000;
+    g.rect(-M, -M, this.map.width + 2 * M, this.map.height + 2 * M).fill({
+      color: 0x02090f,
+      alpha: VISION.darkness,
+    });
+
+    if (circleRadius > 1) {
+      g.circle(x, y, circleRadius).cut();
+    }
+    if (coneLength > 1) {
+      const half = (VISION.coneHalfAngleDeg * Math.PI) / 180;
+      const kurs = ((headingDegrees - 90) * Math.PI) / 180; // 0° = Nord, Welt-y zeigt nach Süden
+      const l = coneLength / Math.cos(half);
+      g.poly([
+        x, y,
+        x + Math.cos(kurs - half) * l, y + Math.sin(kurs - half) * l,
+        x + Math.cos(kurs + half) * l, y + Math.sin(kurs + half) * l,
+      ]).cut();
+    }
+  }
+
+  /** Tauchtiefe des eigenen Boots (0..1) — steuert den Unterwasser-Schleier. */
+  setUnderwaterDepth(depth: number): void {
+    this.underwaterDepth = Math.min(Math.max(depth, 0), 1);
+    this.underwater.visible = this.underwaterDepth > 0.001;
+    this.underwater.alpha = this.underwaterDepth;
   }
 
   syncViews(frameSeconds: number): void {
@@ -181,6 +300,20 @@ export class World {
     // Gleiche Kamera, aber ohne Projektion: Symbole und Text bleiben aufrecht.
     this.entityMatrix.identity().scale(zoom, zoom).translate(tx, ty);
     this.entityLayer.setFromMatrix(this.entityMatrix);
+
+    // Der Schleier ist Bildschirmfläche — nur bei Größenwechsel neu zeichnen.
+    if (
+      this.underwaterSize.width !== viewportWidth ||
+      this.underwaterSize.height !== viewportHeight
+    ) {
+      this.underwaterSize = { width: viewportWidth, height: viewportHeight };
+      this.underwater
+        .clear()
+        .rect(0, 0, viewportWidth, viewportHeight)
+        // Tiefes Grünblau, bewusst nicht schwarz: unter Wasser wird es
+        // dunkler UND farbiger, nicht einfach finster.
+        .fill({ color: 0x06222e, alpha: 0.55 });
+    }
   }
 
   destroy(): void {

@@ -26,10 +26,6 @@ export const router = createRouter({
 let restored: Promise<boolean> | null = null;
 
 router.beforeEach(async (to) => {
-  // Offline braucht weder Konto noch Server — bewusst VOR der Anmeldeprüfung,
-  // damit der Demobetrieb auch ohne laufendes Backend erreichbar bleibt.
-  if (to.name === 'play' && to.query['offline'] === '1') return true;
-
   restored ??= restoreSession();
   await restored;
 

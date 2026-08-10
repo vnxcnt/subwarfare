@@ -9,6 +9,7 @@ import { migrate } from './db/migrate.js';
 import { env, warnAboutDefaults } from './env.js';
 import { LobbyGateway } from './lobby/socket.js';
 import { MemoryQueue } from './lobby/queue.js';
+import { loadShipStats } from './ships/store.js';
 
 warnAboutDefaults();
 
@@ -30,6 +31,16 @@ await app.register(
   async (scope) => {
     scope.get('/health', async () => ({ ok: true }));
     registerAuthRoutes(scope, accounts);
+
+    // Interner Kanal für den Spielserver — derselbe Schlüssel wie dessen
+    // /status. Von außen kommt man über Caddy zwar an die URL, aber ohne
+    // Schlüssel gibt es nur 403 (und geheim ist am Schiffskatalog nichts).
+    scope.get('/internal/ships', async (request, reply) => {
+      if (request.headers['x-internal-key'] !== env.internalKey) {
+        return reply.code(403).send({ error: 'Kein Zugriff.' });
+      }
+      return { ships: await loadShipStats() };
+    });
   },
   { prefix: '/api' },
 );
@@ -46,7 +57,7 @@ const io = new Server(app.server, {
   cors: { origin: env.corsOrigin, credentials: true },
 });
 
-const lobby = new LobbyGateway(io, new MemoryQueue());
+const lobby = new LobbyGateway(io, new MemoryQueue(), accounts);
 lobby.register();
 
 await app.listen({ port: env.port, host: env.host });

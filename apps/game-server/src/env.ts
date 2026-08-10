@@ -27,6 +27,8 @@ export const env = {
   jwtSecret: process.env['JWT_SECRET'] ?? DEV_SECRET,
   /** Schützt den internen /status-Endpunkt vor Zugriff von außen. */
   internalKey: process.env['INTERNAL_KEY'] ?? 'dev-internal-key',
+  /** Interne Adresse des Backends — für den Schiffskatalog beim Start. */
+  apiInternalUrl: process.env['API_INTERNAL_URL'] ?? 'http://127.0.0.1:8090',
   maxPlayers: num('MAX_PLAYERS', 32),
   bots: num('BOTS', 5),
   /** Erlaubte Herkunft für Browser-Verbindungen im lokalen Betrieb. */

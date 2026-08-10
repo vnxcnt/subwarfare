@@ -7,6 +7,7 @@ import type { Server, Socket } from 'socket.io';
 import { signTicket, verifySession } from '../auth/jwt.js';
 import { env } from '../env.js';
 import { fetchGameServerStatus, type GameServerStatus } from '../gameserver/status.js';
+import type { AccountStore } from '../accounts/store.js';
 import type { MatchQueue } from './queue.js';
 
 type LobbySocket = Socket<
@@ -39,6 +40,7 @@ export class LobbyGateway {
   constructor(
     private readonly io: Server,
     private readonly queue: MatchQueue,
+    private readonly accounts: AccountStore,
   ) {}
 
   register(): void {
@@ -132,7 +134,10 @@ export class LobbyGateway {
   }
 
   private async issueTicket(accountId: string, name: string, mapId: string): Promise<void> {
-    const ticket = await signTicket({ sub: accountId, name, mapId });
+    // Rolle FRISCH aus dem Konto, nicht aus der Session — ein Entzug wirkt
+    // damit spaetestens beim naechsten Ticket.
+    const account = await this.accounts.byId(accountId);
+    const ticket = await signTicket({ sub: accountId, name, mapId, role: account?.role ?? 0 });
 
     this.reservations.set(accountId, Date.now() + env.ticketTtl * 1000);
     await this.queue.leave(mapId, accountId);

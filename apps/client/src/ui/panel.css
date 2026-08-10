@@ -66,3 +66,54 @@
 .hud__num {
   font-variant-numeric: tabular-nums;
 }
+
+/*
+ * Beschlagenes Gold-Panel der Menü-Bildschirme (Anmeldung, Hauptmenü).
+ *
+ * Die Goldtöne stammen aus der Zierlinie des Rahmenbilds (#FEE584 hell,
+ * #E1CF71 mittel), die Füllung aus seinem Grund. Bewusst eigene Variablen
+ * statt der Teal-Palette des Spiel-HUD — im Gefecht bleibt Grün, die
+ * Menüwelt trägt Gold.
+ *
+ * Rahmen als 9-Slice: Schnitt 80 deckt die Eckbeschläge der
+ * 1231×1012-Grafik ab (~70 px), die Bänder (36–48 px) dehnen sich mit.
+ */
+.gold-panel {
+  --gold: #e6cf78;
+  --gold-bright: #fee584;
+  --gold-border: rgb(230 207 120 / 28%);
+  --gold-faint: rgb(230 207 120 / 10%);
+
+  box-sizing: border-box;
+  border: 26px solid transparent;
+  border-image: url('../assets/ui/login-frame.png') 80 / 26px stretch;
+  border-radius: 0;
+  background: #141310;
+  color: #e9e2cd;
+  letter-spacing: 0.03em;
+  user-select: none;
+}
+
+.gold-panel__title {
+  margin: 0 0 0.6rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--gold);
+  opacity: 0.85;
+}
+
+/*
+ * Spiel-Cursor der Menü-Bildschirme (Torpedo, Spitze exakt in der linken
+ * oberen Bildecke — deshalb Hotspot 0 0).
+ *
+ * Das `!important` ist hier Absicht und kein Notnagel: Knöpfe und Links setzen
+ * `cursor: pointer`, und der Spiel-Cursor soll ÜBERALL gelten — ein Wechsel
+ * auf die Systemhand beim Überfahren würde die Illusion brechen. Nur
+ * Textfelder behalten die I-Beam-Marke, dort zählt Präzision mehr als Stil.
+ */
+.game-cursor,
+.game-cursor *:not(input):not(textarea) {
+  cursor: url('../assets/ui/cursor.png') 0 0, auto !important;
+}

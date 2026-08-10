@@ -1,9 +1,14 @@
 <script setup lang="ts">
+import { ROLE_DEVELOPER } from '@subwarfare/shared';
 import { computed } from 'vue';
 import { KNOTS } from '../config';
+import { account } from '../state/auth';
 import { hud } from '../state/hud';
 
 const isDev = import.meta.env.DEV;
+const isDeveloper = computed(() => (account.value?.role ?? 0) >= ROLE_DEVELOPER);
+
+const emit = defineEmits<{ 'toggle-dev': [] }>();
 
 const position = computed(() =>
   hud.value.ready ? `${Math.round(hud.value.x)} / ${Math.round(hud.value.y)}` : '—',
@@ -35,6 +40,20 @@ const tilt = computed(
     <span class="status__hint">
       Rechtsklick fährt, Rad zoomt, Ziehen verschiebt<template v-if="isDev">, [ ] neigt</template>
     </span>
+    <!--
+      Entwicklerwerkzeuge — nur mit Entwicklerrolle sichtbar. Die Anzeige ist
+      Höflichkeit; durchgesetzt wird die Rolle server-seitig am dev:model-Handler.
+    -->
+    <button
+      v-if="isDeveloper"
+      class="status__dev"
+      type="button"
+      title="Entwicklermenü"
+      aria-label="Entwicklermenü"
+      @click="emit('toggle-dev')"
+    >
+      <span class="material-symbols-outlined">build_circle</span>
+    </button>
   </header>
 </template>
 
@@ -78,6 +97,27 @@ const tilt = computed(
 .status__hint {
   opacity: 0.4;
   margin-left: auto;
+}
+
+.status__dev {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ui-accent);
+  cursor: pointer;
+  opacity: 0.8;
+  /* Selbst zentrieren statt an der Baseline hängen — das Icon hat keine. */
+  align-self: center;
+}
+
+.status__dev:hover {
+  opacity: 1;
+}
+
+.status__dev .material-symbols-outlined {
+  font-size: 20px;
 }
 
 @media (max-width: 900px) {

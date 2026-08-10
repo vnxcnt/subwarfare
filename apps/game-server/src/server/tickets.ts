@@ -52,7 +52,7 @@ export async function redeemTicket(raw: unknown): Promise<TicketResult> {
     return { ok: false, reason: 'Ticket ungültig oder abgelaufen.' };
   }
 
-  const { sub, name, mapId, jti, exp } = payload as Record<string, unknown>;
+  const { sub, name, mapId, jti, exp, role } = payload as Record<string, unknown>;
   if (typeof sub !== 'string' || typeof jti !== 'string' || typeof mapId !== 'string') {
     return { ok: false, reason: 'Ticket unvollständig.' };
   }
@@ -67,6 +67,12 @@ export async function redeemTicket(raw: unknown): Promise<TicketResult> {
 
   return {
     ok: true,
-    claims: { sub, name: typeof name === 'string' ? name : 'Unbekannt', mapId, jti },
+    claims: {
+      sub,
+      name: typeof name === 'string' ? name : 'Unbekannt',
+      mapId,
+      role: typeof role === 'number' ? role : 0,
+      jti,
+    },
   };
 }

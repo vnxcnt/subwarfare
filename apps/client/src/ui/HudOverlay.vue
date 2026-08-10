@@ -1,5 +1,10 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import AmmoBar from './AmmoBar.vue';
+import DeathNotice from './DeathNotice.vue';
+import DevMenu from './DevMenu.vue';
+import DivePanel from './DivePanel.vue';
+import PeriscopePanel from './PeriscopePanel.vue';
 import QuestLog from './QuestLog.vue';
 import SonarPanel from './SonarPanel.vue';
 import StatusBar from './StatusBar.vue';
@@ -7,6 +12,8 @@ import TelegraphPanel from './TelegraphPanel.vue';
 import { isTextEntry } from './dom';
 
 defineProps<{ error?: string | null }>();
+
+const devMenu = ref<InstanceType<typeof DevMenu> | null>(null);
 
 /**
  * Das Browser-Kontextmenü wird bisher nur auf dem Canvas unterdrückt
@@ -36,20 +43,27 @@ function suppressContextMenu(event: MouseEvent): void {
       sonst könnte ihr Hintergrund nicht bis an die Kanten reichen.
     -->
     <div class="hud-root__top">
-      <StatusBar />
+      <StatusBar @toggle-dev="devMenu?.toggle()" />
       <div class="hud-root__strip"></div>
     </div>
 
     <div class="hud-root__middle">
       <QuestLog />
+      <DevMenu ref="devMenu" />
       <p v-if="error" class="hud__panel hud-root__error">Renderer-Fehler: {{ error }}</p>
     </div>
 
     <div class="hud-root__bottom">
       <SonarPanel />
       <AmmoBar />
-      <TelegraphPanel />
+      <div class="hud-root__right">
+        <PeriscopePanel />
+        <DivePanel />
+        <TelegraphPanel />
+      </div>
     </div>
+
+    <DeathNotice />
   </div>
 </template>
 
@@ -116,6 +130,13 @@ function suppressContextMenu(event: MouseEvent): void {
 
 .hud-root__bottom > :last-child {
   justify-self: end;
+}
+
+/* Tauchsteuerung und Telegraf teilen sich die rechte Ecke. */
+.hud-root__right {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--ui-gap);
 }
 
 .hud-root__error {

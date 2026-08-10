@@ -41,7 +41,7 @@ export async function verifySession(token: string): Promise<SessionClaims | null
 }
 
 export async function signTicket(claims: Omit<TicketClaims, 'jti'>): Promise<string> {
-  return new SignJWT({ name: claims.name, mapId: claims.mapId })
+  return new SignJWT({ name: claims.name, mapId: claims.mapId, role: claims.role })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.sub)
     .setAudience(TICKET_AUDIENCE)

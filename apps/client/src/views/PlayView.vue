@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { Game } from '../game/Game';
 import { bindGame } from '../state/hud';
 import { lastEndReason, takeSession } from '../state/lobby';
 import HudOverlay from '../ui/HudOverlay.vue';
 
-const route = useRoute();
 const router = useRouter();
 const stage = ref<HTMLDivElement | null>(null);
 const error = ref<string | null>(null);
@@ -16,33 +15,27 @@ let game: Game | null = null;
 onMounted(async () => {
   if (!stage.value) return;
 
-  const offline = route.query['offline'] === '1';
-  const session = offline ? null : takeSession();
-
-  // Der Router-Guard stellt das eigentlich sicher — aber ein direkter
+  // Auf die Karte führt ausschließlich ein Ticket aus der Lobby. Der
+  // Router-Guard stellt das eigentlich sicher — aber ein direkter
   // Navigationspfad ohne Ticket darf trotzdem nie mit leerer Karte enden.
-  if (!offline && !session) {
+  const session = takeSession();
+  if (!session) {
     await router.replace({ name: 'menu' });
     return;
   }
 
   try {
     game = new Game();
-    await game.init(
-      stage.value,
-      session
-        ? {
-            gameUrl: session.gameUrl,
-            ticket: session.ticket,
-            onEnded: (message) => {
-              // Partie vorbei (Rauswurf, Verbindungsabriss): zurück ins Menü,
-              // das den Grund einmalig anzeigt.
-              lastEndReason.value = message;
-              void router.replace({ name: 'menu' });
-            },
-          }
-        : null,
-    );
+    await game.init(stage.value, {
+      gameUrl: session.gameUrl,
+      ticket: session.ticket,
+      onEnded: (message) => {
+        // Partie vorbei (Rauswurf, Verbindungsabriss): zurück ins Menü,
+        // das den Grund einmalig anzeigt.
+        lastEndReason.value = message;
+        void router.replace({ name: 'menu' });
+      },
+    });
     // Ab hier schreibt der Pixi-Ticker den HUD-Zustand — es gibt bewusst keine
     // zweite Uhr mehr, die unabhängig vom Rendering liest.
     bindGame(game);

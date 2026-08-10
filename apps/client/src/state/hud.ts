@@ -1,3 +1,5 @@
+import type { VesselModel, WeaponId } from '@subwarfare/shared';
+import { SHIP_TYPE_SUBMARINE } from '@subwarfare/shared';
 import { shallowRef, triggerRef } from 'vue';
 import { SONAR } from '../config';
 import type { Game } from '../game/Game';
@@ -26,6 +28,26 @@ export interface HudState {
   speed: number;
   /** Befohlene Fahrt in m/s. */
   orderedSpeed: number;
+  /** Schiffsmodell des eigenen Boots — fürs Dev-Menü. */
+  model: string;
+  /** Bewaffnung des eigenen Boots (Waffen-Kennungen, Server-Katalog). */
+  armament: string[];
+  /** Eigene Lebenspunkte laut Server. */
+  hp: number;
+  /** Maximum des aktuellen Modells (ships-Tabelle) — Bezugsgröße der HP-Leiste. */
+  maxHp: number;
+  /** Restmunition je Waffen-Kennung laut Server. */
+  ammo: Partial<Record<string, number>>;
+  /** Kann das eigene Schiff tauchen (Typ Submarine laut Katalog)? */
+  canDive: boolean;
+  /** Tauchtiefe des eigenen Boots, 0..1. */
+  depth: number;
+  /** Gewollter Tauchzustand (true = unter Wasser). */
+  diveTarget: boolean;
+  /** Periskop-Ausfahrstand 0..1 des eigenen Boots. */
+  periscope: number;
+  /** Gewollter Periskop-Zustand (true = ausgefahren). */
+  periscopeTarget: boolean;
   maxForward: number;
   telegraphStep: number;
   zoom: number;
@@ -61,6 +83,16 @@ export const hud = shallowRef<HudState>({
   course: 0,
   speed: 0,
   orderedSpeed: 0,
+  model: 'fregatte01',
+  armament: [],
+  hp: 1,
+  maxHp: 1,
+  ammo: {},
+  canDive: false,
+  depth: 0,
+  diveTarget: false,
+  periscope: 0,
+  periscopeTarget: false,
   maxForward: 1,
   telegraphStep: 0,
   zoom: 1,
@@ -121,6 +153,17 @@ export function writeHud(frameSeconds: number): void {
   state.course = own.rotation;
   state.speed = own.speed;
   state.orderedSpeed = own.orderedSpeed;
+  state.model = own.model;
+  state.armament = game?.shipStats(own.model).armament ?? [];
+  state.maxHp = game?.shipStats(own.model).hp ?? 1;
+  state.hp = game?.hp ?? state.maxHp;
+  // In place statt neues Objekt — das läuft jeden Frame (Muster dieser Datei).
+  state.ammo['torpedo'] = game?.ammoFor('torpedo') ?? 0;
+  state.canDive = game?.shipStats(own.model).type === SHIP_TYPE_SUBMARINE;
+  state.depth = own.depth;
+  state.diveTarget = own.diveTarget;
+  state.periscope = own.periscope;
+  state.periscopeTarget = own.periscopeTarget;
   state.maxForward = own.maxForward;
   state.telegraphStep = own.telegraphStep;
   state.zoom = scene.camera.zoom;
@@ -197,4 +240,36 @@ export function orderTelegraph(step: number): void {
 
 export function nudgeTelegraph(delta: number): void {
   game?.nudgeTelegraph(delta);
+}
+
+/** Tauchbefehl fürs eigene Boot — der Server prüft die Tauchfähigkeit. */
+export function orderDive(submerged: boolean): void {
+  game?.orderDive(submerged);
+}
+
+/** Periskop aus-/einfahren — der Server prüft die Fähigkeit. */
+export function orderPeriscope(extended: boolean): void {
+  game?.orderPeriscope(extended);
+}
+
+/** Entwickler: eigenes Schiffsmodell wechseln (Server prüft die Rolle). */
+export function devSetModel(model: VesselModel): void {
+  game?.devSetModel(model);
+}
+
+/** Feuerbefehl — Bewaffnung, Munition und Rohr-Sperre prüft der Server. */
+export function orderFire(weapon: WeaponId): void {
+  game?.orderFire(weapon);
+}
+
+/**
+ * „Versenkt"-Meldung: Zeitstempel (ms), zu dem der Wiedereinstieg ansteht —
+ * oder null. Eigener Ref statt Feld im HUD-Snapshot, weil `writeHud` nach dem
+ * Untergang gar nicht mehr läuft (es gibt kein eigenes Boot mehr): die Anzeige
+ * muss auch ohne Frame-Schreiber weiterleben.
+ */
+export const sunkUntil = shallowRef<number | null>(null);
+
+export function setSunkNotice(until: number | null): void {
+  sunkUntil.value = until;
 }

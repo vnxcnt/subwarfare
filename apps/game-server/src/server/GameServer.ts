@@ -4,14 +4,25 @@ import type {
   PlayerState,
   ServerToClientEvents,
   Vessel,
+  VesselModel,
 } from '@subwarfare/shared';
-import { PROTOCOL_VERSION, SIM_STEP_SECONDS, clampStep } from '@subwarfare/shared';
+import {
+  PROTOCOL_VERSION,
+  RESPAWN_SECONDS,
+  ROLE_DEVELOPER,
+  SHIP_TYPE_SUBMARINE,
+  SIM_STEP_SECONDS,
+  TORPEDO,
+  clampStep,
+  isVesselModel,
+} from '@subwarfare/shared';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { Server, type Socket } from 'socket.io';
 import { env } from '../env.js';
 import { ocean01 } from '../maps/ocean01.js';
 import { Bots } from '../sim/Bots.js';
-import { World } from '../world/World.js';
+import { ShipCatalog } from '../sim/ShipCatalog.js';
+import { World, type WorldEvents } from '../world/World.js';
 import { redeemTicket } from './tickets.js';
 
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, GameSocketData>;
@@ -36,8 +47,9 @@ const ORTUNG_HYSTERESE = 1.05;
  * Geschwindigkeiten vom Client werden nirgends übernommen.
  */
 export class GameServer {
-  private readonly world = new World(ocean01);
-  private readonly bots: Bots;
+  private readonly ships = new ShipCatalog();
+  private readonly world = new World(ocean01, this.ships);
+  private bots: Bots | null = null;
 
   private http: HttpServer | null = null;
   private io: Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, GameSocketData> | null = null;
@@ -53,18 +65,25 @@ export class GameServer {
    */
   private readonly detected = new Map<string, Set<string>>();
 
+  /** Restmunition Torpedo je Account. Angelegt beim Spawn, aufgefüllt beim Respawn. */
+  private readonly torpedoAmmo = new Map<string, number>();
+  /** Rohr-Sperre: frühester Tick, ab dem wieder gefeuert werden darf. */
+  private readonly nextFireTick = new Map<string, number>();
+  /** Versenkte Spieler, die auf ihren Wiedereinstieg warten. */
+  private readonly pendingRespawns = new Map<string, { seconds: number; model: VesselModel }>();
+
   private tickTimer: NodeJS.Timeout | null = null;
   private accumulator = 0;
   private lastTickAt = 0n;
   private sinceBroadcast = 0;
   private tick = 0;
 
-  constructor() {
-    this.bots = new Bots(this.world, env.bots);
-  }
-
   async start(): Promise<void> {
     if (this.http) throw new Error('GameServer läuft bereits.');
+
+    // Katalog VOR dem ersten Spawn — die Bots fahren bereits damit.
+    await this.ships.load();
+    this.bots = new Bots(this.world, env.bots);
 
     this.http = createServer((request, response) => this.handleHttp(request, response));
     this.io = new Server(this.http, {
@@ -146,6 +165,7 @@ export class GameServer {
 
     socket.data.accountId = result.claims.sub;
     socket.data.name = result.claims.name;
+    socket.data.role = result.claims.role;
     next();
   }
 
@@ -163,14 +183,21 @@ export class GameServer {
       this.detected.delete(accountId);
     }
 
+    // Auch eine noch laufende Respawn-Wartezeit verfällt — die neue Sitzung
+    // beginnt frisch am Spawnpunkt.
+    this.pendingRespawns.delete(accountId);
+
     this.sockets.set(accountId, socket);
     const vessel = this.world.spawn(accountId, name);
+    this.torpedoAmmo.set(accountId, TORPEDO.capacity);
+    this.nextFireTick.delete(accountId);
     console.log(`[game-server] ${name} (${accountId}) verbunden — ${this.sockets.size} Spieler.`);
 
     socket.emit('welcome', {
       protocolVersion: PROTOCOL_VERSION,
       selfId: accountId,
       map: this.world.map,
+      ships: this.ships.all(),
       tick: this.tick,
     });
     this.sendOwn(socket, vessel);
@@ -190,12 +217,86 @@ export class GameServer {
       this.sendOwn(socket, own);
     });
 
+    socket.on('order:dive', (payload) => {
+      const own = this.world.get(accountId);
+      if (!own) return;
+      // Tauchen können nur Schiffe vom Typ Submarine — der Katalog entscheidet,
+      // nicht der Client. Alles andere wird kommentarlos verworfen.
+      if (this.ships.get(own.model).type !== SHIP_TYPE_SUBMARINE) return;
+      own.orderDive(payload?.submerged === true);
+      this.sendOwn(socket, own);
+    });
+
+    socket.on('order:periscope', (payload) => {
+      const own = this.world.get(accountId);
+      if (!own) return;
+      // Wie das Tauchen: nur U-Boote, der Katalog entscheidet.
+      if (this.ships.get(own.model).type !== SHIP_TYPE_SUBMARINE) return;
+      own.orderPeriscope(payload?.extended === true);
+      this.sendOwn(socket, own);
+    });
+
+    socket.on('order:fire', (payload) => {
+      const own = this.world.get(accountId);
+      // Versenkt oder nicht gespawnt — keine Waffe ohne Schiff.
+      if (!own) return;
+      // v1 feuert ausschließlich den Torpedo; weitere Waffen kommen mit
+      // eigenen Kennwerten und eigener Abschussphysik.
+      if (payload?.weapon !== 'torpedo') return;
+      // Ob das Schiff die Waffe überhaupt führt, sagt der Katalog — nicht
+      // der Client. Ein gebasteltes Ereignis wird kommentarlos verworfen.
+      if (!this.ships.get(own.model).armament.includes('torpedo')) return;
+
+      const ammo = this.torpedoAmmo.get(accountId) ?? 0;
+      if (ammo <= 0) return;
+      // Rohr-Sperre in Server-Ticks — der Knopf im Client ist Höflichkeit.
+      if (this.tick < (this.nextFireTick.get(accountId) ?? 0)) return;
+
+      this.torpedoAmmo.set(accountId, ammo - 1);
+      this.nextFireTick.set(
+        accountId,
+        this.tick + Math.round(TORPEDO.cooldownSeconds / SIM_STEP_SECONDS),
+      );
+      this.world.fireTorpedo(own);
+      // Munitionsstand sofort bestätigen, nicht erst mit dem nächsten Tick.
+      this.sendOwn(socket, own);
+    });
+
+    socket.on('dev:model', (payload) => {
+      // Rolle UND Modell prüfen — der Knopf im Client ist Höflichkeit, die
+      // Wahrheit sitzt hier. Ein gebasteltes Ereignis ohne Entwicklerrolle
+      // wird kommentarlos verworfen.
+      if (socket.data.role < ROLE_DEVELOPER) return;
+      if (!isVesselModel(payload?.model)) return;
+      const own = this.world.get(accountId);
+      if (!own) return;
+      own.model = payload.model;
+      // Mit dem Modell wechselt auch die Fahrleistung (speed-Faktor der
+      // ships-Tabelle) — ab dem naechsten Simulationsschritt.
+      own.applyProfile(this.ships.profile(payload.model));
+      // Ein Modellwechsel ist ein frisches Schiff: volle Lebenspunkte des
+      // neuen Modells, volle Munition. Reines Entwickler-Werkzeug.
+      this.world.resetHp(accountId);
+      this.torpedoAmmo.set(accountId, TORPEDO.capacity);
+      // Wer vom U-Boot auf ein Überwasserschiff wechselt, taucht zwangsläufig
+      // auf und fährt das Periskop ein — beides über die normalen Wege.
+      if (this.ships.get(payload.model).type !== SHIP_TYPE_SUBMARINE) {
+        own.orderDive(false);
+        own.orderPeriscope(false);
+      }
+      this.sendOwn(socket, own);
+      console.log(`[game-server] ${name} wechselt Modell auf ${payload.model} (Entwickler).`);
+    });
+
     socket.on('disconnect', () => {
       // Nur aufräumen, wenn diese Verbindung noch die aktuelle ist — bei einer
       // Verdrängung hat der Nachfolger den Platz bereits übernommen.
       if (this.sockets.get(accountId) !== socket) return;
       this.sockets.delete(accountId);
       this.detected.delete(accountId);
+      this.pendingRespawns.delete(accountId);
+      this.torpedoAmmo.delete(accountId);
+      this.nextFireTick.delete(accountId);
       this.world.remove(accountId);
       this.notifyLeft(accountId);
       console.log(`[game-server] ${name} getrennt — ${this.sockets.size} Spieler.`);
@@ -203,9 +304,14 @@ export class GameServer {
   }
 
   private sendOwn(socket: GameSocket, vessel: Vessel): void {
+    const accountId = socket.data.accountId;
     socket.emit('own', {
       telegraphStep: vessel.telegraphStep,
       waypoint: vessel.waypoint ? { ...vessel.waypoint } : null,
+      diveTarget: vessel.diveTarget,
+      periscopeTarget: vessel.periscopeTarget,
+      hp: this.world.hp(accountId),
+      ammo: { torpedo: this.torpedoAmmo.get(accountId) ?? 0 },
       serial: vessel.serial,
     });
   }
@@ -227,14 +333,16 @@ export class GameServer {
     let steps = 0;
     while (this.accumulator >= SIM_STEP_SECONDS && steps < 5) {
       const before = this.ownSignatures();
-      this.bots.update();
-      this.world.update(SIM_STEP_SECONDS);
+      this.bots?.update(SIM_STEP_SECONDS);
+      const events = this.world.update(SIM_STEP_SECONDS);
+      this.handleCombatEvents(events);
+      this.updateRespawns(SIM_STEP_SECONDS);
       this.accumulator -= SIM_STEP_SECONDS;
       this.tick += 1;
       steps += 1;
-      // Ankunft und Wachhund ändern Wegpunkt und Telegraf von selbst — der
-      // Besitzer muss das erfahren, sonst zeigt seine Anzeige einen Befehl,
-      // den es nicht mehr gibt.
+      // Ankunft, Wachhund und Treffer ändern den Besitzer-Zustand von selbst —
+      // der Betroffene muss das erfahren, sonst zeigt seine Anzeige einen
+      // Befehl oder Zustand, den es nicht mehr gibt.
       this.notifyChangedOwners(before);
     }
 
@@ -242,6 +350,70 @@ export class GameServer {
     if (this.sinceBroadcast >= 1 / BROADCAST_HZ) {
       this.sinceBroadcast = 0;
       this.broadcastState();
+    }
+  }
+
+  /**
+   * Wertet die Kampfereignisse eines Simulationsschritts aus: fx-Meldungen an
+   * alle in Sonar-Reichweite, Versenkungen räumen das Fahrzeug aus der Welt
+   * und stoßen den Wiedereinstieg an — Spieler über die Warteliste, Bots über
+   * ihre eigene.
+   */
+  private handleCombatEvents(events: WorldEvents): void {
+    for (const impact of events.impacts) this.emitFx('impact', impact.x, impact.y);
+
+    for (const wreck of events.destroyed) {
+      // fx VOR dem Entfernen — der Betroffene selbst ist noch Beobachter und
+      // soll seinen eigenen Untergang sehen.
+      this.emitFx('sunk', wreck.x, wreck.y);
+
+      const vessel = this.world.get(wreck.id);
+      const model = vessel?.model ?? 'fregatte01';
+      this.world.remove(wreck.id);
+
+      const socket = this.sockets.get(wreck.id);
+      if (socket) {
+        this.pendingRespawns.set(wreck.id, { seconds: RESPAWN_SECONDS, model });
+        socket.emit('destroyed', { respawnSeconds: RESPAWN_SECONDS });
+        console.log(`[game-server] ${socket.data.name} versenkt — Respawn in ${RESPAWN_SECONDS} s.`);
+      } else {
+        this.bots?.notifyDestroyed(wreck.id);
+      }
+      this.notifyLeft(wreck.id);
+    }
+  }
+
+  /** Setzt versenkte Spieler nach Ablauf ihrer Wartezeit wieder ein. */
+  private updateRespawns(deltaSeconds: number): void {
+    for (const [accountId, pending] of this.pendingRespawns) {
+      pending.seconds -= deltaSeconds;
+      if (pending.seconds > 0) continue;
+      this.pendingRespawns.delete(accountId);
+
+      const socket = this.sockets.get(accountId);
+      // Inzwischen getrennt — der Disconnect-Handler hat schon aufgeräumt.
+      if (!socket) continue;
+
+      const vessel = this.world.spawn(accountId, socket.data.name, pending.model);
+      this.torpedoAmmo.set(accountId, TORPEDO.capacity);
+      this.nextFireTick.delete(accountId);
+      this.sendOwn(socket, vessel);
+    }
+  }
+
+  /**
+   * Kampf-Effekt an alle, deren Sonar den Punkt erfasst. Zuverlässig statt
+   * volatile: eine Explosion, die im Paketverlust untergeht, sieht wie ein
+   * Fehler aus.
+   */
+  private emitFx(kind: 'impact' | 'sunk', x: number, y: number): void {
+    for (const [accountId, socket] of this.sockets) {
+      const observer = this.world.get(accountId);
+      if (!observer) continue;
+      const dx = x - observer.x;
+      const dy = y - observer.y;
+      const range = observer.sensorRange;
+      if (dx * dx + dy * dy <= range * range) socket.emit('fx', { kind, x, y });
     }
   }
 
@@ -262,17 +434,35 @@ export class GameServer {
     // Listen zeigen dann auf dieselben Objekte.
     const states = new Map<string, PlayerState>();
     for (const vessel of this.world.all()) states.set(vessel.id, vessel.toState());
+    const projectiles = this.world.projectileStates();
 
     for (const [accountId, socket] of this.sockets) {
       const observer = this.world.get(accountId);
-      if (!observer) continue;
+      if (!observer) {
+        // Versenkt und noch nicht wieder eingesetzt: LEERER Zustand statt
+        // Funkstille. Ohne ihn behielte der Client seinen letzten Stand samt
+        // eigenem Wrack — und der Respawn käme dort nie als frischer Spawn an
+        // (Versenkt-Meldung bliebe hängen, Kamera am verwaisten Objekt).
+        socket.volatile.emit('state', { tick: this.tick, players: [], projectiles: [] });
+        continue;
+      }
 
       const players: PlayerState[] = [];
       for (const id of this.updateDetection(accountId, observer)) {
         const state = states.get(id);
         if (state) players.push(state);
       }
-      socket.volatile.emit('state', { tick: this.tick, players });
+
+      // Projektile durch denselben Sonar-Filter — ohne Hysterese: sie laufen
+      // mit 45 m/s, ein Flackern an der Reichweitengrenze dauert Sekundenbruchteile.
+      const range = observer.sensorRange;
+      const visible = projectiles.filter((p) => {
+        const dx = p.x - observer.x;
+        const dy = p.y - observer.y;
+        return dx * dx + dy * dy <= range * range;
+      });
+
+      socket.volatile.emit('state', { tick: this.tick, players, projectiles: visible });
     }
   }
 
@@ -330,16 +520,23 @@ export class GameServer {
     }
   }
 
-  /** Kurzform des privaten Zustands, um Änderungen zu erkennen. */
-  private static ownSignature(vessel: Vessel): string {
-    return `${vessel.serial}:${vessel.telegraphStep}:${vessel.waypoint ? 'z' : '-'}`;
+  /**
+   * Kurzform des privaten Zustands, um Änderungen zu erkennen. HP und Munition
+   * gehören dazu — ein Treffer muss das `own` genauso auslösen wie eine Ankunft.
+   */
+  private ownSignature(accountId: string, vessel: Vessel): string {
+    return (
+      `${vessel.serial}:${vessel.telegraphStep}:${vessel.waypoint ? 'z' : '-'}:` +
+      `${vessel.diveTarget ? 't' : 'o'}:${vessel.periscopeTarget ? 'p' : '-'}:` +
+      `${this.world.hp(accountId)}:${this.torpedoAmmo.get(accountId) ?? 0}`
+    );
   }
 
   private ownSignatures(): Map<string, string> {
     const map = new Map<string, string>();
     for (const accountId of this.sockets.keys()) {
       const vessel = this.world.get(accountId);
-      if (vessel) map.set(accountId, GameServer.ownSignature(vessel));
+      if (vessel) map.set(accountId, this.ownSignature(accountId, vessel));
     }
     return map;
   }
@@ -348,7 +545,7 @@ export class GameServer {
     for (const [accountId, socket] of this.sockets) {
       const vessel = this.world.get(accountId);
       if (!vessel) continue;
-      if (before.get(accountId) !== GameServer.ownSignature(vessel)) this.sendOwn(socket, vessel);
+      if (before.get(accountId) !== this.ownSignature(accountId, vessel)) this.sendOwn(socket, vessel);
     }
   }
 }

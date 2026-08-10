@@ -7,6 +7,8 @@ export interface Account extends AccountProfile {
   /** Discords Snowflake-ID. `null`, wenn nicht verknüpft. */
   discordId: string | null;
   email: string | null;
+  /** Kontorolle: 0 Spieler, 1 Moderator, 2 Gamemaster, 3 Entwickler. */
+  role: number;
   lastLoginAt: string;
 }
 
@@ -49,6 +51,9 @@ export function toProfile(account: Account): AccountProfile {
     displayName: account.displayName,
     avatarUrl: account.avatarUrl,
     isDev: account.isDev,
+    coins: account.coins,
+    xp: account.xp,
+    role: account.role,
     createdAt: account.createdAt,
   };
 }

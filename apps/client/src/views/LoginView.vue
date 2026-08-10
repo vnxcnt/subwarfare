@@ -7,7 +7,6 @@ import {
   discordLoginUrl,
   loadAuthMethods,
   loginDev,
-  loginGoogle,
   restoreSession,
 } from '../state/auth';
 
@@ -15,7 +14,13 @@ const router = useRouter();
 const name = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
-const googleHost = ref<HTMLDivElement | null>(null);
+
+/**
+ * Im Produkt ist Discord der einzige Anmeldeweg. Der Entwickler-Zugang
+ * existiert ausschließlich im Dev-Build — Vite ersetzt die Konstante zur
+ * Bauzeit, im Produktionsbundle fällt der ganze Zweig weg.
+ */
+const IS_DEV_BUILD: boolean = import.meta.env.DEV;
 
 /**
  * Rücklauf des Discord-Logins: Token oder Fehler stehen im URL-Fragment.
@@ -45,29 +50,6 @@ async function consumeOauthFragment(): Promise<void> {
   }
 }
 
-/**
- * Google Identity Services. Aktiv nur, wenn eine Client-ID gesetzt ist —
- * Google akzeptiert keine nackten IP-Adressen als Herkunft, der Knopf käme
- * auf dem VPS ohne Domain also gar nicht erst zum Laufen.
- */
-const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
-
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize(config: {
-            client_id: string;
-            callback: (response: { credential: string }) => void;
-          }): void;
-          renderButton(host: HTMLElement, options: Record<string, unknown>): void;
-        };
-      };
-    };
-  }
-}
-
 async function submitDev(): Promise<void> {
   if (busy.value) return;
   busy.value = true;
@@ -81,55 +63,15 @@ async function submitDev(): Promise<void> {
   await router.replace({ name: 'menu' });
 }
 
-async function handleGoogleCredential(credential: string): Promise<void> {
-  busy.value = true;
-  error.value = null;
-  const failure = await loginGoogle(credential);
-  busy.value = false;
-  if (failure) {
-    error.value = failure;
-    return;
-  }
-  await router.replace({ name: 'menu' });
-}
-
-function mountGoogleButton(): void {
-  if (!GOOGLE_CLIENT_ID || !googleHost.value) return;
-
-  const render = (): void => {
-    window.google?.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: (response) => void handleGoogleCredential(response.credential),
-    });
-    window.google?.accounts.id.renderButton(googleHost.value!, {
-      theme: 'filled_black',
-      size: 'large',
-      text: 'signin_with',
-      width: 280,
-    });
-  };
-
-  if (window.google) {
-    render();
-    return;
-  }
-  const script = document.createElement('script');
-  script.src = 'https://accounts.google.com/gsi/client';
-  script.async = true;
-  script.onload = render;
-  document.head.appendChild(script);
-}
-
 onMounted(() => {
   void consumeOauthFragment();
   void loadAuthMethods();
-  mountGoogleButton();
 });
 </script>
 
 <template>
-  <div class="login">
-    <section class="hud__panel login__panel">
+  <div class="login game-cursor">
+    <section class="gold-panel login__panel">
       <h1 class="login__title">Sub Warfare</h1>
       <p class="login__subtitle">Anmeldung</p>
 
@@ -146,43 +88,38 @@ onMounted(() => {
         </svg>
         Mit Discord anmelden
       </a>
-      <div v-if="authMethods?.discord && (GOOGLE_CLIENT_ID || authMethods.dev)" class="login__divider login__divider--gap"><span>oder</span></div>
+      <!--
+        Entwickler-Zugang NUR im Dev-Build (Vite ersetzt import.meta.env.DEV
+        zur Bauzeit — im Produktionsbundle existiert dieser Zweig nicht).
+        Lokal bleibt er das Werkzeug, um ohne Discord-Redirect zu arbeiten;
+        der Server lehnt ihn produktiv ohnehin ab (AUTH_DEV=0).
+      -->
+      <template v-if="IS_DEV_BUILD && authMethods?.dev">
+        <div v-if="authMethods?.discord" class="login__divider login__divider--gap"><span>oder</span></div>
+        <form class="login__form" @submit.prevent="submitDev">
+          <label class="login__label" for="login-name">Entwickler-Zugang (nur Dev-Build)</label>
+          <input
+            id="login-name"
+            v-model="name"
+            class="login__input"
+            type="text"
+            minlength="2"
+            maxlength="24"
+            placeholder="Anzeigename"
+            autocomplete="off"
+            required
+          />
+          <button class="login__button" type="submit" :disabled="busy">
+            {{ busy ? 'Anmelden …' : 'Anmelden' }}
+          </button>
+        </form>
+      </template>
 
-      <div v-if="GOOGLE_CLIENT_ID" class="login__google">
-        <div ref="googleHost"></div>
-        <div class="login__divider"><span>oder</span></div>
-      </div>
-
-      <form
-        v-if="authMethods === null || authMethods.dev"
-        class="login__form"
-        @submit.prevent="submitDev"
-      >
-        <label class="login__label" for="login-name">Entwickler-Zugang</label>
-        <input
-          id="login-name"
-          v-model="name"
-          class="login__input"
-          type="text"
-          minlength="2"
-          maxlength="24"
-          placeholder="Anzeigename"
-          autocomplete="off"
-          required
-        />
-        <button class="login__button" type="submit" :disabled="busy">
-          {{ busy ? 'Anmelden …' : 'Anmelden' }}
-        </button>
-      </form>
-      <p v-else-if="!GOOGLE_CLIENT_ID" class="hud__empty">
-        Dieser Server bietet derzeit keinen Anmeldeweg an.
+      <p v-if="authMethods && !authMethods.discord" class="hud__empty">
+        Die Anmeldung ist derzeit nicht verfügbar.
       </p>
 
       <p v-if="error" class="login__error">{{ error }}</p>
-
-      <button class="login__offline" type="button" @click="router.push('/play?offline=1')">
-        Offline-Modus (ohne Konto)
-      </button>
     </section>
   </div>
 </template>
@@ -211,11 +148,8 @@ onMounted(() => {
 
 .login__panel {
   position: relative;
-  width: min(22rem, calc(100vw - 2rem));
-  padding: 1.5rem 1.75rem 1.25rem;
-  /* Vor dem Foto braucht das Panel mehr Deckung als über der Wasserfläche. */
-  background: rgb(4 20 31 / 88%);
-  backdrop-filter: blur(6px);
+  width: min(25rem, calc(100vw - 2rem));
+  padding: 1.1rem 1.3rem 1rem;
 }
 
 .login__title {
@@ -223,7 +157,7 @@ onMounted(() => {
   font-size: 1.5rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ui-accent);
+  color: var(--gold-bright);
 }
 
 .login__subtitle {
@@ -232,10 +166,6 @@ onMounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 0.6875rem;
-}
-
-.login__google {
-  margin-bottom: 1rem;
 }
 
 .login__discord {
@@ -272,7 +202,7 @@ onMounted(() => {
   align-items: center;
   gap: 0.6rem;
   margin-top: 1rem;
-  opacity: 0.4;
+  opacity: 0.5;
   font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -282,7 +212,7 @@ onMounted(() => {
 .login__divider::after {
   content: '';
   flex: 1;
-  border-top: 1px solid var(--ui-border);
+  border-top: 1px solid var(--gold-border);
 }
 
 .login__form {
@@ -299,24 +229,25 @@ onMounted(() => {
 
 .login__input {
   padding: 0.55rem 0.65rem;
-  border: 1px solid var(--ui-border);
-  border-radius: 2px;
-  background: rgb(4 20 31 / 85%);
-  color: var(--ui-text);
+  border: 1px solid var(--gold-border);
+  border-radius: 0;
+  /* Dunkler als die Panelfüllung — das Feld liegt optisch „im" Gehäuse. */
+  background: #0c0b09;
+  color: #e9e2cd;
   font: inherit;
 }
 
 .login__input:focus {
-  outline: 1px solid var(--ui-accent);
+  outline: 1px solid var(--gold);
   outline-offset: -1px;
 }
 
 .login__button {
   padding: 0.55rem 0.65rem;
-  border: 1px solid var(--ui-accent);
-  border-radius: 2px;
-  background: rgb(111 208 189 / 12%);
-  color: var(--ui-accent);
+  border: 1px solid var(--gold);
+  border-radius: 0;
+  background: var(--gold-faint);
+  color: var(--gold);
   font: inherit;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -324,7 +255,7 @@ onMounted(() => {
 }
 
 .login__button:hover:not(:disabled) {
-  background: rgb(111 208 189 / 22%);
+  background: rgb(230 207 120 / 22%);
 }
 
 .login__button:disabled {
@@ -335,22 +266,5 @@ onMounted(() => {
 .login__error {
   margin: 0.8rem 0 0;
   color: #f4b3b5;
-}
-
-.login__offline {
-  margin-top: 1.2rem;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--ui-text);
-  font: inherit;
-  font-size: 0.75rem;
-  opacity: 0.45;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-.login__offline:hover {
-  opacity: 0.8;
 }
 </style>

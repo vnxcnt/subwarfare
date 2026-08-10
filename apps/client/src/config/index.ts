@@ -1,5 +1,5 @@
 import type { GameMap, VesselProfile } from '@subwarfare/shared';
-import { DESTROYER } from '@subwarfare/shared';
+import { DESTROYER, TORPEDO } from '@subwarfare/shared';
 import decoyIcon from '../assets/icons/decoy.png';
 import gunIcon from '../assets/icons/gun.png';
 import torpedoIcon from '../assets/icons/torpedo.png';
@@ -117,6 +117,25 @@ export const DEMO_TRAFFIC = [
 export const PATROL_MARGIN = 600;
 
 /**
+ * Optische Sicht.
+ *
+ * REINE Darstellung: das Netz liefert ohnehin nur, was das Sonar ortet
+ * (sensorRange server-seitig). Die optische Sicht ist kleiner — was das Sonar
+ * hat, aber das Auge nicht, existiert als Echo auf dem Rundsichtgerät, nicht
+ * als Schiff auf dem Wasser.
+ */
+export const VISION = {
+  /** Sichtradius an der Oberfläche in Metern. Schrumpft mit der Tauchtiefe. */
+  radius: 2_500,
+  /** Länge des Periskop-Sichtkegels in Metern. Wächst mit dem Ausfahren. */
+  coneLength: 2_200,
+  /** Halber Öffnungswinkel des Kegels in Grad. */
+  coneHalfAngleDeg: 26,
+  /** Deckkraft der Verdunkelung außerhalb der Sicht. */
+  darkness: 0.62,
+} as const;
+
+/**
  * Sonar-Rundsichtgerät (PPI).
  *
  * Der Strahl streicht im Uhrzeigersinn um und malt die Echos beim Überstreichen
@@ -153,35 +172,32 @@ export const SONAR = {
 } as const;
 
 /**
- * Munitionsslots. Vorerst reine Anzeige — es gibt kein Waffensystem.
- *
- * `icon: null` fällt auf das Kürzel zurück, damit ein Slot ohne Grafik nicht
- * leer dasteht. Sobald es Schiffstypen gibt, zieht diese Liste dorthin um: die
- * Anzahl der Slots hängt am Typ, nicht am Client.
+ * Anzeige-Definition je Waffen-Kennung. WELCHE Waffen ein Schiff führt, sagt
+ * der Server (ships-Tabelle, per welcome) — hier steht nur, wie eine Waffe
+ * aussieht. `count` ist der Platzhalter für noch nicht server-verwaltete
+ * Waffen; der Torpedo läuft live über das `own`-Ereignis (Kapazität aus
+ * shared, damit Anzeige und Server nie auseinanderlaufen).
  */
-export const AMMO_SLOTS = [
-  { id: 'slot-1', label: 'Torpedo', short: 'TRP', count: 12, icon: torpedoIcon },
-  { id: 'slot-2', label: 'Wasserbombe', short: 'WBO', count: 24, icon: waterbombIcon },
-  { id: 'slot-3', label: 'Täuschkörper', short: 'TKR', count: 6, icon: decoyIcon },
-  { id: 'slot-4', label: 'Geschütz', short: 'GES', count: 4, icon: gunIcon },
-] as const;
+export const WEAPON_SLOTS: Record<
+  string,
+  { label: string; short: string; count: number; icon: string }
+> = {
+  torpedo: { label: 'Torpedo', short: 'TRP', count: TORPEDO.capacity, icon: torpedoIcon },
+  wasserbombe: { label: 'Wasserbombe', short: 'WBO', count: 24, icon: waterbombIcon },
+  taeuschkoerper: { label: 'Täuschkörper', short: 'TKR', count: 6, icon: decoyIcon },
+  geschuetz: { label: 'Geschütz', short: 'GES', count: 4, icon: gunIcon },
+};
 
 /**
  * Rumpfmaße in Weltunits. Bug zeigt lokal nach -y.
  *
- * Aktuell ein Zerstörer, abgeleitet aus dem Seitenverhältnis der Grafik
- * (240 × 1348 px ≙ 5,62 : 1). `length` ist die frei gewählte Bezugsgröße —
- * ändert man sie, skaliert das Schiff mit, weil die Breite aus der Grafik folgt.
+ * Aktuell die Fregatte (fregatte01). `length` ist die frei gewählte
+ * Bezugsgröße — ändert man sie, skaliert das Schiff mit, weil der Maßstab der
+ * Frames daraus folgt.
  */
 export const HULL = {
   length: 140,
   beam: 25,
-  /**
-   * Auflösung der Rumpfgrafik in Pixel je Meter. Daraus wird die Sprite-Größe
-   * inklusive des transparenten Randes berechnet — so muss der Rand nirgends
-   * separat verrechnet werden.
-   */
-  texturePxPerMetre: 9.629,
   /** Deutlich dunkler als das Wasser — sonst wirkt der Rumpf hohl. */
   fill: 0x081119,
   stroke: 0x6fd0bd,

@@ -25,6 +25,12 @@ export interface AccountProfile {
   avatarUrl: string | null;
   /** Über den Entwickler-Login angelegt — im Produktivbetrieb abgeschaltet. */
   isDev: boolean;
+  /** Guthaben in der Spielwährung „Coins". Vergeben wird nur server-seitig. */
+  coins: number;
+  /** XP-Gesamtstand. Level und Rang leiten sich daraus ab (`progressionFromXp`). */
+  xp: number;
+  /** Kontorolle: 0 Spieler, 1 Moderator, 2 Gamemaster, 3 Entwickler. */
+  role: number;
   createdAt: string;
 }
 

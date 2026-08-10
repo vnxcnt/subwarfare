@@ -69,6 +69,9 @@ export class MemoryAccountStore implements AccountStore {
       avatarUrl: null,
       isDev: true,
     });
+    // Der Entwickler-Zugang IST ein Entwicklerwerkzeug — im Speicherbetrieb
+    // bekommt er die Entwicklerrolle, damit das Dev-Menue lokal testbar ist.
+    account.role = 3;
     this.byDevName.set(key, account.id);
     return account;
   }
@@ -86,9 +89,20 @@ export class MemoryAccountStore implements AccountStore {
     // Nichts zu schließen.
   }
 
-  private create(fields: Omit<Account, 'id' | 'createdAt' | 'lastLoginAt'>): Account {
+  private create(
+    fields: Omit<Account, 'id' | 'createdAt' | 'lastLoginAt' | 'coins' | 'xp' | 'role'>,
+  ): Account {
     const now = new Date().toISOString();
-    const account: Account = { ...fields, id: randomUUID(), createdAt: now, lastLoginAt: now };
+    const account: Account = {
+      ...fields,
+      id: randomUUID(),
+      // Startwerte wie das Datenbank-Schema: ohne Guthaben, ohne Erfahrung.
+      coins: 0,
+      xp: 0,
+      role: 0,
+      createdAt: now,
+      lastLoginAt: now,
+    };
     this.byIdMap.set(account.id, account);
     return account;
   }

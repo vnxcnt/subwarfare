@@ -11,6 +11,9 @@ interface AccountRow extends RowDataPacket {
   display_name: string;
   avatar_url: string | null;
   is_dev: number;
+  coins: number;
+  xp: number;
+  role: number;
   created_at: string;
   last_login_at: string;
 }
@@ -24,13 +27,16 @@ function toAccount(row: AccountRow): Account {
     displayName: row.display_name,
     avatarUrl: row.avatar_url,
     isDev: row.is_dev === 1,
+    coins: row.coins,
+    xp: row.xp,
+    role: row.role,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at,
   };
 }
 
 const SELECT = `SELECT id, google_sub, discord_id, email, display_name, avatar_url, is_dev,
-                       created_at, last_login_at
+                       coins, xp, role, created_at, last_login_at
                   FROM accounts`;
 
 /**

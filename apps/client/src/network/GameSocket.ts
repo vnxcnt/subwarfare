@@ -1,8 +1,12 @@
 import type {
   ClientToServerEvents,
+  DestroyedPayload,
+  FxPayload,
   OwnStatePayload,
   ServerToClientEvents,
   StatePayload,
+  VesselModel,
+  WeaponId,
   WelcomePayload,
 } from '@subwarfare/shared';
 import { io, type Socket } from 'socket.io-client';
@@ -12,6 +16,10 @@ export interface GameSocketHandlers {
   onState: (payload: StatePayload) => void;
   onOwn: (payload: OwnStatePayload) => void;
   onPlayerLeft: (id: string) => void;
+  /** Kampf-Effekt (Einschlag/Versenkung) in Sonar-Reichweite. */
+  onFx: (payload: FxPayload) => void;
+  /** Das EIGENE Boot wurde versenkt — Respawn folgt server-seitig. */
+  onDestroyed: (payload: DestroyedPayload) => void;
   /** Sitzungsende — Rauswurf, Ablehnung des Tickets oder Verbindungsabriss. */
   onEnded: (message: string) => void;
 }
@@ -55,6 +63,8 @@ export class GameSocket {
     socket.on('state', handlers.onState);
     socket.on('own', handlers.onOwn);
     socket.on('player:left', (payload) => handlers.onPlayerLeft(payload.id));
+    socket.on('fx', handlers.onFx);
+    socket.on('destroyed', handlers.onDestroyed);
     socket.on('kicked', (payload) => end(payload.message));
     socket.on('connect_error', (error) => end(error.message || 'Verbindung abgelehnt.'));
     socket.on('disconnect', (reason) => {
@@ -69,6 +79,26 @@ export class GameSocket {
 
   sendTelegraph(step: number): void {
     this.socket?.emit('order:telegraph', { step });
+  }
+
+  /** Tauchbefehl — der Server prüft, ob das Schiff überhaupt tauchen kann. */
+  sendDive(submerged: boolean): void {
+    this.socket?.emit('order:dive', { submerged });
+  }
+
+  /** Periskop aus-/einfahren — Prüfung liegt beim Server. */
+  sendPeriscope(extended: boolean): void {
+    this.socket?.emit('order:periscope', { extended });
+  }
+
+  /** Feuerbefehl — reine Absicht; Bewaffnung, Munition und Sperre prüft der Server. */
+  sendFire(weapon: WeaponId): void {
+    this.socket?.emit('order:fire', { weapon });
+  }
+
+  /** Entwickler: eigenes Schiffsmodell wechseln. Der Server prüft die Rolle. */
+  sendDevModel(model: VesselModel): void {
+    this.socket?.emit('dev:model', { model });
   }
 
   disconnect(): void {
