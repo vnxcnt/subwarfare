@@ -23,6 +23,7 @@ import {
   TORPEDO,
   Vessel,
   angleDelta,
+  clampStep,
   norm360,
   profileForShip,
 } from '@subwarfare/shared';
@@ -74,6 +75,12 @@ export class Game {
   private sentSteer = 0;
   /** Unterdrückt das Browser-Kontextmenü auf dem Canvas (Rechtsklick tut nichts mehr). */
   private contextMenuBlocker: ((event: Event) => void) | null = null;
+
+  /**
+   * Zuletzt BEFOHLENE Telegrafenstufe, bis die Server-Bestätigung (`own`)
+   * eintrifft — Basis für schnelle W/S-Folgen. Null = bestätigter Stand gilt.
+   */
+  private pendingTelegraphStep: number | null = null;
 
   /**
    * Waffen-Zielmodus (Q): Peilung zur Maus, sektorgebunden gefeuert. Nur für
@@ -353,6 +360,8 @@ export class Game {
         this.pendingOwn = payload;
         this.ownHp = payload.hp;
         this.ownAmmo = payload.ammo;
+        // Bestätigter Stand übernimmt — die optimistische Stufe hat gedient.
+        this.pendingTelegraphStep = null;
         this.ownVessel?.applyOwnState(payload);
       },
       onPlayerLeft: (id) => {
@@ -712,11 +721,14 @@ export class Game {
   }
 
   orderTelegraph(step: number): void {
+    const clamped = clampStep(step);
+    // Optimistische Basis für nudgeTelegraph — siehe dort.
+    this.pendingTelegraphStep = clamped;
     if (this.socket) {
-      this.socket.sendTelegraph(step);
+      this.socket.sendTelegraph(clamped);
       return;
     }
-    this.ownVessel?.setTelegraph(step);
+    this.ownVessel?.setTelegraph(clamped);
   }
 
   /** Tauchbefehl. Online als Absicht ans Netz, offline direkt. */
@@ -780,12 +792,18 @@ export class Game {
     if (own) own.model = model;
   }
 
+  /**
+   * Stufe rauf/runter (W/S, Mausrad). Basis ist die OPTIMISTISCHE Pending-
+   * Stufe, nicht der server-bestätigte Stand: die Bestätigung (`own`) hinkt
+   * einen Roundtrip hinterher — ohne Pending-Basis rechnete jeder Druck
+   * innerhalb der Latenz vom selben alten Stand, und W-Hämmern brachte
+   * insgesamt nur EINE Stufe („der Schub geht nicht").
+   */
   nudgeTelegraph(delta: number): void {
     const own = this.ownVessel;
     if (!own) return;
-    // Auch online auf dem letzten bekannten Stand aufsetzen — der Server
-    // klemmt ohnehin auf den gültigen Bereich.
-    this.orderTelegraph(own.telegraphStep + delta);
+    const base = this.pendingTelegraphStep ?? own.telegraphStep;
+    this.orderTelegraph(base + delta);
   }
 
   /**
@@ -880,6 +898,7 @@ export class Game {
     this.audio = null;
     this.ownHp = null;
     this.ownAmmo = {};
+    this.pendingTelegraphStep = null;
     setSunkNotice(null);
     if (this.tiltKeys) window.removeEventListener('keydown', this.tiltKeys);
     this.tiltKeys = null;
