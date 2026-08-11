@@ -4,7 +4,7 @@ import { TUBE_LABELS } from '@subwarfare/shared';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { WEAPON_SLOTS } from '../config';
 import { hud, orderFire, orderTube } from '../state/hud';
-import { keyLabel, keys, settingsModalOpen } from '../state/settings';
+import { keys, settingsModalOpen } from '../state/settings';
 import { isTextEntry } from './dom';
 
 /**
@@ -82,13 +82,6 @@ function fire(): void {
   const waffe = active.value;
   if (waffe) orderFire(waffe.id as WeaponId);
 }
-
-/** Hinweiszeile unter der Leiste — folgt der tatsächlichen Belegung. */
-const hint = computed(() => {
-  const feuern = `${keyLabel(keys.value.fire)} feuern`;
-  if (!showTubes.value) return feuern;
-  return `${keyLabel(keys.value.loadTubes)} laden · ${keyLabel(keys.value.armTubes)} scharf · ${feuern}`;
-});
 
 function onKey(event: KeyboardEvent): void {
   // Offene Einstellungen: die Leertaste aktiviert dort Dialog-Knöpfe — sie
@@ -213,7 +206,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
       >
         {{ active?.def?.label ?? 'Feuern' }}
       </button>
-      <p class="ammo__hint">{{ hint }}</p>
     </div>
   </section>
 </template>
@@ -474,19 +466,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
   cursor: default;
 }
 
-.ammo__hint {
-  margin: 0;
-  font-size: calc(0.5625rem * var(--ui-scale));
-  opacity: 0.4;
-}
-
 @media (max-width: 760px) {
   .ammo__slot {
     width: 44px;
   }
 
-  .ammo__label,
-  .ammo__hint {
+  .ammo__label {
     display: none;
   }
 }

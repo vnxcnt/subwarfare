@@ -7,10 +7,9 @@ import exitIcon from '../assets/ui/ingame_exit.png';
 import followOffIcon from '../assets/ui/ingame_follow_off.png';
 import followOnIcon from '../assets/ui/ingame_follow_on.png';
 import settingsIcon from '../assets/ui/ingame_settings.png';
-import { KNOTS } from '../config';
+import { mapLabel } from '../config';
 import { account } from '../state/auth';
 import { hud, orderFollow } from '../state/hud';
-import { keyLabel, keys } from '../state/settings';
 
 const isDev = import.meta.env.DEV;
 const isDeveloper = computed(() => (account.value?.role ?? 0) >= ROLE_DEVELOPER);
@@ -30,16 +29,8 @@ function leaveToMenu(): void {
   void router.replace({ name: 'menu' });
 }
 
-const position = computed(() =>
-  hud.value.ready ? `${Math.round(hud.value.x)} / ${Math.round(hud.value.y)}` : '—',
-);
-const course = computed(() =>
-  hud.value.ready ? `${Math.round(hud.value.course).toString().padStart(3, '0')}°` : '—',
-);
-// In Knoten, nicht in m/s — „20 kn" liest sich als Schiff, „10 m/s" nicht.
-const speed = computed(() =>
-  hud.value.ready ? `${(hud.value.speed / KNOTS).toFixed(1)} kn` : '—',
-);
+const mapName = computed(() => mapLabel(hud.value.mapId));
+
 const tilt = computed(
   () => `${hud.value.tilt.toFixed(2)} · ${((Math.asin(hud.value.tilt) * 180) / Math.PI).toFixed(0)}°`,
 );
@@ -64,24 +55,13 @@ const weather = computed(() => {
   return `${uhr} · ${himmel} · Seegang ${Math.round(w.seaState * 9)}`;
 });
 
-/** Der Hinweistext folgt der tatsächlichen Belegung — nicht den Defaults. */
-const keyHint = computed(
-  () =>
-    `${keyLabel(keys.value.steerLeft)}/${keyLabel(keys.value.steerRight)} steuern, ` +
-    `${keyLabel(keys.value.telegraphUp)}/${keyLabel(keys.value.telegraphDown)} Telegraf, ` +
-    'Rad zoomt, Ziehen verschiebt',
-);
 </script>
 
 <template>
   <header class="status">
     <span class="status__title">Sub Warfare</span>
-    <span class="status__item">{{ hud.mapId }}</span>
+    <span class="status__item">{{ mapName }}</span>
     <span class="status__item">{{ weather }}</span>
-    <span class="status__item hud__num">{{ position }}</span>
-    <span class="status__item hud__num">{{ course }}</span>
-    <span class="status__item hud__num">{{ speed }}</span>
-    <span class="status__item hud__num">{{ hud.zoom.toFixed(2) }}×</span>
     <!--
       Folgen ist ein SCHALTER, kein Statustext: bisher schaltete das Ziehen der
       Karte es ab, und es gab keinen Weg zurück außer über den Zielmodus.
@@ -96,16 +76,9 @@ const keyHint = computed(
     >
       <img class="status__icon" :src="hud.following ? followOnIcon : followOffIcon" alt="" />
     </button>
-    <span v-if="isDev" class="status__item hud__num">Neigung {{ tilt }}</span>
-    <!--
-      Hinweis und Knöpfe in EINEM rechtsbündigen Block: der Hinweis wird auf
-      schmalen Fenstern ausgeblendet, und ein verschwundenes Element trägt
-      keinen auto-Margin mehr — die Knöpfe blieben sonst links hängen.
-    -->
+    <span v-if="isDev" class="status__item hud__num">Neigung {{ tilt }} · [ ] neigt</span>
+    <!-- Knöpfe rechtsbündig. -->
     <span class="status__right">
-      <span class="status__hint">
-        {{ keyHint }}<template v-if="isDev">, [ ] neigt</template>
-      </span>
       <!--
         Entwicklerwerkzeuge — nur mit Entwicklerrolle sichtbar. Die Anzeige ist
         Höflichkeit; durchgesetzt wird die Rolle server-seitig am dev:model-Handler.
@@ -136,7 +109,7 @@ const keyHint = computed(
         aria-label="Zurück zum Hauptmenü"
         @click="leaveToMenu"
       >
-        <img class="status__icon status__icon--breit" :src="exitIcon" alt="" />
+        <img class="status__icon" :src="exitIcon" alt="" />
       </button>
     </span>
   </header>
@@ -174,10 +147,6 @@ const keyHint = computed(
   gap: 0.6rem;
 }
 
-.status__hint {
-  opacity: 0.4;
-}
-
 .status__knopf {
   display: inline-flex;
   align-items: center;
@@ -211,18 +180,8 @@ const keyHint = computed(
   width: auto;
 }
 
-.status__icon--breit {
-  height: 26px;
-}
-
-@media (max-width: 900px) {
-  .status__hint {
-    display: none;
-  }
-}
-
-/* Sehr schmal: umbrechen statt abschneiden — das Zahnrad muss klickbar
-   bleiben, sonst sind die Einstellungen im Spiel unerreichbar. */
+/* Sehr schmal: umbrechen statt abschneiden — die Knöpfe müssen klickbar
+   bleiben, sonst sind Einstellungen und Hauptmenü im Spiel unerreichbar. */
 @media (max-width: 640px) {
   .status {
     flex-wrap: wrap;

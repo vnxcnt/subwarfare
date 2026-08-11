@@ -29,14 +29,21 @@ export const VIEW = {
    * Vertikale Stauchung — geometrisch `sin(Höhenwinkel der Kamera)`.
    * 1.0 = senkrecht von oben, 0.55 = 33,4°, 0.42 = 24,8° über dem Horizont.
    *
-   * Je kleiner, desto flacher der Blick und desto stärker die Höhenwirkung.
-   * Bei 12 m Rumpfbreite wird ein Turm ab tilt ≈ 0,45 sichtbar über dem Rumpf
-   * stehen (Schwelle: `h > beam · tilt / sqrt(1 - tilt²)`).
+   * SENKRECHT VON OBEN, und das ist eine bewusste Entscheidung: jeder Wert
+   * unter 1 staucht die Welt-y-Achse. Die quadratische 10.000er-Karte erschien
+   * dadurch als flaches Rechteck (bei 0,42 im Verhältnis 2,4 : 1), und der
+   * runde Sichtkreis als Ellipse. Beides fiel im Spiel als „stimmt nicht" auf.
+   *
+   * Der Preis ist die Höhenwirkung: bei 1.0 steht kein Turm mehr sichtbar über
+   * dem Rumpf (die Schwelle `h > beam · tilt / sqrt(1 − tilt²)` geht gegen
+   * unendlich). Die Rumpfgrafiken selbst sind davon NICHT betroffen — sie
+   * liegen in der aufrechten Ebene und werden nie gestaucht; nur ihre Position
+   * wird umgerechnet.
    *
    * Zur Laufzeit über `setTilt()` verstellbar, im Dev-Build mit den Tasten
    * [ und ]. Dieser Wert ist nur der Startwert.
    */
-  tilt: 0.42,
+  tilt: 1.0,
   /**
    * Untergrenze. Darunter kippt der Eindruck: ohne Perspektive schrumpfen
    * entfernte Dinge nicht, und ein Rumpf querab wird zum Strich (bei 0,25 noch
@@ -350,3 +357,20 @@ export const FALLBACK_MAP: GameMap = {
   spawnPoints: [],
   exitPoints: [],
 };
+
+/**
+ * Anzeigenamen der Karten.
+ *
+ * `GameMap` trägt nur eine `id` — der Name ist reine Darstellung und hat im
+ * Protokoll nichts verloren. Er steht hier statt in den Views, weil ihn sowohl
+ * die Kartenauswahl im Hauptmenü als auch die Statusleiste im Spiel brauchen;
+ * getrennte Listen wären früher oder später auseinandergelaufen.
+ */
+export const MAP_LABELS: Record<string, string> = {
+  ocean01: 'Nordatlantik',
+};
+
+/** Anzeigename einer Karte; unbekannte Kennungen zeigen sich selbst. */
+export function mapLabel(id: string): string {
+  return MAP_LABELS[id] ?? id;
+}

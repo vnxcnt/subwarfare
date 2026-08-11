@@ -16,6 +16,7 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import menuMusicUrl from '../assets/audio/mainmenu.mp3';
+import { mapLabel } from '../config';
 import { API_URL, account, confirmDiscordLink, logout, restoreSession } from '../state/auth';
 import {
   buyItem,
@@ -49,7 +50,7 @@ const settingsOpen = ref(false);
  * KNOWN_MAPS des Backends passen, sonst antwortet die Lobby „Unbekannte Karte".
  */
 const MAPS = [
-  { id: 'ocean01', label: 'Nordatlantik', detail: '10 × 10 km · offene See' },
+  { id: 'ocean01', label: mapLabel('ocean01'), detail: '10 × 10 km · offene See' },
 ] as const;
 
 const selectedMap = ref<string>(MAPS[0].id);
