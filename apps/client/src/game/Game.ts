@@ -174,6 +174,12 @@ export class Game {
   private static readonly TICKS_PER_SECOND = 1 / SIM.fixedDt;
   /** Render-Verzug in Ticks. 2,5 Ticks = 125 ms — überbrückt einen Paketverlust. */
   private static readonly DELAY_TICKS = 2.5;
+  /**
+   * Wie stark die Wiedergabe im TEMPO nachgezogen werden darf, um Rückstand
+   * aufzuholen. 0,04 = ±4 %; darunter ist eine Tempoänderung nicht wahrnehmbar,
+   * und ein ganzer Tick Rückstand ist trotzdem in gut einer Sekunde eingeholt.
+   */
+  private static readonly MAX_SPEED_TRIM = 0.04;
 
   get application(): Application | null {
     return this.app;
@@ -571,11 +577,32 @@ export class Game {
     const world = this.world;
     if (!world || this.snapshots.length === 0 || this.renderTick < 0) return;
 
-    this.renderTick += frameSeconds * Game.TICKS_PER_SECOND;
     const target = this.latestTick - Game.DELAY_TICKS;
     const drift = target - this.renderTick;
-    if (Math.abs(drift) > 10) this.renderTick = target;
-    else this.renderTick += drift * Math.min(1, frameSeconds * 3);
+    if (Math.abs(drift) > 10) {
+      // Großer Aussetzer (verborgener Tab): hart aufschnappen, sanft aufholen
+      // dauerte hier Minuten.
+      this.renderTick = target;
+    } else {
+      /*
+       * ⚠️ Die Nachführung MUSS im Tempo begrenzt sein.
+       *
+       * Vorher stand hier "renderTick += drift * min(1, frameSeconds * 3)"
+       * ZUSÄTZLICH zum Echtzeitschritt. Das effektive Wiedergabetempo war damit
+       * 20 + 3·drift Ticks/s — ohne jede Grenze. `latestTick` springt aber
+       * paketweise, also sägt drift dauerhaft zwischen etwa −1 und +1, und die
+       * ganze Welt lief permanent zwischen 17 und 23 Ticks pro Sekunde. Das ist
+       * kein Ausreißer nach einem Paketverlust, sondern der Normalbetrieb — und
+       * genau das nimmt man als Ruckeln wahr.
+       *
+       * Jetzt läuft die Uhr in Echtzeit und wird nur um höchstens ±4 % im TEMPO
+       * nachgezogen. Ein ganzer Tick Rückstand ist damit nach gut einer Sekunde
+       * eingeholt, ohne dass die Bewegung sichtbar schneller oder langsamer wird
+       * (unter ~5 % ist eine Tempoänderung nicht wahrnehmbar).
+       */
+      const tempo = Math.max(-Game.MAX_SPEED_TRIM, Math.min(Game.MAX_SPEED_TRIM, drift * 0.25));
+      this.renderTick += frameSeconds * Game.TICKS_PER_SECOND * (1 + tempo);
+    }
 
     // Verbrauchte Snapshots abwerfen — einer VOR der Render-Uhr muss bleiben.
     while (this.snapshots.length > 2 && (this.snapshots[1]?.tick ?? Infinity) <= this.renderTick) {

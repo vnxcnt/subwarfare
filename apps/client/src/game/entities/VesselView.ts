@@ -2,7 +2,7 @@ import { DEG, DEFAULT_VESSEL_MODEL, HULL_DIMENSIONS, angleDelta } from '@subwarf
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { HULL, WAKE } from '../../config';
 import { foamTexture, smokeTexture } from '../fx-textures';
-import { getTilt } from '../Projection';
+import { RENDER_ELEVATION, getTilt, screenAxisAngle } from '../Projection';
 import { directionFrame, hasVesselTextures, periscopeFrame } from '../textures';
 import type { Vessel } from '@subwarfare/shared';
 
@@ -35,6 +35,24 @@ const SMOKE_MAX_AGE = 3.4;
 
 /** Eckenzahl des Kontaktschattens — genug, dass die Ellipse rund wirkt. */
 const SHADOW_SEGMENTS = 20;
+
+/**
+ * Wie weit das Sprite eines Frames nachgedreht werden muss, damit der Rumpf
+ * auf dem Bildschirm exakt auf den echten Kurs zeigt.
+ *
+ * ⚠️ NICHT einfach die Kursdifferenz nehmen. Das Sprite ist ein Render aus
+ * 50° Höhe und trägt damit eine Verkürzung in sich: eine Azimut-Stufe von
+ * 5,625° dreht die scheinbare Rumpfachse im Bild um 7,3°. Mit der linearen
+ * Differenz blieb an jeder der 64 Framegrenzen ein Sprung stehen — gemessen
+ * ein Grad, viermal so viel wie die Kursänderung zwischen zwei Bildern, und
+ * beim Drehen alle 0,7 Sekunden sichtbar.
+ *
+ * Richtig ist die Differenz der SCHEINBAREN Achsen: die des Ziels in der
+ * Karten-Projektion, die des Bildes in der Render-Perspektive.
+ */
+function restwinkel(frameKurs: number, echterKurs: number): number {
+  return screenAxisAngle(echterKurs, getTilt()) - screenAxisAngle(frameKurs, RENDER_ELEVATION);
+}
 
 /**
  * Dauer der Überblendung beim Framewechsel. Kurz genug, um bei 8°/s Drehrate
@@ -244,7 +262,7 @@ export class VesselView {
         // Stufenlos: der Frame zeigt seinen Rasterkurs, der Restwinkel dreht
         // das Bild exakt auf den echten Kurs. Bildschirmdrehung — die Ebene
         // ist uniform skaliert, hier schert nichts.
-        this.hull.rotation = angleDelta(frame.angleDegrees, model.rotation) * DEG;
+        this.hull.rotation = restwinkel(frame.angleDegrees, model.rotation);
 
         // Weltmaßstab direkt — keine 1/tilt-Gegenskalierung mehr nötig, die
         // aufrechte Ebene staucht ja nicht.
@@ -260,7 +278,7 @@ export class VesselView {
           this.ghost.alpha = this.ghostFade / CROSSFADE_SECONDS;
           // Auch der Geist zeigt auf den ECHTEN Kurs — beide Bilder derselben
           // Fahrt, nur aus zwei Perspektiven.
-          this.ghost.rotation = angleDelta(this.ghostAngle, model.rotation) * DEG;
+          this.ghost.rotation = restwinkel(this.ghostAngle, model.rotation);
         }
       }
     } else {
@@ -299,7 +317,9 @@ export class VesselView {
           this.periscope.width = frame.texture.width * frame.metresPerPx;
           // Höhe wächst mit dem Ausfahren — das „Aufsteigen" aus dem Wasser.
           this.periscope.height = frame.texture.height * frame.metresPerPx * extend;
-          this.periscope.rotation = angleDelta(frame.angleDegrees, model.rotation) * DEG;
+          // Derselbe Restwinkel wie beim Rumpf — das Periskop stammt aus
+          // derselben Turntable-Reihe und hat denselben Sprung an den Grenzen.
+          this.periscope.rotation = restwinkel(frame.angleDegrees, model.rotation);
         }
       }
     }

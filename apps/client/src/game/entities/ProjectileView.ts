@@ -1,26 +1,9 @@
 import type { ProjectileState } from '@subwarfare/shared';
 import { DEG, DEPTH_CHARGE, GUN } from '@subwarfare/shared';
 import { Container, Graphics, Sprite } from 'pixi.js';
-import { getTilt } from '../Projection';
+import { RENDER_ELEVATION, getTilt, screenAxisAngle } from '../Projection';
 import { directionFrame } from '../textures';
 import { tintForDepth } from './VesselView';
-
-/**
- * Kamerahöhe der Turntable-Renders (View_x°___50°) als y-Stauchung. Die
- * Karten-Projektion staucht mit `getTilt()` (~0,42) deutlich stärker — ein
- * diagonaler Kurs erscheint am Bildschirm dadurch bis zu ~17° flacher, als
- * die Sprite-Achse aus dem 50°-Render zeigt.
- */
-const RENDER_ELEVATION = Math.sin((50 * Math.PI) / 180);
-
-/**
- * Bildschirmwinkel (0 = hoch, im Uhrzeigersinn, Radiant) einer Weltrichtung,
- * deren y-Anteil mit `squash` gestaucht dargestellt wird.
- */
-function screenAxisAngle(courseDegrees: number, squash: number): number {
-  const course = courseDegrees * DEG;
-  return Math.atan2(Math.sin(course), Math.cos(course) * squash);
-}
 
 /**
  * Mindestlänge eines Projektils auf dem Bildschirm. Ein 10-m-Torpedo wäre bei

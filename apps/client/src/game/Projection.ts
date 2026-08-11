@@ -55,6 +55,28 @@ export function heightOffsetPerMetre(): number {
   return -Math.sqrt(1 - currentTilt ** 2) / currentTilt;
 }
 
+/**
+ * Kamerahöhe der Turntable-Renders (Dateiname `View_x°___50°`) als Stauchung.
+ * Alle Fahrzeug- und Projektil-Atlanten sind bei 50° über dem Horizont
+ * gerendert; ihre Bilder tragen diese Verkürzung also bereits in sich.
+ */
+export const RENDER_ELEVATION = Math.sin((50 * Math.PI) / 180);
+
+/**
+ * Bildschirmwinkel (0 = nach oben, im Uhrzeigersinn, Radiant) einer
+ * Weltrichtung, deren y-Anteil mit `squash` gestaucht dargestellt wird.
+ *
+ * ⚠️ Der Zusammenhang ist NICHT linear, und genau daran ist die
+ * Billboard-Drehung gescheitert: eine Azimut-Stufe von 5,625° (eine der 64
+ * Richtungen) dreht die scheinbare Rumpfachse im 50°-Render um 7,3°. Wer den
+ * Restwinkel linear addiert, lässt an jeder Framegrenze rund 1,7° Sprung
+ * stehen — gemessen ein Grad Ruck alle 0,7 Sekunden beim Drehen.
+ */
+export function screenAxisAngle(courseDegrees: number, squash: number): number {
+  const course = courseDegrees * (Math.PI / 180);
+  return Math.atan2(Math.sin(course), Math.cos(course) * squash);
+}
+
 /** Weltkoordinate in die (noch kamerafreie) Bildebene. */
 export function project(x: number, y: number, out: Point = new Point()): Point {
   return PROJECTION.apply({ x, y }, out);
