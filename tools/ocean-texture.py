@@ -111,8 +111,20 @@ def nahtlos_machen(feld: np.ndarray, partner: np.ndarray) -> np.ndarray:
     unpassenden Ränder liegen jetzt als Kreuz in der Mitte und werden dort mit
     einem anderen Ausschnitt weich überblendet — mit einem FREMDEN, weil ein
     Verblenden des Feldes mit sich selbst ein Geisterbild ergäbe.
+
+    ⚠️ IMMER BEIDE ACHSEN behandeln, auch wenn die Messung eine davon für
+    sauber hält. Der Versuch, nur die gebrochene Achse anzufassen, ging schief:
+    `naht_rang` misst HELLIGKEITSsprünge, und watertile.png hatte oben/unten
+    keinen — wohl aber einen STRUKTURbruch, bei dem das Wellenmuster einfach
+    nicht weiterläuft. Gekachelt standen dann klar sichtbare waagerechte Linien
+    im Bild, obwohl die Zahl 27 % sagte. Die Messung taugt zur Kontrolle
+    hinterher, nicht als Schalter davor.
     """
     n = feld.shape[0]
+    grau = feld.mean(axis=2)
+    print(f"  Naht der Vorlage (nur Helligkeit): links/rechts {naht_rang(grau, 1):.0f}%, "
+          f"oben/unten {naht_rang(grau, 0):.0f}%")
+
     versetzt = np.roll(np.roll(feld, n // 2, axis=0), n // 2, axis=1)
     fremd = np.roll(np.roll(partner, n // 3, axis=0), n // 7, axis=1)
 
@@ -123,6 +135,35 @@ def nahtlos_machen(feld: np.ndarray, partner: np.ndarray) -> np.ndarray:
     keil = keil * keil * (3 - 2 * keil)
     maske = np.maximum(keil[:, None], keil[None, :])[..., None]
     return versetzt * (1 - maske) + fremd * maske
+
+
+# Zielstatistik der fertigen Kachel. Der Ozean-Shader hat FESTE Schwellen für
+# Schaumkämme, Wasserfarbe und Kontrast; sie sind auf diese Werte eingestellt.
+# Ohne Normierung müsste man sie bei jeder neuen Vorlage nachziehen — eine
+# helle, flaue Aufnahme hätte sonst gar keine Kämme mehr und eine grelle Fläche.
+ZIEL_MITTEL = 0.171
+ZIEL_STREUUNG = 0.073
+
+
+def normieren(feld: np.ndarray) -> np.ndarray:
+    """
+    Helligkeit und Kontrast auf die Zielstatistik ziehen, FARBTON unangetastet.
+
+    Gearbeitet wird auf der Luminanz; die Kanäle folgen im selben Verhältnis.
+    Dadurch bleibt das Blau der Vorlage erhalten, nur Helligkeit und Spreizung
+    werden vergleichbar gemacht.
+    """
+    lum = feld @ np.array([0.299, 0.587, 0.114])
+    mittel, streuung = lum.mean() / 255.0, lum.std() / 255.0
+    faktor = ZIEL_STREUUNG / max(streuung, 1e-6)
+    ziel = (lum / 255.0 - mittel) * faktor + ZIEL_MITTEL
+    ziel = np.clip(ziel, 0.004, 1.0)
+    print(
+        f"  Normiert: Mittel {mittel:.3f} -> {ZIEL_MITTEL:.3f}, "
+        f"Streuung {streuung:.3f} -> {ZIEL_STREUUNG:.3f}"
+    )
+    verhaeltnis = (ziel * 255.0) / np.maximum(lum, 1.0)
+    return np.clip(feld * verhaeltnis[..., None], 0, 255)
 
 
 def gauss_periodisch(feld: np.ndarray, sigma: float) -> np.ndarray:
@@ -193,6 +234,7 @@ def main() -> None:
     verlauf = gauss_periodisch(kachel, sigma=n / 5.0)
     mittel = kachel.reshape(-1, kachel.shape[2]).mean(axis=0)
     ausgeglichen = np.clip(kachel - verlauf + mittel, 0, 255)
+    ausgeglichen = normieren(ausgeglichen)
 
     speichern(name_aus(quelle), ausgeglichen / 255.0, "RGB")
 

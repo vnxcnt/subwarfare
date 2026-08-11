@@ -135,7 +135,14 @@ void main() {
   float aWeit = (1.0 - wGrob) * (1.0 - wFein);
   float aGrob = wGrob * (1.0 - wFein);
   float kontrast = inversesqrt(aWeit * aWeit + aGrob * aGrob + wFein * wFein);
-  vec3 kachelMittel = vec3(0.127, 0.175, 0.211);
+  /*
+   * Kanalmittel der Kachel. Bezugspunkt der Kontrastspreizung — es muss NICHT
+   * bei jedem Vorlagenwechsel nachgezogen werden, weil tools/ocean-texture.py
+   * die Kachel auf eine feste Zielstatistik normiert (siehe ZIEL_MITTEL dort).
+   * Ohne diese Normierung hätte eine helle, flaue Vorlage gar keine Kämme mehr
+   * und eine grelle Fläche ergeben.
+   */
+  vec3 kachelMittel = vec3(0.122, 0.182, 0.224);
   wasser = max((wasser - kachelMittel) * kontrast + kachelMittel, vec3(0.0));
 
   /*
