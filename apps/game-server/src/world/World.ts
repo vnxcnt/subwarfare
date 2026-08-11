@@ -11,6 +11,7 @@ import {
   DECOY,
   DEFAULT_VESSEL_MODEL,
   DEG,
+  DEPTH_CHARGE,
   GUN,
   HULL_DIMENSIONS,
   SHIP_TYPE_SUBMARINE,
@@ -32,7 +33,7 @@ import type { ShipCatalog } from '../sim/ShipCatalog.js';
  */
 interface Projectile {
   id: string;
-  kind: 'torpedo' | 'decoy' | 'shell';
+  kind: 'torpedo' | 'decoy' | 'shell' | 'depthcharge';
   /** Wer ihn abgefeuert hat — der Schütze trifft sich nicht selbst. */
   ownerId: PlayerId;
   model: string;
@@ -46,6 +47,14 @@ interface Projectile {
   /** Zurückgelegte Strecke — ab `rangeMetres` ist er ein Blindgänger. */
   travelled: number;
   rangeMetres: number;
+  /**
+   * Nur Wasserbombe: Restsekunden bis zur Detonation. Läuft erst, wenn der
+   * Wurf beendet ist — bis dahin `null`. Bei 0 detoniert sie mit
+   * Flächenwirkung (`blastRadius`) statt als Blindgänger zu verschwinden.
+   */
+  fuseSeconds: number | null;
+  /** Nur Wasserbombe: Wirkungsradius der Detonation in Metern. */
+  blastRadius: number;
 }
 
 /**
@@ -158,7 +167,20 @@ export class World {
   projectileStates(): ProjectileState[] {
     const states: ProjectileState[] = [];
     for (const p of this.projectiles.values()) {
-      states.push({ id: p.id, model: p.model, x: p.x, y: p.y, rotation: p.rotation });
+      const state: ProjectileState = {
+        id: p.id,
+        model: p.model,
+        x: p.x,
+        y: p.y,
+        rotation: p.rotation,
+      };
+      // Sinkende Wasserbombe: der Fortschritt macht die Darstellung möglich
+      // (Absacken, Verblassen) — ohne ihn sähe sie aus wie ein liegengebliebener
+      // Torpedo.
+      if (p.fuseSeconds !== null) {
+        state.sink = Math.min(Math.max(1 - p.fuseSeconds / DEPTH_CHARGE.sinkSeconds, 0), 1);
+      }
+      states.push(state);
     }
     return states;
   }
@@ -184,6 +206,7 @@ export class World {
     damage: number,
     hitRadius: number,
     rangeMetres: number,
+    blastRadius = 0,
   ): void {
     const bearing = norm360(bearingDegrees);
     const heading = bearing * DEG;
@@ -200,8 +223,25 @@ export class World {
       hitRadius,
       travelled: 0,
       rangeMetres,
+      fuseSeconds: null,
+      blastRadius,
     };
     this.projectiles.set(projectile.id, projectile);
+  }
+
+  /**
+   * Überwasserschiff: Wasserbombe achteraus/seitlich in Zielpeilung. Sie fliegt
+   * ihre kurze Strecke, bleibt dann liegen und sinkt bis zur Detonation —
+   * Sektorprüfung liegt wie bei den anderen Waffen beim GameServer.
+   */
+  fireDepthCharge(shooter: Vessel, bearingDegrees: number): void {
+    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    this.launch(
+      shooter, 'depthcharge', DEPTH_CHARGE.model, bearingDegrees,
+      dims.beam / 2 + 4,
+      DEPTH_CHARGE.speed, DEPTH_CHARGE.damage, 0, DEPTH_CHARGE.rangeMetres,
+      DEPTH_CHARGE.blastRadius,
+    );
   }
 
   /** U-Boot: Torpedo aus dem Bugrohr, geradeaus in Kursrichtung. */
@@ -247,6 +287,43 @@ export class World {
       dims.beam / 2 + DECOY.triggerRadius * 0.2,
       DECOY.speed, 0, 0, DECOY.rangeMetres,
     );
+  }
+
+  /**
+   * Detonation der Wasserbombe: Flächenwirkung statt Berührungstreffer.
+   *
+   * Der Schaden fällt vom Zentrum zum Rand linear auf null. Anders als Torpedo
+   * und Granate trifft sie AUCH GETAUCHTE Boote — das ist ihr ganzer Zweck.
+   * Auch der Werfer selbst ist NICHT ausgenommen: wer seine eigene Bombe
+   * überfährt, bekommt sie ab.
+   */
+  private detonate(
+    charge: Projectile,
+    events: WorldEvents,
+    sunkThisStep: Set<PlayerId>,
+  ): void {
+    events.impacts.push({ x: charge.x, y: charge.y });
+
+    for (const vessel of this.vessels.values()) {
+      if (sunkThisStep.has(vessel.id)) continue;
+      const dx = vessel.x - charge.x;
+      const dy = vessel.y - charge.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance > charge.blastRadius) continue;
+
+      const anteil = 1 - distance / charge.blastRadius;
+      const schaden = Math.round(charge.damage * anteil);
+      if (schaden <= 0) continue;
+
+      const remaining = (this.hitpoints.get(vessel.id) ?? 0) - schaden;
+      this.hitpoints.set(vessel.id, Math.max(remaining, 0));
+      if (remaining <= 0) {
+        sunkThisStep.add(vessel.id);
+        events.destroyed.push({ id: vessel.id, x: vessel.x, y: vessel.y });
+      } else {
+        this.applyDamageEffects(vessel, remaining);
+      }
+    }
   }
 
   /**
@@ -315,25 +392,49 @@ export class World {
     const events: WorldEvents = { impacts: [], destroyed: [] };
     /** In DIESEM Schritt versenkt — ein Wrack fängt keinen zweiten Torpedo. */
     const sunkThisStep = new Set<PlayerId>();
+    // Beide werden von `detonate` (Schritt 1) mitbefüllt — deshalb stehen sie
+    // vor der Projektilschleife.
 
     // 1) Bewegen; Blindgänger (Laufstrecke erschöpft, weit hinterm Kartenrand)
-    //    verschwinden lautlos.
+    //    verschwinden lautlos. Die Wasserbombe ist die Ausnahme: bei
+    //    erschöpfter Wurfweite bleibt sie liegen und zündet ihren Sinkzünder.
     for (const projectile of this.projectiles.values()) {
-      const step = projectile.speed * deltaSeconds;
-      const heading = projectile.rotation * DEG;
-      projectile.x += Math.sin(heading) * step;
-      projectile.y -= Math.cos(heading) * step;
-      projectile.travelled += step;
+      const sinking = projectile.fuseSeconds !== null;
+      if (!sinking) {
+        const step = projectile.speed * deltaSeconds;
+        const heading = projectile.rotation * DEG;
+        projectile.x += Math.sin(heading) * step;
+        projectile.y -= Math.cos(heading) * step;
+        projectile.travelled += step;
+      }
 
-      if (
-        projectile.travelled >= projectile.rangeMetres ||
+      const draussen =
         projectile.x < -500 ||
         projectile.y < -500 ||
         projectile.x > this.map.width + 500 ||
-        projectile.y > this.map.height + 500
-      ) {
+        projectile.y > this.map.height + 500;
+      if (draussen) {
         this.projectiles.delete(projectile.id);
+        continue;
       }
+
+      if (projectile.kind === 'depthcharge') {
+        if (!sinking) {
+          // Wurf beendet: ab hier sinkt sie an Ort und Stelle.
+          if (projectile.travelled >= projectile.rangeMetres) {
+            projectile.speed = 0;
+            projectile.fuseSeconds = DEPTH_CHARGE.sinkSeconds;
+          }
+          continue;
+        }
+        projectile.fuseSeconds = (projectile.fuseSeconds ?? 0) - deltaSeconds;
+        if (projectile.fuseSeconds > 0) continue;
+        this.projectiles.delete(projectile.id);
+        this.detonate(projectile, events, sunkThisStep);
+        continue;
+      }
+
+      if (projectile.travelled >= projectile.rangeMetres) this.projectiles.delete(projectile.id);
     }
 
     // 2) Annäherungszündung VOR dem Rumpftreffer: der Täuschkörper soll den
@@ -372,7 +473,9 @@ export class World {
     //    zurück — mehr als der kleinste Trefferzonen-Durchmesser (8 m), ein
     //    reiner Endpunkt-Test flöge mitten durch Rümpfe hindurch.
     for (const projectile of this.projectiles.values()) {
-      if (projectile.kind === 'decoy') continue;
+      // Täuschkörper treffen nichts; die Wasserbombe wirkt erst bei der
+      // Detonation (Fläche), nicht durch Berührung.
+      if (projectile.kind === 'decoy' || projectile.kind === 'depthcharge') continue;
 
       const step = projectile.speed * deltaSeconds;
       const heading = projectile.rotation * DEG;

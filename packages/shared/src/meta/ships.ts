@@ -41,11 +41,16 @@ export interface ShipStats {
 }
 
 export const DEFAULT_SHIP_STATS: Record<VesselModel, ShipStats> = {
+  /**
+   * Fregatten sind Geleitschiffe: Geschütz und Wasserbomben. Torpedos und
+   * Täuschkörper bleiben den ZERSTÖRERN vorbehalten — die Fregatte jagt
+   * U-Boote, sie duelliert sich nicht mit ihnen.
+   */
   fregatte01: {
     model: 'fregatte01',
     hp: 500,
     type: SHIP_TYPE_VESSEL,
-    armament: ['torpedo', 'wasserbombe', 'taeuschkoerper', 'geschuetz'],
+    armament: ['wasserbombe', 'geschuetz'],
     speedFactor: 1,
   },
   submarine01: {
@@ -81,7 +86,7 @@ export const DEFAULT_SHIP_STATS: Record<VesselModel, ShipStats> = {
     model: 'fregatte02',
     hp: 550,
     type: SHIP_TYPE_VESSEL,
-    armament: ['torpedo', 'wasserbombe', 'taeuschkoerper', 'geschuetz'],
+    armament: ['wasserbombe', 'geschuetz'],
     speedFactor: 0.95,
   },
   submarine02: {

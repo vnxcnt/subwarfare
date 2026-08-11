@@ -32,6 +32,12 @@ export interface AccountProfile {
   /** Kontorolle: 0 Spieler, 1 Moderator, 2 Gamemaster, 3 Entwickler. */
   role: number;
   createdAt: string;
+  /**
+   * Verknüpfte Anmeldewege — nur JA/NEIN, nie die Fremd-IDs selbst: der
+   * Client braucht sie ausschließlich für die Anzeige in den Einstellungen.
+   */
+  hasGoogle: boolean;
+  hasDiscord: boolean;
 }
 
 export interface AuthResponse {

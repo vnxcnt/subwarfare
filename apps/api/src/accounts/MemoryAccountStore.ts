@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { Account, AccountStore, DiscordIdentity, GoogleIdentity } from './store.js';
+import type {
+  Account,
+  AccountStore,
+  DiscordIdentity,
+  GoogleIdentity,
+  LinkResult,
+} from './store.js';
 
 /**
  * Konten im Arbeitsspeicher — für die Entwicklung ohne Datenbank.
@@ -95,6 +101,29 @@ export class MemoryAccountStore implements AccountStore {
   async addCoins(id: string, amount: number): Promise<void> {
     const account = this.byIdMap.get(id);
     if (account) account.coins += amount;
+  }
+
+  async linkGoogle(id: string, identity: GoogleIdentity): Promise<LinkResult> {
+    const account = this.byIdMap.get(id);
+    if (!account) return 'conflict';
+    if (account.googleSub === identity.googleSub) return 'ok';
+    if (account.googleSub !== null) return 'conflict';
+    if (this.byGoogle.has(identity.googleSub)) return 'taken';
+    account.googleSub = identity.googleSub;
+    account.email ??= identity.email;
+    this.byGoogle.set(identity.googleSub, id);
+    return 'ok';
+  }
+
+  async linkDiscord(id: string, identity: DiscordIdentity): Promise<LinkResult> {
+    const account = this.byIdMap.get(id);
+    if (!account) return 'conflict';
+    if (account.discordId === identity.discordId) return 'ok';
+    if (account.discordId !== null) return 'conflict';
+    if (this.byDiscord.has(identity.discordId)) return 'taken';
+    account.discordId = identity.discordId;
+    this.byDiscord.set(identity.discordId, id);
+    return 'ok';
   }
 
   async deleteAccount(id: string): Promise<void> {

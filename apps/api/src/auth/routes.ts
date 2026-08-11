@@ -6,7 +6,14 @@ import { sanitizeDisplayName, toProfile } from '../accounts/store.js';
 import { env } from '../env.js';
 import { discordAuthorizeUrl, discordEnabled, redeemDiscordCode } from './discord.js';
 import { googleEnabled, verifyGoogleCredential } from './google.js';
-import { signOauthState, signSession, verifyOauthState, verifySession } from './jwt.js';
+import {
+  signLinkTicket,
+  signOauthState,
+  signSession,
+  verifyLinkTicket,
+  verifyOauthState,
+  verifySession,
+} from './jwt.js';
 
 /**
  * Liest das Sitzungs-Token aus dem `Authorization`-Kopf.
@@ -26,6 +33,13 @@ export async function accountFromRequest(
   return accounts.byId(claims.sub);
 }
 
+/**
+ * Entwickler-Konten hängen am blossen Anzeigenamen (`dev_accounts`) — wer den
+ * Namen kennt, kommt per `/auth/dev` hinein. Eine echte Identität daran zu
+ * hängen würde diese Hintertür an ein Konto mit realem Login binden.
+ */
+const DEV_LINK_REFUSAL = 'Entwickler-Konten können nicht verknüpft werden.';
+
 export function registerAuthRoutes(
   app: FastifyInstance,
   accounts: AccountStore,
@@ -38,12 +52,21 @@ export function registerAuthRoutes(
     dev: env.authDev,
   }));
 
-  /** Startet den Discord-Login: signierter state, Sprung zu Discord. */
-  app.get('/auth/discord', async (_request, reply) => {
+  /**
+   * Startet den Discord-Login: signierter state, Sprung zu Discord.
+   *
+   * `n` ist die Wiedererkennung des Browsers (der Client erzeugt sie und legt
+   * sie in `sessionStorage`). Sie läuft signiert durch den State und kommt im
+   * Rücklauf zurück — ohne sie könnte ein Angreifer ein vorbereitetes
+   * code/state-Paar unterschieben und das Opfer in SEIN Konto einloggen.
+   */
+  app.get('/auth/discord', async (request, reply) => {
     if (!discordEnabled()) {
       return reply.code(503).send({ error: 'Discord-Anmeldung ist auf diesem Server nicht aktiv.' });
     }
-    return reply.redirect(discordAuthorizeUrl(await signOauthState()), 302);
+    const query = request.query as { n?: unknown } | undefined;
+    const nonce = typeof query?.n === 'string' ? query.n.slice(0, 64) : undefined;
+    return reply.redirect(discordAuthorizeUrl(await signOauthState({ nonce })), 302);
   });
 
   /**
@@ -61,7 +84,8 @@ export function registerAuthRoutes(
     if (!discordEnabled()) return back('error=' + encodeURIComponent('Discord-Anmeldung ist nicht aktiv.'));
 
     const query = request.query as { code?: unknown; state?: unknown } | undefined;
-    if (!(await verifyOauthState(query?.state))) {
+    const state = await verifyOauthState(query?.state);
+    if (!state.valid) {
       return back('error=' + encodeURIComponent('Anmeldung abgelaufen — bitte erneut versuchen.'));
     }
     if (typeof query?.code !== 'string' || query.code.length === 0) {
@@ -73,10 +97,121 @@ export function registerAuthRoutes(
       return back('error=' + encodeURIComponent('Discord-Anmeldung fehlgeschlagen.'));
     }
 
+    // VERKNÜPFUNG statt Login: hier wird NICHT verknüpft, sondern nur ein
+    // kurzlebiger Beleg über die geprüfte Identität ausgestellt. Einlösen kann
+    // ihn allein der Browser, der die Sitzung dieses Kontos hält — sonst könnte
+    // ein Angreifer seinen eigenen Verknüpfungs-State unterschieben und fremde
+    // Discord-Konten an sein eigenes Spieler-Konto binden.
+    if (state.linkAccountId) {
+      const ticket = await signLinkTicket({
+        sub: state.linkAccountId,
+        provider: 'discord',
+        externalId: identity.discordId,
+        displayName: identity.displayName,
+        avatarUrl: identity.avatarUrl,
+      });
+      return reply.redirect(`${env.clientUrl}/menu#linkticket=${encodeURIComponent(ticket)}`, 302);
+    }
+
     const account = await accounts.upsertDiscord(identity);
     await accounts.touchLogin(account.id);
     const token = await signSession({ sub: account.id, name: account.displayName });
-    return back(`token=${encodeURIComponent(token)}`);
+    // Die Nonce des startenden Browsers läuft zurück; der Client übernimmt das
+    // Token nur, wenn sie zu seiner gespeicherten passt.
+    const nonce = state.nonce ? `&n=${encodeURIComponent(state.nonce)}` : '';
+    return back(`token=${encodeURIComponent(token)}${nonce}`);
+  });
+
+  /**
+   * Startet die Discord-VERKNÜPFUNG aus den Einstellungen. Liefert die
+   * Sprungadresse als JSON statt selbst umzuleiten: der Aufruf kommt als
+   * fetch mit Authorization-Kopf — das Sitzungs-Token gehört nie in eine URL,
+   * und die Konto-ID wandert signiert in den OAuth-State.
+   */
+  app.post('/account/link/discord/start', async (request, reply) => {
+    if (!discordEnabled()) {
+      return reply.code(503).send({ error: 'Discord-Anmeldung ist auf diesem Server nicht aktiv.' });
+    }
+    const account = await accountFromRequest(request, accounts);
+    if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
+    if (account.isDev) return reply.code(409).send({ error: DEV_LINK_REFUSAL });
+    if (account.discordId) {
+      return reply.code(409).send({ error: 'Discord ist bereits verknüpft.' });
+    }
+    return { url: discordAuthorizeUrl(await signOauthState({ linkAccountId: account.id })) };
+  });
+
+  /**
+   * Löst den Verknüpfungs-Beleg aus dem OAuth-Rücklauf ein.
+   *
+   * Der Beleg allein reicht NICHT: er muss auf dasselbe Konto lauten wie die
+   * Sitzung, mit der er eingereicht wird. Genau daran scheitert ein
+   * untergeschobener Beleg für ein fremdes Konto.
+   */
+  app.post('/account/link/discord/confirm', async (request, reply) => {
+    const account = await accountFromRequest(request, accounts);
+    if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
+    if (account.isDev) return reply.code(409).send({ error: DEV_LINK_REFUSAL });
+
+    const body = request.body as { ticket?: unknown } | undefined;
+    const claims = await verifyLinkTicket(body?.ticket);
+    if (!claims) {
+      return reply.code(400).send({ error: 'Verknüpfung abgelaufen — bitte erneut versuchen.' });
+    }
+    if (claims.sub !== account.id) {
+      console.warn(
+        `[api] Verknüpfungs-Beleg für ${claims.sub} in Sitzung von ${account.id} eingereicht — abgelehnt.`,
+      );
+      return reply.code(403).send({ error: 'Diese Verknüpfung gehört zu einem anderen Konto.' });
+    }
+
+    const result = await accounts.linkDiscord(account.id, {
+      discordId: claims.externalId,
+      displayName: claims.displayName,
+      avatarUrl: claims.avatarUrl,
+    });
+    if (result === 'taken') {
+      return reply
+        .code(409)
+        .send({ error: 'Dieses Discord-Konto ist bereits mit einem anderen Spieler-Konto verknüpft.' });
+    }
+    if (result === 'conflict') {
+      return reply.code(409).send({ error: 'Dieses Konto trägt bereits eine Discord-Verknüpfung.' });
+    }
+    const fresh = await accounts.byId(account.id);
+    if (!fresh) return reply.code(500).send({ error: 'Konto nicht lesbar.' });
+    return toProfile(fresh);
+  });
+
+  /**
+   * Google-VERKNÜPFUNG: dasselbe ID-Token wie beim Login, nur wird die
+   * Identität an das ANGEMELDETE Konto gehängt statt eines zu suchen.
+   * Antwort ist das frische Profil (hasGoogle aktualisiert sich sofort).
+   */
+  app.post('/account/link/google', async (request, reply) => {
+    if (!googleEnabled()) {
+      return reply.code(503).send({ error: 'Google-Anmeldung ist auf diesem Server nicht aktiv.' });
+    }
+    const account = await accountFromRequest(request, accounts);
+    if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
+    if (account.isDev) return reply.code(409).send({ error: DEV_LINK_REFUSAL });
+
+    const body = request.body as { credential?: unknown } | undefined;
+    const identity = await verifyGoogleCredential(body?.credential);
+    if (!identity) return reply.code(401).send({ error: 'Google-Token ungültig.' });
+
+    const result = await accounts.linkGoogle(account.id, identity);
+    if (result === 'taken') {
+      return reply
+        .code(409)
+        .send({ error: 'Dieses Google-Konto ist bereits mit einem anderen Spieler-Konto verknüpft.' });
+    }
+    if (result === 'conflict') {
+      return reply.code(409).send({ error: 'Dieses Konto trägt bereits eine Google-Verknüpfung.' });
+    }
+    const fresh = await accounts.byId(account.id);
+    if (!fresh) return reply.code(500).send({ error: 'Konto nicht lesbar.' });
+    return toProfile(fresh);
   });
 
   app.post('/auth/google', async (request, reply) => {

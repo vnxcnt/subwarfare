@@ -68,8 +68,26 @@ export async function signTicket(claims: Omit<TicketClaims, 'jti'>): Promise<str
  */
 const STATE_AUDIENCE = 'subwarfare:oauth-state';
 
-export async function signOauthState(): Promise<string> {
-  return new SignJWT({})
+/**
+ * Ohne `linkAccountId` ist der Rücksprung ein LOGIN (Konto suchen/anlegen),
+ * mit ist er eine VERKNÜPFUNG: die Discord-Identität wird an genau dieses
+ * Konto gehängt.
+ *
+ * `nonce` ist eine Zufallszahl, die der CLIENT vor dem Absprung erzeugt und
+ * in `sessionStorage` behält; sie läuft signiert durch und kommt im Rücklauf
+ * wieder mit. Ohne sie wäre der Login CSRF-anfällig: ein Angreifer könnte ein
+ * eigenes, gültiges code/state-Paar vorbereiten und ein Opfer auf den Callback
+ * locken — das Opfer wäre danach im KONTO DES ANGREIFERS angemeldet. Die Nonce
+ * kennt nur der Browser, der den Absprung gestartet hat.
+ */
+export async function signOauthState(options?: {
+  linkAccountId?: string;
+  nonce?: string;
+}): Promise<string> {
+  const claims: Record<string, string> = {};
+  if (options?.linkAccountId) claims['link'] = options.linkAccountId;
+  if (options?.nonce) claims['nonce'] = options.nonce;
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: 'HS256' })
     .setAudience(STATE_AUDIENCE)
     .setJti(randomUUID())
@@ -78,12 +96,95 @@ export async function signOauthState(): Promise<string> {
     .sign(secret);
 }
 
-export async function verifyOauthState(state: unknown): Promise<boolean> {
-  if (typeof state !== 'string' || state.length === 0) return false;
+export interface OauthStateResult {
+  valid: boolean;
+  /** Konto, an das verknüpft werden soll — null bei normalem Login. */
+  linkAccountId: string | null;
+  /** Wiedererkennungswert des startenden Browsers — null, wenn keiner gesetzt war. */
+  nonce: string | null;
+}
+
+export async function verifyOauthState(state: unknown): Promise<OauthStateResult> {
+  if (typeof state !== 'string' || state.length === 0) {
+    return { valid: false, linkAccountId: null, nonce: null };
+  }
   try {
-    await jwtVerify(state, secret, { algorithms: ['HS256'], audience: STATE_AUDIENCE });
-    return true;
+    const { payload } = await jwtVerify(state, secret, {
+      algorithms: ['HS256'],
+      audience: STATE_AUDIENCE,
+    });
+    const { link, nonce } = payload as { link?: unknown; nonce?: unknown };
+    return {
+      valid: true,
+      linkAccountId: typeof link === 'string' ? link : null,
+      nonce: typeof nonce === 'string' ? nonce : null,
+    };
   } catch {
-    return false;
+    return { valid: false, linkAccountId: null, nonce: null };
+  }
+}
+
+/**
+ * Empfänger-Kennung des VERKNÜPFUNGS-Belegs.
+ *
+ * Der OAuth-Rücklauf verknüpft NICHT selbst: er stellt nur einen kurzlebigen,
+ * signierten Beleg über die geprüfte Fremd-Identität aus. Erst der Client löst
+ * ihn mit seinem Sitzungs-Token ein — und die api verknüpft nur, wenn der Beleg
+ * auf dasselbe Konto lautet wie die Sitzung.
+ *
+ * Das schließt die Übernahme-Lücke des naiven Wegs: dort hätte ein Angreifer
+ * einen Verknüpfungs-State für SEIN Konto erzeugen, dem Opfer unterschieben und
+ * damit dessen Discord-Identität an sein eigenes Konto binden können. Ein Beleg
+ * für ein fremdes Konto ist in der Sitzung des Opfers wertlos.
+ */
+const LINK_AUDIENCE = 'subwarfare:link';
+
+export interface LinkTicketClaims {
+  /** Konto, das verknüpft werden soll. */
+  sub: string;
+  provider: 'discord';
+  /** Fremd-Kennung (Discord-Snowflake). */
+  externalId: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+export async function signLinkTicket(claims: LinkTicketClaims): Promise<string> {
+  return new SignJWT({
+    provider: claims.provider,
+    externalId: claims.externalId,
+    name: claims.displayName,
+    avatar: claims.avatarUrl,
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(claims.sub)
+    .setAudience(LINK_AUDIENCE)
+    .setJti(randomUUID())
+    .setIssuedAt()
+    // Kurz: der Client löst ihn unmittelbar nach dem Rücksprung ein.
+    .setExpirationTime('120s')
+    .sign(secret);
+}
+
+export async function verifyLinkTicket(raw: unknown): Promise<LinkTicketClaims | null> {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    const { payload } = await jwtVerify(raw, secret, {
+      algorithms: ['HS256'],
+      audience: LINK_AUDIENCE,
+    });
+    const { sub, provider, externalId, name, avatar } = payload as Record<string, unknown>;
+    if (typeof sub !== 'string' || provider !== 'discord' || typeof externalId !== 'string') {
+      return null;
+    }
+    return {
+      sub,
+      provider: 'discord',
+      externalId,
+      displayName: typeof name === 'string' ? name : 'Kapitän',
+      avatarUrl: typeof avatar === 'string' ? avatar : null,
+    };
+  } catch {
+    return null;
   }
 }

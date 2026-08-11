@@ -44,5 +44,7 @@ export * from './sim/Vessel.js';
  *    Täuschkörper als zweite Waffe (order:fire 'taeuschkoerper').
  * 7: Geschütz (order:fire 'geschuetz') und gezielte Peilung im Feuerbefehl —
  *    Überwasserschiffe feuern sektorgebunden (Bug ±20°, Seiten ±10°).
+ * 8: Wasserbombe (order:fire 'wasserbombe', Sektor achteraus ±110°) —
+ *    Projektile tragen optional `sink` für die Sinkphase vor der Detonation.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;

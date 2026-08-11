@@ -72,6 +72,38 @@ export const GUN = {
 } as const;
 
 /**
+ * Die Wasserbombe (Grafik-Atlas `waterbomb01`): die U-Boot-Jagdwaffe der
+ * Überwasserschiffe. Sie wird nach ACHTERN und über die SEITEN abgeworfen
+ * (`arcHalfAngleDeg` um Achteraus), fliegt kurz und schnell, SINKT dann an
+ * Ort und Stelle und detoniert nach `sinkSeconds` mit Flächenwirkung.
+ *
+ * Der entscheidende Unterschied zu allen anderen Waffen: die Detonation trifft
+ * auch GETAUCHTE Boote. Genau dafür ist sie da — Torpedo und Granate lassen
+ * ein U-Boot in der Tiefe in Ruhe, die Wasserbombe nicht.
+ */
+export const DEPTH_CHARGE = {
+  weapon: 'wasserbombe',
+  model: 'waterbomb01',
+  /** Schnell geworfen: die 150 m sind in gut 1,7 s zurückgelegt. */
+  speed: 85,
+  /** Wurfweite in Metern — bewusst kurz, man muss über das Ziel fahren. */
+  rangeMetres: 150,
+  /** Sinkzeit am Aufschlagpunkt bis zur Detonation. */
+  sinkSeconds: 3,
+  /** Schaden im Zentrum; fällt zum Rand des Wirkungskreises linear auf 0. */
+  damage: 140,
+  /** Wirkungsradius der Detonation in Metern. */
+  blastRadius: 60,
+  cooldownSeconds: 4,
+  capacity: 12,
+  /**
+   * Halber Öffnungswinkel um ACHTERAUS (180° zum Kurs). 110° heißt: alles vom
+   * Querab (90°) bis dead astern ist erlaubt — „nach hinten und zur Seite".
+   */
+  arcHalfAngleDeg: 110,
+} as const;
+
+/**
  * Seitlicher Abwurfsektor für Torpedo/Täuschkörper bei ÜBERWASSERSCHIFFEN:
  * ±10° um die beiden Breitseiten (90° backbord/steuerbord vom Kurs). Schiffe
  * schießen Torpedos nicht nach vorn — sie werfen sie über die Seite ab.

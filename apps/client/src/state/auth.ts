@@ -25,9 +25,45 @@ export const account = ref<AccountProfile | null>(null);
 /** Welche Anmeldewege der Server anbietet. Null, solange nicht geladen. */
 export const authMethods = ref<{ google: boolean; discord: boolean; dev: boolean } | null>(null);
 
+/**
+ * Wiedererkennung des Browsers über den OAuth-Absprung hinweg.
+ *
+ * `sessionStorage` und nicht `localStorage`: der Wert gilt nur für diesen
+ * Reiter und diese Sitzung. Er ist der Beweis, dass DIESER Browser den Login
+ * gestartet hat — ohne ihn könnte ein Angreifer ein vorbereitetes
+ * code/state-Paar unterschieben und uns in sein Konto einloggen.
+ */
+const NONCE_KEY = 'subwarfare:oauth-nonce';
+
 /** Sprungadresse für den Discord-Login — eine normale Navigation, kein fetch. */
 export function discordLoginUrl(): string {
-  return `${API_URL}/api/auth/discord`;
+  const nonce = crypto.randomUUID();
+  try {
+    sessionStorage.setItem(NONCE_KEY, nonce);
+  } catch {
+    // Gesperrter Storage: dann eben ohne Wiedererkennung — der Server prüft
+    // sie nur, wenn sie im Rücklauf ankommt.
+  }
+  return `${API_URL}/api/auth/discord?n=${encodeURIComponent(nonce)}`;
+}
+
+/**
+ * Prüft die Wiedererkennung aus dem Rücklauf und verbraucht sie.
+ * `false` heißt: dieser Browser hat den Login nicht gestartet.
+ */
+export function consumeOauthNonce(fromServer: string | null): boolean {
+  let stored: string | null = null;
+  try {
+    stored = sessionStorage.getItem(NONCE_KEY);
+    sessionStorage.removeItem(NONCE_KEY);
+  } catch {
+    stored = null;
+  }
+  // Kein Wert auf beiden Seiten: gesperrter Storage oder alter Server — dann
+  // gilt der Rücklauf wie bisher. Sobald EINE Seite eine Nonce führt, muss sie
+  // stimmen.
+  if (stored === null && fromServer === null) return true;
+  return stored !== null && stored === fromServer;
 }
 
 /**
@@ -138,6 +174,75 @@ export async function loginGoogle(credential: string): Promise<string | null> {
 export function logout(): void {
   storeToken(null);
   account.value = null;
+}
+
+/**
+ * Verknüpft die Google-Identität aus dem GIS-Button mit dem ANGEMELDETEN
+ * Konto. Liefert null bei Erfolg (Profil ist dann aktualisiert), sonst die
+ * Fehlermeldung — „gehört schon einem anderen Konto" ist ein normaler Fall.
+ */
+export async function linkGoogleAccount(credential: string): Promise<string | null> {
+  try {
+    const response = await api('/account/link/google', {
+      method: 'POST',
+      body: JSON.stringify({ credential }),
+    });
+    const body = (await response.json().catch(() => null)) as
+      | (AccountProfile & { error?: string })
+      | null;
+    if (!response.ok) {
+      return body?.error ?? `Verknüpfen fehlgeschlagen (HTTP ${response.status}).`;
+    }
+    if (body) account.value = body;
+    return null;
+  } catch {
+    return 'Server ist nicht erreichbar.';
+  }
+}
+
+/**
+ * Löst den Verknüpfungs-Beleg aus dem OAuth-Rücklauf ein — MIT Sitzungs-Token.
+ * Erst dieser Schritt verknüpft; ein Beleg für ein fremdes Konto scheitert hier.
+ */
+export async function confirmDiscordLink(ticket: string): Promise<string | null> {
+  try {
+    const response = await api('/account/link/discord/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ ticket }),
+    });
+    const body = (await response.json().catch(() => null)) as
+      | (AccountProfile & { error?: string })
+      | null;
+    if (!response.ok) {
+      return body?.error ?? `Verknüpfen fehlgeschlagen (HTTP ${response.status}).`;
+    }
+    if (body) account.value = body;
+    return null;
+  } catch {
+    return 'Server ist nicht erreichbar.';
+  }
+}
+
+/**
+ * Startet die Discord-Verknüpfung: holt die Sprungadresse (Konto-ID steckt
+ * signiert im OAuth-State) und verlässt die Seite Richtung Discord. Zurück
+ * geht es ins Menü — mit `#linkticket=…`, das `confirmDiscordLink` einlöst.
+ */
+export async function startDiscordLink(): Promise<string | null> {
+  try {
+    const response = await api('/account/link/discord/start', { method: 'POST' });
+    const body = (await response.json().catch(() => null)) as
+      | { url?: string; error?: string }
+      | null;
+    if (!response.ok) {
+      return body?.error ?? `Verknüpfen fehlgeschlagen (HTTP ${response.status}).`;
+    }
+    if (!body?.url) return 'Ungültige Antwort des Servers.';
+    location.href = body.url;
+    return null;
+  } catch {
+    return 'Server ist nicht erreichbar.';
+  }
 }
 
 /**

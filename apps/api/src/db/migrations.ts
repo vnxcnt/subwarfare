@@ -151,4 +151,16 @@ export const MIGRATIONS: readonly Migration[] = [
        ON DUPLICATE KEY UPDATE model = model`,
     ],
   },
+  {
+    id: 8,
+    name: 'fregatten-ohne-torpedos',
+    statements: [
+      // Rollenschärfung: Fregatten sind Geleitschiffe (Geschütz +
+      // Wasserbomben), Torpedo und Täuschkörper bleiben den Zerstörern.
+      // Bewusst ein gezieltes UPDATE statt eines Seeds — die Spalte trägt hier
+      // Spielregeln, keine Feinabstimmung, und muss deshalb wirklich umziehen.
+      `UPDATE ships SET armament = '["wasserbombe","geschuetz"]'
+        WHERE model IN ('fregatte01', 'fregatte02')`,
+    ],
+  },
 ];

@@ -9,6 +9,7 @@ import type {
 import {
   DAMAGE,
   DECOY,
+  DEPTH_CHARGE,
   GUN,
   PROTOCOL_VERSION,
   RESPAWN_SECONDS,
@@ -74,12 +75,12 @@ export class GameServer {
   /** Restmunition je Account und Waffe. Angelegt beim Spawn, aufgefüllt beim Respawn. */
   private readonly ammo = new Map<
     string,
-    { torpedo: number; taeuschkoerper: number; geschuetz: number }
+    { torpedo: number; taeuschkoerper: number; geschuetz: number; wasserbombe: number }
   >();
   /** Rohr-Sperren je Waffe: frühester Tick, ab dem wieder gefeuert werden darf. */
   private readonly nextFireTick = new Map<
     string,
-    { torpedo: number; taeuschkoerper: number; geschuetz: number }
+    { torpedo: number; taeuschkoerper: number; geschuetz: number; wasserbombe: number }
   >();
   /** Versenkte Spieler, die auf ihren Wiedereinstieg warten. */
   private readonly pendingRespawns = new Map<string, { seconds: number; model: VesselModel }>();
@@ -277,10 +278,16 @@ export class GameServer {
       const own = this.world.get(accountId);
       // Versenkt oder nicht gespawnt — keine Waffe ohne Schiff.
       if (!own) return;
-      // Feuerbare Waffen: Torpedo, Täuschkörper, Geschütz. Die Wasserbombe
-      // kommt später mit eigener Abschussphysik.
+      // Feuerbare Waffen: Torpedo, Täuschkörper, Geschütz, Wasserbombe.
       const weapon = payload?.weapon;
-      if (weapon !== 'torpedo' && weapon !== 'taeuschkoerper' && weapon !== 'geschuetz') return;
+      if (
+        weapon !== 'torpedo' &&
+        weapon !== 'taeuschkoerper' &&
+        weapon !== 'geschuetz' &&
+        weapon !== 'wasserbombe'
+      ) {
+        return;
+      }
       // Ob das Schiff die Waffe überhaupt führt, sagt der Katalog — nicht
       // der Client. Ein gebasteltes Ereignis wird kommentarlos verworfen.
       const stats = this.ships.get(own.model);
@@ -290,15 +297,17 @@ export class GameServer {
       if (!ammo || ammo[weapon] <= 0) return;
       // Rohr-Sperre je Waffe in Server-Ticks — der Knopf im Client ist Höflichkeit.
       const gates =
-        this.nextFireTick.get(accountId) ?? { torpedo: 0, taeuschkoerper: 0, geschuetz: 0 };
+        this.nextFireTick.get(accountId) ??
+        { torpedo: 0, taeuschkoerper: 0, geschuetz: 0, wasserbombe: 0 };
       if (this.tick < gates[weapon]) return;
 
       const isSubmarine = stats.type === SHIP_TYPE_SUBMARINE;
 
       if (isSubmarine) {
         // U-Boote zielen nicht: Torpedo aus dem Bugrohr voraus, Täuschkörper
-        // achtern. Ein Geschütz führt kein U-Boot (Katalog fängt das schon).
-        if (weapon === 'geschuetz') return;
+        // achtern. Geschütz und Wasserbombe führt kein U-Boot (der Katalog
+        // fängt das schon, die Prüfung hier ist das zweite Netz).
+        if (weapon === 'geschuetz' || weapon === 'wasserbombe') return;
         if (weapon === 'torpedo') this.world.fireTorpedo(own);
         else this.world.fireDecoy(own);
       } else {
@@ -314,6 +323,15 @@ export class GameServer {
         if (weapon === 'geschuetz') {
           if (Math.abs(offset) > GUN.arcHalfAngleDeg + SECTOR_TOLERANCE_DEG) return;
           this.world.fireShell(own, bearing);
+        } else if (weapon === 'wasserbombe') {
+          // Sektor um ACHTERAUS: |offset| misst vom Bug, 180 ist dead astern.
+          if (
+            180 - Math.abs(offset) >
+            DEPTH_CHARGE.arcHalfAngleDeg + SECTOR_TOLERANCE_DEG
+          ) {
+            return;
+          }
+          this.world.fireDepthCharge(own, bearing);
         } else {
           if (Math.abs(Math.abs(offset) - 90) > SIDE_LAUNCH_HALF_ANGLE_DEG + SECTOR_TOLERANCE_DEG) {
             return;
@@ -323,7 +341,14 @@ export class GameServer {
         }
       }
 
-      const spec = weapon === 'torpedo' ? TORPEDO : weapon === 'taeuschkoerper' ? DECOY : GUN;
+      const spec =
+        weapon === 'torpedo'
+          ? TORPEDO
+          : weapon === 'taeuschkoerper'
+            ? DECOY
+            : weapon === 'wasserbombe'
+              ? DEPTH_CHARGE
+              : GUN;
       ammo[weapon] -= 1;
       gates[weapon] = this.tick + Math.round(spec.cooldownSeconds / SIM_STEP_SECONDS);
       this.nextFireTick.set(accountId, gates);
@@ -378,6 +403,7 @@ export class GameServer {
       torpedo: TORPEDO.capacity,
       taeuschkoerper: DECOY.capacity,
       geschuetz: GUN.capacity,
+      wasserbombe: DEPTH_CHARGE.capacity,
     });
     this.nextFireTick.delete(accountId);
   }
@@ -395,6 +421,7 @@ export class GameServer {
         torpedo: ammo?.torpedo ?? 0,
         taeuschkoerper: ammo?.taeuschkoerper ?? 0,
         geschuetz: ammo?.geschuetz ?? 0,
+        wasserbombe: ammo?.wasserbombe ?? 0,
       },
       serial: vessel.serial,
     });
@@ -613,7 +640,7 @@ export class GameServer {
       `${vessel.serial}:${vessel.telegraphStep}:${vessel.waypoint ? 'z' : '-'}:` +
       `${vessel.diveTarget ? 't' : 'o'}:${vessel.periscopeTarget ? 'p' : '-'}:` +
       `${this.world.hp(accountId)}:${ammo?.torpedo ?? 0}:${ammo?.taeuschkoerper ?? 0}:` +
-      `${ammo?.geschuetz ?? 0}`
+      `${ammo?.geschuetz ?? 0}:${ammo?.wasserbombe ?? 0}`
     );
   }
 

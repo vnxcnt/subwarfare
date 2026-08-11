@@ -1,5 +1,5 @@
 import type { ProjectileState } from '@subwarfare/shared';
-import { DEG, GUN } from '@subwarfare/shared';
+import { DEG, DEPTH_CHARGE, GUN } from '@subwarfare/shared';
 import { Container, Graphics, Sprite } from 'pixi.js';
 import { getTilt } from '../Projection';
 import { directionFrame } from '../textures';
@@ -31,11 +31,19 @@ const MIN_SCREEN_PX = 9;
 const MAX_BOOST = 4;
 
 /**
- * Torpedos laufen UNTER der Oberfläche: dieselbe Tiefen-Optik wie getauchte
- * Boote (Tint + Transparenz), auf eine feste Sichttiefe gelegt — tief genug
- * für „unter Wasser", flach genug, dass man dem Ding ausweichen kann.
+ * Torpedos und Täuschkörper laufen UNTER der Oberfläche: dieselbe Tiefen-Optik
+ * wie getauchte Boote (Tint + Transparenz), auf eine feste Sichttiefe gelegt.
+ *
+ * Deutlich tiefer als anfangs (0,55): bei der alten Einstellung lag die
+ * Deckkraft noch bei 0,72 und die Tönung war so mild, dass der Torpedo auf dem
+ * Wasser zu schwimmen schien statt darunter zu laufen. Jetzt trägt er dieselbe
+ * Handschrift wie ein getauchtes Boot — erkennbar, aber sichtbar UNTER der
+ * Oberfläche. Die Blasenspur bleibt der hellste Teil: sie IST die Oberfläche.
  */
-const RUN_DEPTH = 0.55;
+const RUN_DEPTH = 0.85;
+
+/** Restdeckkraft eines unter Wasser laufenden Projektils. */
+const RUN_ALPHA = 0.5;
 
 /** Blasenspur hinter dem Torpedo: Segmentgrenzen in Metern und ihre Deckkraft. */
 const TRAIL_STOPS = [8, 26, 48, 75] as const;
@@ -59,8 +67,8 @@ export class ProjectileView {
   /** Blasenspur — liegt IN der Wasserebene, die Projektion macht die Schräge. */
   private readonly trail = new Graphics();
 
-  /** Zuletzt angewandte Oberflächen-/Unterwasser-Optik — nur bei Wechsel neu setzen. */
-  private surfaceLook: boolean | null = null;
+  /** Zuletzt angewandte Optik-Signatur — nur bei Wechsel neu setzen. */
+  private surfaceLook: string | null = null;
 
   constructor() {
     this.sprite = createBody();
@@ -84,11 +92,23 @@ export class ProjectileView {
 
     // Granaten fliegen ÜBER dem Wasser: keine Tiefen-Tönung, kein Blasen-,
     // sondern ein heller Tracer. Torpedos/Täuschkörper laufen unter Wasser.
-    const surface = state.model === GUN.model;
-    if (this.surfaceLook !== surface && this.sprite instanceof Sprite) {
-      this.surfaceLook = surface;
-      this.sprite.tint = surface ? 0xffffff : tintForDepth(RUN_DEPTH);
-      this.sprite.alpha = surface ? 1 : 1 - RUN_DEPTH * 0.5;
+    // Die geworfene Wasserbombe fliegt zunächst über Wasser und taucht dann ein
+    // — ihre Optik hängt an der Sinkphase, nicht an einem festen Wert.
+    const charge = state.model === DEPTH_CHARGE.model;
+    const sink = state.sink ?? 0;
+    const surface = state.model === GUN.model || (charge && sink <= 0);
+    const look = charge ? `sink:${Math.round(sink * 10)}` : surface ? 'surface' : 'submerged';
+    if (this.surfaceLook !== look && this.sprite instanceof Sprite) {
+      this.surfaceLook = look;
+      if (charge) {
+        // Absinken: von der Oberfläche in die Tiefe tönen und dabei verblassen.
+        const depth = sink * 0.95;
+        this.sprite.tint = tintForDepth(depth);
+        this.sprite.alpha = 1 - sink * 0.55;
+      } else {
+        this.sprite.tint = surface ? 0xffffff : tintForDepth(RUN_DEPTH);
+        this.sprite.alpha = surface ? 1 : RUN_ALPHA;
+      }
     }
 
     if (this.sprite instanceof Sprite) {
@@ -117,16 +137,29 @@ export class ProjectileView {
     // Mindestgrößen-Wächter gegen das Verschwinden bei Übersichtszoom —
     // mit der ECHTEN Modelllänge: die 4-m-Granate braucht mehr Boost als
     // der 10-m-Torpedo, sonst bricht die Zusicherung genau für sie.
-    const lengthMetres = surface ? 4 : 10;
+    const lengthMetres = state.model === GUN.model ? 4 : charge ? 6 : 10;
     const screenLength = lengthMetres * getTilt() * zoom;
     const boost = MIN_SCREEN_PX / screenLength;
-    this.root.scale.set(Math.min(Math.max(boost, 1), MAX_BOOST));
+    // Sinkende Bombe schrumpft leicht — sie entfernt sich nach unten.
+    this.root.scale.set(Math.min(Math.max(boost, 1), MAX_BOOST) * (1 - sink * 0.35));
+
+    this.trail.clear();
+
+    // Die sinkende Wasserbombe zieht keine Spur, sondern hinterlässt einen
+    // aufsteigenden Blasenring an der Oberfläche — die Warnung für alles,
+    // was darunter fährt.
+    if (charge && sink > 0) {
+      const ring = 6 + sink * DEPTH_CHARGE.blastRadius * 0.35;
+      this.trail
+        .circle(state.x, state.y, ring)
+        .stroke({ color: 0xdff0f7, alpha: 0.35 * (1 - sink * 0.6), width: 2 });
+      return;
+    }
 
     // Spur entgegen dem Kurs: Blasen (unter Wasser) bzw. Tracer (Granate).
     const heading = state.rotation * DEG;
     const backX = -Math.sin(heading);
     const backY = Math.cos(heading);
-    this.trail.clear();
     const stops = surface ? SHELL_TRAIL_STOPS : TRAIL_STOPS;
     const alphas = surface ? SHELL_TRAIL_ALPHA : TRAIL_ALPHA;
     const farbe = surface ? 0xffd9a0 : 0xcfe4ee;

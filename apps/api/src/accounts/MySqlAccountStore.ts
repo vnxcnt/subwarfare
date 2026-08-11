@@ -1,7 +1,13 @@
 import type { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
 import { closePool, getPool } from '../db/pool.js';
-import type { Account, AccountStore, DiscordIdentity, GoogleIdentity } from './store.js';
+import type {
+  Account,
+  AccountStore,
+  DiscordIdentity,
+  GoogleIdentity,
+  LinkResult,
+} from './store.js';
 
 interface AccountRow extends RowDataPacket {
   id: string;
@@ -163,6 +169,44 @@ export class MySqlAccountStore implements AccountStore {
 
   async addCoins(id: string, amount: number): Promise<void> {
     await this.pool.execute('UPDATE accounts SET coins = coins + ? WHERE id = ?', [amount, id]);
+  }
+
+  async linkGoogle(id: string, identity: GoogleIdentity): Promise<LinkResult> {
+    const account = await this.byId(id);
+    if (!account) return 'conflict';
+    if (account.googleSub === identity.googleSub) return 'ok';
+    if (account.googleSub !== null) return 'conflict';
+    try {
+      // Bedingtes UPDATE: nur wenn noch keine Google-Identität hängt — zwei
+      // gleichzeitige Verknüpfungen können so nicht beide durchgehen. Der
+      // Unique-Index auf google_sub fängt „gehört schon einem anderen Konto".
+      const [result] = await this.pool.execute<ResultSetHeader>(
+        `UPDATE accounts SET google_sub = ?, email = COALESCE(email, ?)
+          WHERE id = ? AND google_sub IS NULL`,
+        [identity.googleSub, identity.email, id],
+      );
+      return result.affectedRows === 1 ? 'ok' : 'conflict';
+    } catch (error) {
+      if ((error as { code?: string }).code === 'ER_DUP_ENTRY') return 'taken';
+      throw error;
+    }
+  }
+
+  async linkDiscord(id: string, identity: DiscordIdentity): Promise<LinkResult> {
+    const account = await this.byId(id);
+    if (!account) return 'conflict';
+    if (account.discordId === identity.discordId) return 'ok';
+    if (account.discordId !== null) return 'conflict';
+    try {
+      const [result] = await this.pool.execute<ResultSetHeader>(
+        'UPDATE accounts SET discord_id = ? WHERE id = ? AND discord_id IS NULL',
+        [identity.discordId, id],
+      );
+      return result.affectedRows === 1 ? 'ok' : 'conflict';
+    } catch (error) {
+      if ((error as { code?: string }).code === 'ER_DUP_ENTRY') return 'taken';
+      throw error;
+    }
   }
 
   async deleteAccount(id: string): Promise<void> {

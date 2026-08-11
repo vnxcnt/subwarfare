@@ -1,7 +1,11 @@
 import type { AccountProfile } from '@subwarfare/shared';
 
-/** Konto, wie es intern vorliegt — mit Feldern, die nie nach außen gehen. */
-export interface Account extends AccountProfile {
+/**
+ * Konto, wie es intern vorliegt — mit Feldern, die nie nach außen gehen.
+ * `hasGoogle`/`hasDiscord` sind hier ausgenommen: intern gibt es die echten
+ * Identitäten, die Anzeige-Flags leitet `toProfile` daraus ab.
+ */
+export interface Account extends Omit<AccountProfile, 'hasGoogle' | 'hasDiscord'> {
   /** Googles unveränderliche Nutzerkennung. `null`, wenn nicht verknüpft. */
   googleSub: string | null;
   /** Discords Snowflake-ID. `null`, wenn nicht verknüpft. */
@@ -55,8 +59,20 @@ export interface AccountStore {
    * Ausrüstung, Dev-Verknüpfung; in MariaDB über die CASCADE-Fremdschlüssel).
    */
   deleteAccount(id: string): Promise<void>;
+  /**
+   * Hängt eine Google-Identität an ein BESTEHENDES Konto (Einstellungen →
+   * „verknüpfen"). 'taken' = die Identität gehört bereits einem anderen
+   * Konto (bewusst KEIN Merge — zwei Spielstände lassen sich nicht ehrlich
+   * vereinen), 'conflict' = dieses Konto trägt bereits eine andere
+   * Google-Identität.
+   */
+  linkGoogle(id: string, identity: GoogleIdentity): Promise<LinkResult>;
+  /** Wie `linkGoogle`, nur für Discord. */
+  linkDiscord(id: string, identity: DiscordIdentity): Promise<LinkResult>;
   close(): Promise<void>;
 }
+
+export type LinkResult = 'ok' | 'taken' | 'conflict';
 
 export function toProfile(account: Account): AccountProfile {
   return {
@@ -68,6 +84,8 @@ export function toProfile(account: Account): AccountProfile {
     xp: account.xp,
     role: account.role,
     createdAt: account.createdAt,
+    hasGoogle: account.googleSub !== null,
+    hasDiscord: account.discordId !== null,
   };
 }
 

@@ -52,10 +52,31 @@ export const VIEW = {
   fitMargin: 0.88,
 } as const;
 
-/** Aussehen der Wasserfläche. Farben als lineare RGB-Tripel für den Shader. */
+/**
+ * Aussehen der Wasserfläche. Farben als lineare RGB-Tripel für den Shader.
+ *
+ * Das Modell ist bewusst physikalisch motiviert statt „blau anmalen": Wasser
+ * ist von sich aus fast schwarz, seine Farbe entsteht aus dem gespiegelten
+ * HIMMEL (Fresnel) und dem Licht, das aus der Tiefe zurückstreut. Genau diese
+ * beiden Anteile bestimmen die Werte hier.
+ */
 export const WATER = {
-  deep: [0.008, 0.045, 0.095],
-  shallow: [0.03, 0.14, 0.21],
+  /**
+   * Rückstreuung aus dem Wasserkörper — die Farbe, die aus der Tiefe kommt.
+   * Offener Ozean ist dabei tiefblau mit einem Rest Grün, NICHT reines Blau.
+   */
+  deep: [0.004, 0.022, 0.045],
+  /** Flachere Zonen: das Grün nimmt zu, der Ton wird türkisiger. */
+  shallow: [0.02, 0.1, 0.13],
+  /**
+   * Himmel für die Spiegelung: am Horizont dunstig-hell, im Zenit tiefer und
+   * kühler. Beide werden über den reflektierten Strahl gemischt — das gibt der
+   * Fläche ihre Tiefenstaffelung, ohne dass ein einziges Bild geladen würde.
+   */
+  skyHorizon: [0.62, 0.72, 0.82],
+  skyZenith: [0.16, 0.31, 0.52],
+  /** Farbe des Sonnenlichts für Glitzerpfad und Schaumbeleuchtung. */
+  sunColor: [1.0, 0.94, 0.82],
   /**
    * Richtung zur Sonne, als Weltvektor (x = Ost, y = Süd, z = oben).
    * Speist sowohl das Streiflicht im Wasser-Shader als auch die Schattenrichtung

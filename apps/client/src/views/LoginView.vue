@@ -4,12 +4,14 @@ import { useRouter } from 'vue-router';
 import {
   adoptToken,
   authMethods,
+  consumeOauthNonce,
   discordLoginUrl,
   loadAuthMethods,
   loginDev,
   loginGoogle,
   restoreSession,
 } from '../state/auth';
+import { ensureGis } from '../ui/gis';
 
 const router = useRouter();
 const name = ref('');
@@ -31,48 +33,23 @@ const IS_DEV_BUILD: boolean = import.meta.env.DEV;
  */
 const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
 
-/** Minimale Sicht auf das GIS-Skript — offizielle Typen lohnen sich nicht. */
-interface GisId {
-  initialize(config: { client_id: string; callback: (r: { credential: string }) => void }): void;
-  renderButton(parent: HTMLElement, options: Record<string, unknown>): void;
-}
-
 const googleSlot = ref<HTMLElement | null>(null);
 let googleReady = false;
-
-function gis(): GisId | null {
-  return (
-    (window as { google?: { accounts?: { id?: GisId } } }).google?.accounts?.id ?? null
-  );
-}
 
 /**
  * Lädt das GIS-Skript erst, wenn der Server Google anbietet — wer nur Discord
  * fährt, lädt keinen Google-Code. Danach den Button in den Slot rendern.
  */
-function mountGoogleButton(): void {
+async function mountGoogleButton(): Promise<void> {
   if (googleReady || !GOOGLE_CLIENT_ID || !authMethods.value?.google || !googleSlot.value) return;
-
-  const render = (): void => {
-    const id = gis();
-    const slot = googleSlot.value;
-    if (!id || !slot) return;
-    googleReady = true;
-    id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential });
-    // Breite passend zum Discord-Knopf; Theme hell, damit er auf dem dunklen
-    // Panel als Fremd-Login heraussticht (wie Discords Blurple).
-    id.renderButton(slot, { theme: 'outline', size: 'large', text: 'signin_with', width: 320 });
-  };
-
-  if (gis()) {
-    render();
-    return;
-  }
-  const script = document.createElement('script');
-  script.src = 'https://accounts.google.com/gsi/client';
-  script.async = true;
-  script.onload = render;
-  document.head.appendChild(script);
+  const id = await ensureGis();
+  const slot = googleSlot.value;
+  if (!id || !slot || googleReady) return;
+  googleReady = true;
+  id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential });
+  // Breite passend zum Discord-Knopf; Theme hell, damit er auf dem dunklen
+  // Panel als Fremd-Login heraussticht (wie Discords Blurple).
+  id.renderButton(slot, { theme: 'outline', size: 'large', text: 'signin_with', width: 320 });
 }
 
 /** Rücklauf des GIS-Buttons: das ID-Token geht zur Prüfung an unseren Server. */
@@ -94,7 +71,7 @@ function onGoogleCredential(response: { credential: string }): void {
 // /auth/methods kommt asynchron — sobald Google gemeldet ist, Button bauen.
 // flush: 'post', weil der Slot selbst per v-if an den methods hängt und erst
 // NACH dem DOM-Update existiert.
-watch(authMethods, () => mountGoogleButton(), { flush: 'post' });
+watch(authMethods, () => void mountGoogleButton(), { flush: 'post' });
 
 /**
  * Rücklauf des Discord-Logins: Token oder Fehler stehen im URL-Fragment.
@@ -112,6 +89,12 @@ async function consumeOauthFragment(): Promise<void> {
 
   if (failure) {
     error.value = failure;
+    return;
+  }
+  // Wiedererkennung prüfen, BEVOR ein fremdes Token übernommen wird: nur der
+  // Browser, der den Absprung gestartet hat, kennt die Nonce.
+  if (!consumeOauthNonce(fragment.get('n'))) {
+    error.value = 'Diese Anmeldung wurde nicht von diesem Browser gestartet.';
     return;
   }
   if (token) {
@@ -140,6 +123,10 @@ async function submitDev(): Promise<void> {
 onMounted(() => {
   void consumeOauthFragment();
   void loadAuthMethods();
+  // Auch hier anstoßen: `authMethods` überlebt als Modul-Zustand einen
+  // Abmelde-Zyklus, dann rendert das Template den Slot sofort und der watch
+  // (der nur auf ÄNDERUNG feuert) käme nie.
+  void mountGoogleButton();
 });
 </script>
 

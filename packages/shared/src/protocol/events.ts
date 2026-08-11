@@ -39,6 +39,12 @@ export interface ProjectileState {
   y: number;
   /** Laufrichtung in Grad. 0 = Nord, im Uhrzeigersinn. */
   rotation: number;
+  /**
+   * Sinkfortschritt 0..1 — nur bei der Wasserbombe, nachdem sie ihren Wurf
+   * beendet hat und absinkt. Fehlt bei allen anderen Projektilen (die laufen
+   * bis zum Treffer geradeaus).
+   */
+  sink?: number;
 }
 
 /**

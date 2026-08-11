@@ -23,6 +23,8 @@ import shellData from '../assets/vessels/he_round01/atlas.json';
 import shellUrl from '../assets/vessels/he_round01/atlas.webp';
 import torpedoData from '../assets/vessels/torpedo01/atlas.json';
 import torpedoUrl from '../assets/vessels/torpedo01/atlas.webp';
+import waterbombData from '../assets/vessels/waterbomb01/atlas.json';
+import waterbombUrl from '../assets/vessels/waterbomb01/atlas.webp';
 import decoyData from '../assets/vessels/torpedo02/atlas.json';
 import decoyUrl from '../assets/vessels/torpedo02/atlas.webp';
 import yachtgunData from '../assets/vessels/yachtgun01/atlas.json';
@@ -123,6 +125,14 @@ const DEFINITIONS: Record<string, ModelDefinition> = {
     url: decoyUrl,
     lengthMetres: 10,
     sideProfilePx: 371,
+  },
+  // Wasserbombe: das Fass ist real ~1,5 m — wie bei den anderen Projektilen
+  // auf Spielsichtbarkeit gezogen.
+  waterbomb01: {
+    data: waterbombData as unknown as SpritesheetData,
+    url: waterbombUrl,
+    lengthMetres: 6,
+    sideProfilePx: 534,
   },
   // Geschützgranate: real ~0,5 m — gameplay-sichtbar auf 4 m gezogen.
   he_round01: {

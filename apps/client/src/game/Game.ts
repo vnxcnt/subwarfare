@@ -19,6 +19,7 @@ import {
   DESTROYER,
   GUN,
   SHIP_TYPE_SUBMARINE,
+  DEPTH_CHARGE,
   SIDE_LAUNCH_HALF_ANGLE_DEG,
   TORPEDO,
   Vessel,
@@ -498,9 +499,15 @@ export class Game {
           closest = player;
         }
       }
-      // Täuschkörper bleiben leise (Gegenmaßnahme, kein Alarm) — Torpedos
-      // und Geschütz haben je ihren eigenen Abschussklang.
-      if (projectile.model !== TORPEDO.model && projectile.model !== GUN.model) continue;
+      // Täuschkörper bleiben leise (Gegenmaßnahme, kein Alarm) — Torpedo,
+      // Geschütz und Wasserbombe haben je ihren eigenen Abschussklang.
+      if (
+        projectile.model !== TORPEDO.model &&
+        projectile.model !== GUN.model &&
+        projectile.model !== DEPTH_CHARGE.model
+      ) {
+        continue;
+      }
 
       // Abschussoffset liegt bei ~75 m plus ein Broadcast-Intervall Flugweg.
       if (closest && best < 200) {
@@ -508,6 +515,9 @@ export class Game {
         const distance = own ? Math.hypot(projectile.x - own.x, projectile.y - own.y) : 0;
         if (projectile.model === GUN.model) {
           this.audio?.playGunFire(distance);
+        } else if (projectile.model === DEPTH_CHARGE.model) {
+          // Der Abwurf klingt wie der eines Überwasserschiffs — es IST einer.
+          this.audio?.playFire(false, distance);
         } else {
           this.audio?.playFire(
             this.shipStats(closest.model).type === SHIP_TYPE_SUBMARINE,
@@ -730,8 +740,17 @@ export class Game {
     const inSide =
       (armament.includes('torpedo') || armament.includes('taeuschkoerper')) &&
       Math.abs(Math.abs(offset) - 90) <= SIDE_LAUNCH_HALF_ANGLE_DEG;
+    const inAft =
+      armament.includes('wasserbombe') &&
+      180 - Math.abs(offset) <= DEPTH_CHARGE.arcHalfAngleDeg;
 
-    world.setAimLine({ x0: own.x, y0: own.y, x1: target.x, y1: target.y, valid: inBow || inSide });
+    world.setAimLine({
+      x0: own.x,
+      y0: own.y,
+      x1: target.x,
+      y1: target.y,
+      valid: inBow || inSide || inAft,
+    });
   }
 
   /** Peilung, wenn sie für DIESE Waffe im gültigen Sektor liegt — sonst null. */
@@ -741,6 +760,10 @@ export class Game {
     const offset = angleDelta(own.rotation, this.aimBearing);
     if (weapon === 'geschuetz') {
       return Math.abs(offset) <= GUN.arcHalfAngleDeg ? this.aimBearing : null;
+    }
+    if (weapon === 'wasserbombe') {
+      // Achteraus-Sektor: 180 − |offset| ist der Abstand zu „dead astern".
+      return 180 - Math.abs(offset) <= DEPTH_CHARGE.arcHalfAngleDeg ? this.aimBearing : null;
     }
     return Math.abs(Math.abs(offset) - 90) <= SIDE_LAUNCH_HALF_ANGLE_DEG ? this.aimBearing : null;
   }

@@ -12,10 +12,10 @@ import { isTextEntry } from './dom';
  * aus dem `own`-Ereignis. Gefeuert wird über Absichts-Events; ob ein Schuss
  * wirklich fällt, entscheidet allein der Server (Munition, Rohr-Sperre).
  *
- * Feuerbar sind Torpedo und Täuschkörper. Die übrigen Waffen zeigen ihre
- * Platzhalterzahl gedimmt, bis sie server-seitig existieren.
+ * Alle vier Waffen sind feuerbar (Torpedo, Wasserbombe, Täuschkörper,
+ * Geschütz) — welche davon ein Schiff führt, sagt der Katalog.
  */
-const FIREABLE = new Set(['torpedo', 'taeuschkoerper', 'geschuetz']);
+const FIREABLE = new Set(['torpedo', 'taeuschkoerper', 'geschuetz', 'wasserbombe']);
 
 const slots = computed(() =>
   hud.value.armament

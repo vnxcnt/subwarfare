@@ -16,7 +16,7 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import menuMusicUrl from '../assets/audio/mainmenu.mp3';
-import { API_URL, account, logout, restoreSession } from '../state/auth';
+import { API_URL, account, confirmDiscordLink, logout, restoreSession } from '../state/auth';
 import {
   buyItem,
   economyBusy,
@@ -279,6 +279,22 @@ onMounted(() => {
     (window as unknown as { __menuMusic?: HTMLAudioElement }).__menuMusic = music;
   }
   startMusic();
+
+  // Rücklauf der Discord-Verknüpfung (Einstellungen → Discord → hierher):
+  // Im Fragment steht nur ein BELEG über die geprüfte Identität; verknüpft
+  // wird erst hier, mit dem Sitzungs-Token — ein Beleg für ein fremdes Konto
+  // wird vom Server abgelehnt. Das Fragment verschwindet sofort aus der
+  // Adresszeile, es hat in Verlauf und Lesezeichen nichts verloren.
+  if (location.hash) {
+    const fragment = new URLSearchParams(location.hash.slice(1));
+    const ticket = fragment.get('linkticket');
+    if (ticket) {
+      history.replaceState(null, '', location.pathname + location.search);
+      void confirmDiscordLink(ticket).then((failure) => {
+        endReason.value = failure ?? 'Discord-Konto verknüpft.';
+      });
+    }
+  }
 
   // Profil FRISCH laden: Einsatzkosten bucht die api bei der Ticketausgabe ab,
   // XP und Coins ändern sich im Spiel — wer aus der Partie zurückkommt, soll

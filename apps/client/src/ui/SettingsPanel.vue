@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { deleteAccount } from '../state/auth';
+import {
+  account,
+  deleteAccount,
+  linkGoogleAccount,
+  startDiscordLink,
+} from '../state/auth';
+import { ensureGis } from './gis';
 import { leaveQueue } from '../state/lobby';
 import {
   KEY_ACTIONS,
@@ -72,7 +78,10 @@ function capture(event: KeyboardEvent): void {
 
 // Solange das Panel offen ist, schweigen die Spiel-Handler (Ruder, Telegraf,
 // Feuern) — sie prüfen dieses Flag.
-onMounted(() => (settingsModalOpen.value = true));
+onMounted(() => {
+  settingsModalOpen.value = true;
+  void mountGoogleLink();
+});
 onBeforeUnmount(() => {
   settingsModalOpen.value = false;
   endCapture();
@@ -83,6 +92,53 @@ onBeforeUnmount(() => {
 function onVolume(kind: 'effects' | 'ambient', event: Event): void {
   const value = Number((event.target as HTMLInputElement).value);
   setVolume(kind, value / 100);
+}
+
+/* --- Konto-Verknüpfung --------------------------------------------------- */
+
+/**
+ * Google-Verknüpfung nutzt denselben GIS-Button wie der Login — nur landet
+ * das ID-Token am Link-Endpunkt. Client-ID ist Bauzeit-Konfiguration; fehlt
+ * sie, gibt es schlicht keinen Google-Eintrag.
+ */
+const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
+
+const googleLinkSlot = ref<HTMLElement | null>(null);
+const linkBusy = ref(false);
+const linkError = ref<string | null>(null);
+
+async function mountGoogleLink(): Promise<void> {
+  if (!GOOGLE_CLIENT_ID || account.value?.hasGoogle) return;
+  const id = await ensureGis();
+  const slot = googleLinkSlot.value;
+  if (!id || !slot || slot.childElementCount > 0) return;
+  id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleLink });
+  id.renderButton(slot, { theme: 'outline', size: 'medium', text: 'continue_with', width: 200 });
+}
+
+function onGoogleLink(response: { credential: string }): void {
+  void (async () => {
+    if (linkBusy.value) return;
+    linkBusy.value = true;
+    linkError.value = null;
+    const failure = await linkGoogleAccount(response.credential);
+    linkBusy.value = false;
+    if (failure) linkError.value = failure;
+    // Erfolg zeigt sich von selbst: das Profil trägt jetzt hasGoogle.
+  })();
+}
+
+async function linkDiscord(): Promise<void> {
+  if (linkBusy.value) return;
+  linkBusy.value = true;
+  linkError.value = null;
+  // Bei Erfolg verlässt der Browser die Seite Richtung Discord — der
+  // busy-Zustand endet dann mit ihr.
+  const failure = await startDiscordLink();
+  if (failure) {
+    linkBusy.value = false;
+    linkError.value = failure;
+  }
 }
 
 /* --- Konto löschen ------------------------------------------------------- */
@@ -169,7 +225,31 @@ async function confirmDelete(): Promise<void> {
           Standardbelegung wiederherstellen
         </button>
 
-        <h3 class="settings__group settings__group--danger">Konto</h3>
+        <h3 class="settings__group">Konto</h3>
+        <div class="settings__row">
+          <span>Discord</span>
+          <span v-if="account?.hasDiscord" class="settings__linked">Verknüpft</span>
+          <button
+            v-else
+            type="button"
+            class="settings__key"
+            :disabled="linkBusy"
+            @click="linkDiscord"
+          >
+            {{ linkBusy ? 'Öffne Discord …' : 'Verknüpfen' }}
+          </button>
+        </div>
+        <div class="settings__row">
+          <span>Google</span>
+          <span v-if="account?.hasGoogle" class="settings__linked">Verknüpft</span>
+          <div v-else-if="GOOGLE_CLIENT_ID" ref="googleLinkSlot" class="settings__gis"></div>
+          <span v-else class="settings__muted">Nicht verfügbar</span>
+        </div>
+        <p class="settings__hint">
+          Ein Konto, zwei Anmeldewege: Verknüpfte Logins führen immer zu diesem Spielstand.
+        </p>
+        <p v-if="linkError" class="settings__error">{{ linkError }}</p>
+
         <template v-if="!confirmingDelete">
           <button class="settings__delete" type="button" @click="confirmingDelete = true">
             Account löschen
@@ -339,13 +419,33 @@ async function confirmDelete(): Promise<void> {
   opacity: 0.85;
 }
 
-.settings__group--danger {
-  color: #e2555a;
-  opacity: 0.9;
+.settings__linked {
+  font-size: 0.75rem;
+  color: #6fd08c;
+  letter-spacing: 0.06em;
+}
+
+.settings__muted {
+  font-size: 0.75rem;
+  opacity: 0.4;
+}
+
+.settings__gis {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 32px;
+}
+
+.settings__hint {
+  margin: 0.3rem 0 0.8rem;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  opacity: 0.45;
 }
 
 .settings__delete {
   width: 100%;
+  margin-top: 0.4rem;
   padding: 0.5rem 0.7rem;
   border: 1px solid rgb(226 85 90 / 60%);
   background: rgb(226 85 90 / 10%);
