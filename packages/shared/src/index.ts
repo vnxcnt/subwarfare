@@ -19,6 +19,13 @@ export * from './meta/combat.js';
 // Ökonomie: Item-Katalog, Ausrüstungs-Slots, Schiffszugang (Level + Kosten).
 export * from './meta/economy.js';
 
+// Torpedorohre: Bestückung je Schiff, Laden/Scharfschalten, Salven-Fächer.
+export * from './meta/tubes.js';
+
+// Wetter, Tageszeit, Seegang — Karten-Parameter, aus denen der Client
+// Sonnenstand, Himmelsfarben und Wellenhöhe ableitet.
+export * from './meta/weather.js';
+
 // Fahrmodell. Liegt hier, damit Client und Server denselben Code fahren —
 // der Server rechnet damit autoritativ, der Client rendert das Ergebnis und
 // nutzt es nur im Offline-Demobetrieb selbst.
@@ -46,5 +53,11 @@ export * from './sim/Vessel.js';
  *    Überwasserschiffe feuern sektorgebunden (Bug ±20°, Seiten ±10°).
  * 8: Wasserbombe (order:fire 'wasserbombe', Sektor achteraus ±110°) —
  *    Projektile tragen optional `sink` für die Sinkphase vor der Detonation.
+ * 9: Torpedorohre — `order:tube` (laden, scharf schalten), Rohr-Zustände im
+ *    `own`-Ereignis, Torpedos laufen als Salve aus allen scharfen Rohren.
+ * 10: Wetter in der `welcome` — Seegang, Tageszeit und Bewölkung kommen vom
+ *     Server (je Karte), der Client leitet Sonne und Himmel daraus ab.
+ * 11: Wetterwechsel zur Laufzeit — `dev:weather` (Entwicklerrolle) setzt die
+ *     Lage, das `weather`-Ereignis verteilt sie an alle Verbundenen.
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 11;

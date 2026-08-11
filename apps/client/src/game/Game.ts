@@ -9,11 +9,16 @@ import type {
   ProjectileState,
   ShipStats,
   StatePayload,
+  TubeState,
   VesselModel,
   WeaponId,
+  WeatherState,
 } from '@subwarfare/shared';
 import {
   DAMAGE,
+  DEFAULT_WEATHER,
+  aimSpreadDeg,
+  currentHour,
   DECOY,
   DEFAULT_SHIP_STATS,
   DESTROYER,
@@ -132,6 +137,12 @@ export class Game {
    */
   private ownHp: number | null = null;
   private ownAmmo: Partial<Record<WeaponId, number>> = {};
+  /** Rohr-Zustände laut Server — Quelle der Rohr-Anzeige. */
+  private ownTubes: TubeState[] = [];
+  /** Wetterlage der Karte (aus der `welcome`). */
+  private weather: WeatherState = DEFAULT_WEATHER;
+  /** Sekunden seit der Wetter-Übergabe — treibt die Tag/Nacht-Uhr. */
+  private weatherSeconds = 0;
 
   /**
    * Schiffs-Basiswerte aus der `welcome` — die Zahlen, mit denen der Server
@@ -364,12 +375,25 @@ export class Game {
         world.entities.setOwnId(payload.selfId);
         for (const ship of payload.ships) this.shipCatalog.set(ship.model, ship);
         world.setMap(payload.map);
+        // Wetter kommt vom Server. Die Uhr läuft ab hier client-seitig weiter
+        // (siehe `weatherSeconds`) — dafür muss nichts nachgeschickt werden.
+        this.weather = payload.weather ?? DEFAULT_WEATHER;
+        this.weatherSeconds = 0;
+        world.setWeather(this.weather, this.weather.timeOfDay);
+      },
+      onWeather: (payload) => {
+        // Wetterwechsel zur Laufzeit: die Uhr beginnt bei der neuen Zeit neu,
+        // sonst spränge sie um die bisher verstrichenen Sekunden weiter.
+        this.weather = payload;
+        this.weatherSeconds = 0;
+        world.setWeather(payload, payload.timeOfDay);
       },
       onState: (payload) => this.ingestState(payload),
       onOwn: (payload) => {
         this.pendingOwn = payload;
         this.ownHp = payload.hp;
         this.ownAmmo = payload.ammo;
+        this.ownTubes = payload.tubes ?? [];
         // Bestätigter Stand übernimmt — die optimistische Stufe hat gedient.
         this.pendingTelegraphStep = null;
         this.ownVessel?.applyOwnState(payload);
@@ -750,6 +774,9 @@ export class Game {
       x1: target.x,
       y1: target.y,
       valid: inBow || inSide || inAft,
+      // Derselbe Wert, mit dem der Server gleich würfelt — die Anzeige lügt
+      // nicht über die eigene Treffwahrscheinlichkeit.
+      spreadDeg: aimSpreadDeg(this.weather.seaState, own.depth),
     });
   }
 
@@ -824,6 +851,34 @@ export class Game {
     const fallback =
       weapon === 'torpedo' ? TORPEDO.capacity : weapon === 'taeuschkoerper' ? DECOY.capacity : 0;
     return this.ownAmmo[weapon] ?? fallback;
+  }
+
+  /** Rohr-Zustände laut Server. Leer bei Schiffen ohne Torpedorohre. */
+  tubes(): TubeState[] {
+    return this.ownTubes;
+  }
+
+  /** Wetterlage der Karte samt aktueller Uhrzeit — für die Anzeige. */
+  weatherNow(): { weather: WeatherState; hour: number } {
+    return { weather: this.weather, hour: currentHour(this.weather, this.weatherSeconds) };
+  }
+
+  /**
+   * Entwickler-Befehl: Wetterlage setzen. Geht als Absicht ans Netz — der
+   * Server prüft die Rolle, klemmt die Werte und schickt das Ergebnis an ALLE
+   * zurück. Lokal wird bewusst nichts vorweggenommen: sonst zeigte die eigene
+   * Ansicht ein Wetter, das der Server abgelehnt hat.
+   */
+  devSetWeather(weather: WeatherState): void {
+    this.socket?.sendDevWeather(weather);
+  }
+
+  /**
+   * Rohr-Befehl ans Netz. Offline gibt es keine Rohre — dort ist das ein
+   * No-op, wie bei allen anderen Befehlen ohne Server.
+   */
+  orderTube(index: number, action: 'laden' | 'scharf', armed?: boolean): void {
+    this.socket?.sendTube(index, action, armed);
   }
 
   /**
@@ -927,6 +982,13 @@ export class Game {
     // dann die Kamera folgen lassen, dann die Matrizen bauen. Andersherum folgt
     // die Kamera der Position des Vorframes und der nächste Rechtsklick rechnet
     // mit einer veralteten Matrix.
+    // Tag/Nacht: nur nachziehen, wenn die Uhr überhaupt läuft — bei einer
+    // festen Stimmung wären das sonst Uniform-Uploads für nichts.
+    if (this.weather.dayLengthMinutes > 0) {
+      this.weatherSeconds += frameSeconds;
+      world.setWeather(this.weather, currentHour(this.weather, this.weatherSeconds));
+    }
+
     world.update(frameSeconds);
     world.syncViews(frameSeconds);
     world.updateFollow(frameSeconds);
@@ -946,6 +1008,7 @@ export class Game {
     this.audio = null;
     this.ownHp = null;
     this.ownAmmo = {};
+    this.ownTubes = [];
     this.pendingTelegraphStep = null;
     setSunkNotice(null);
     if (this.tiltKeys) window.removeEventListener('keydown', this.tiltKeys);

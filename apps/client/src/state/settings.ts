@@ -30,7 +30,12 @@ export interface KeyBindings {
   telegraphDown: string;
   telegraphStop: string;
   aimToggle: string;
-  fireTorpedo: string;
+  /** Feuert die GEWÄHLTE Waffe (früher fest der Torpedo). */
+  fire: string;
+  /** Alle leeren Rohre nachladen. */
+  loadTubes: string;
+  /** Alle geladenen Rohre scharf schalten bzw. entschärfen. */
+  armTubes: string;
 }
 
 export const DEFAULT_KEYS: KeyBindings = {
@@ -40,7 +45,9 @@ export const DEFAULT_KEYS: KeyBindings = {
   telegraphDown: 'KeyS',
   telegraphStop: 'KeyX',
   aimToggle: 'KeyQ',
-  fireTorpedo: 'Space',
+  fire: 'Space',
+  loadTubes: 'KeyR',
+  armTubes: 'KeyT',
 };
 
 /** Anzeige-Reihenfolge und Beschriftung im Einstellungs-Panel. */
@@ -51,7 +58,9 @@ export const KEY_ACTIONS: ReadonlyArray<{ id: keyof KeyBindings; label: string }
   { id: 'telegraphDown', label: 'Telegraf langsamer' },
   { id: 'telegraphStop', label: 'Maschinen stopp' },
   { id: 'aimToggle', label: 'Zielmodus an/aus' },
-  { id: 'fireTorpedo', label: 'Torpedo feuern' },
+  { id: 'fire', label: 'Feuern' },
+  { id: 'loadTubes', label: 'Rohre laden' },
+  { id: 'armTubes', label: 'Rohre scharf' },
 ];
 
 export const volumes = ref<VolumeSettings>({ effects: 1, ambient: 1 });

@@ -1,3 +1,4 @@
+import { WEATHER_PRESETS } from '@subwarfare/shared';
 import { defineMap } from './MapDefinition.js';
 
 /**
@@ -17,3 +18,13 @@ export const ocean01 = defineMap({
     { id: 'exit-east', x: 9_200, y: 5_000, radius: 400 },
   ],
 });
+
+/**
+ * Wetterlage dieser Karte. Bewusst NEBEN der Geometrie: die Karte ist statisch,
+ * das Wetter ist ein Zustand — und je Karte (später auch je Partie) ein anderer.
+ *
+ * „Nordatlantik" ist die Stimmung des Vorbilds: bedeckt, grau, rau. Zum
+ * Ausprobieren stehen in `WEATHER_PRESETS` auch klarer_tag, sturm, daemmerung
+ * und nacht; einzelne Werte lassen sich hier ebenso überschreiben.
+ */
+export const ocean01Weather = WEATHER_PRESETS.nordatlantik;

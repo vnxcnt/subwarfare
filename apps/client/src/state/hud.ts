@@ -1,5 +1,5 @@
-import type { VesselModel, WeaponId } from '@subwarfare/shared';
-import { SHIP_TYPE_SUBMARINE } from '@subwarfare/shared';
+import type { TubeState, VesselModel, WeaponId, WeatherState } from '@subwarfare/shared';
+import { DEFAULT_WEATHER, SHIP_TYPE_SUBMARINE } from '@subwarfare/shared';
 import { shallowRef, triggerRef } from 'vue';
 import { SONAR } from '../config';
 import type { Game } from '../game/Game';
@@ -36,8 +36,13 @@ export interface HudState {
   hp: number;
   /** Maximum des aktuellen Modells (ships-Tabelle) — Bezugsgröße der HP-Leiste. */
   maxHp: number;
-  /** Restmunition je Waffen-Kennung laut Server. */
+  /** Restmunition je Waffen-Kennung laut Server. Beim Torpedo der VORRAT. */
   ammo: Partial<Record<string, number>>;
+  /** Torpedorohre laut Server; leer bei Schiffen ohne Rohre. */
+  tubes: TubeState[];
+  /** Wetterlage der Karte (Server) und die laufende Bordzeit in Stunden. */
+  weather: WeatherState;
+  hour: number;
   /** Kann das eigene Schiff tauchen (Typ Submarine laut Katalog)? */
   canDive: boolean;
   /** Tauchtiefe des eigenen Boots, 0..1. */
@@ -88,6 +93,9 @@ export const hud = shallowRef<HudState>({
   hp: 1,
   maxHp: 1,
   ammo: {},
+  tubes: [],
+  weather: DEFAULT_WEATHER,
+  hour: DEFAULT_WEATHER.timeOfDay,
   canDive: false,
   depth: 0,
   diveTarget: false,
@@ -142,6 +150,18 @@ export function bindGame(next: Game | null): void {
 export function writeHud(frameSeconds: number): void {
   const scene = game?.scene;
   const own = game?.ownVessel;
+
+  // Wetter und Bordzeit hängen NICHT am eigenen Boot: sie laufen weiter,
+  // während man versenkt auf den Wiedereinstieg wartet. Deshalb vor dem
+  // Ausstieg unten — sonst fröre die Uhr in der Statusleiste ein, und das
+  // Entwicklermenü zeigte während der Respawn-Wartezeit alte Regler.
+  const wetterJetzt = game?.weatherNow();
+  if (wetterJetzt) {
+    hud.value.weather = wetterJetzt.weather;
+    hud.value.hour = wetterJetzt.hour;
+    if (!scene || !own) triggerRef(hud);
+  }
+
   if (!scene || !own) return;
 
   const state = hud.value;
@@ -161,6 +181,10 @@ export function writeHud(frameSeconds: number): void {
   state.ammo['torpedo'] = game?.ammoFor('torpedo') ?? 0;
   state.ammo['taeuschkoerper'] = game?.ammoFor('taeuschkoerper') ?? 0;
   state.ammo['geschuetz'] = game?.ammoFor('geschuetz') ?? 0;
+  state.ammo['wasserbombe'] = game?.ammoFor('wasserbombe') ?? 0;
+  // Rohre kommen als fertiges Array vom Server — die Referenz durchreichen
+  // genügt, sie wird bei jedem `own` ohnehin ersetzt.
+  state.tubes = game?.tubes() ?? [];
   state.canDive = game?.shipStats(own.model).type === SHIP_TYPE_SUBMARINE;
   state.depth = own.depth;
   state.diveTarget = own.diveTarget;
@@ -259,9 +283,22 @@ export function devSetModel(model: VesselModel): void {
   game?.devSetModel(model);
 }
 
+/** Entwickler: Wetterlage setzen (Server prüft Rolle und Wertebereiche). */
+export function devSetWeather(weather: WeatherState): void {
+  game?.devSetWeather(weather);
+}
+
 /** Feuerbefehl — Bewaffnung, Munition und Rohr-Sperre prüft der Server. */
 export function orderFire(weapon: WeaponId): void {
   game?.orderFire(weapon);
+}
+
+/**
+ * Rohr laden oder scharf schalten. Index −1 gilt für alle Rohre.
+ * Ob es geht (leer? Vorrat da? geladen?), entscheidet allein der Server.
+ */
+export function orderTube(index: number, action: 'laden' | 'scharf', armed?: boolean): void {
+  game?.orderTube(index, action, armed);
 }
 
 /**

@@ -1,5 +1,7 @@
 import type { GameMap } from '../types/Map.js';
 import type { ShipStats, WeaponId } from '../meta/ships.js';
+import type { TubeState } from '../meta/tubes.js';
+import type { WeatherState } from '../meta/weather.js';
 import type { PlayerId, PlayerState, VesselModel } from '../types/Player.js';
 import type { Waypoint } from '../sim/VesselProfile.js';
 
@@ -24,6 +26,13 @@ export interface WelcomePayload {
    * eine eigene Client-Tabelle wäre eine zweite Wahrheit.
    */
   ships: ShipStats[];
+  /**
+   * Wetterlage dieser Karte: Seegang, Tageszeit, Bewölkung. Der Client leitet
+   * daraus Sonnenstand und Himmelsfarben ab — und die Wellenhöhe. Bewusst
+   * NEBEN der Karte statt darin: die Geometrie ist statisch, das Wetter kann
+   * sich später während einer Partie ändern.
+   */
+  weather: WeatherState;
   tick: number;
 }
 
@@ -81,10 +90,28 @@ export interface OwnStatePayload {
    * angeschlagen ein Gegner ist, ist Aufklärung, keine Anzeige.
    */
   hp: number;
-  /** Restmunition je Waffen-Kennung — die Wahrheit hinter der Munitionsleiste. */
+  /**
+   * Restmunition je Waffen-Kennung. Beim Torpedo ist das der VORRAT, nicht die
+   * Schussbereitschaft — die steckt in den Rohren.
+   */
   ammo: Partial<Record<WeaponId, number>>;
+  /**
+   * Torpedorohre in Anzeige-Reihenfolge. Leer bei Schiffen ohne Rohre.
+   * Nur im Besitzer-Ereignis: fremde Ladezustände wären Aufklärung.
+   */
+  tubes: TubeState[];
   /** Zählt bei jedem neuen Befehl hoch — die Anzeige erkennt daran den Wechsel. */
   serial: number;
+}
+
+/** Was mit einem Rohr geschehen soll. */
+export interface TubeOrder {
+  /** Index im `tubes`-Feld. −1 heißt: auf ALLE Rohre anwenden. */
+  index: number;
+  /** `laden` füllt ein leeres Rohr, `scharf` schaltet ein geladenes um. */
+  action: 'laden' | 'scharf';
+  /** Nur bei `scharf`: Zielzustand. Fehlt er, wird umgeschaltet. */
+  armed?: boolean;
 }
 
 export interface PlayerLeftPayload {
@@ -137,6 +164,12 @@ export interface ServerToClientEvents {
   fx: (payload: FxPayload) => void;
   destroyed: (payload: DestroyedPayload) => void;
   kicked: (payload: KickedPayload) => void;
+  /**
+   * Wetterwechsel während der Partie. Kommt heute nur vom Entwicklermenü —
+   * der Weg dafür ist aber genau der, den auch ein späterer Wetterlauf oder
+   * ein Frontenzug nehmen würde.
+   */
+  weather: (payload: WeatherState) => void;
 }
 
 /**
@@ -183,6 +216,14 @@ export interface ClientToServerEvents {
   'order:periscope': (payload: PeriscopeOrder) => void;
   'order:fire': (payload: FireOrder) => void;
   'dev:model': (payload: DevModelOrder) => void;
+  /**
+   * Entwickler: Wetterlage der laufenden Partie setzen. Wie `dev:model` an die
+   * Entwicklerrolle gebunden — und wie dort prüft und klemmt der Server jeden
+   * Wert selbst. Wirkt für ALLE Verbundenen, damit sich auch die Spielwirkung
+   * (Streuung, Sonar) zu zweit testen lässt.
+   */
+  'dev:weather': (payload: WeatherState) => void;
+  'order:tube': (payload: TubeOrder) => void;
 }
 
 /**

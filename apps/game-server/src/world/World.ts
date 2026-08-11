@@ -17,7 +17,9 @@ import {
   SHIP_TYPE_SUBMARINE,
   TORPEDO,
   Vessel,
+  aimSpreadDeg,
   norm360,
+  salvoSpread,
   smokeLevelForHp,
 } from '@subwarfare/shared';
 import type { ShipCatalog } from '../sim/ShipCatalog.js';
@@ -92,12 +94,22 @@ export class World {
   private readonly projectiles = new Map<string, Projectile>();
   private nextSpawnIndex = 0;
   private nextProjectileId = 1;
+  /**
+   * Seegang der Karte, 0..1. Wirkt auf die Schussstreuung; gesetzt wird er
+   * vom GameServer aus dem Karten-Wetter.
+   */
+  private seaState = 0;
 
   constructor(
     map: GameMap,
     private readonly ships: ShipCatalog,
   ) {
     this.map = map;
+  }
+
+  /** Seegang der Karte übernehmen (0..1) — steuert die Schussstreuung. */
+  setSeaState(value: number): void {
+    this.seaState = Math.min(Math.max(value, 0), 1);
   }
 
   get count(): number {
@@ -208,7 +220,18 @@ export class World {
     rangeMetres: number,
     blastRadius = 0,
   ): void {
-    const bearing = norm360(bearingDegrees);
+    /*
+     * Seegang-Streuung. Sie sitzt bewusst HIER: `launch` ist die einzige
+     * Stelle, an der ein Projektil entsteht — Geschütz, Torpedo, Täuschkörper
+     * und Wasserbombe bekommen die Wirkung damit zwangsläufig und gleich.
+     *
+     * Maßgeblich ist die Tiefe des SCHÜTZEN: ein getauchtes Boot rollt nicht.
+     * `Math.random` ist hier zulässig (Server-Entscheidung, kein geteiltes
+     * Fahrmodell) — dieselbe Regel wie bei den Bot-Zielen.
+     */
+    const streuung = aimSpreadDeg(this.seaState, shooter.depth);
+    const abweichung = streuung > 0 ? (Math.random() * 2 - 1) * streuung : 0;
+    const bearing = norm360(bearingDegrees + abweichung);
     const heading = bearing * DEG;
     const projectile: Projectile = {
       id: `t-${this.nextProjectileId++}`,
@@ -277,6 +300,27 @@ export class World {
       dims.beam / 2 + TORPEDO.hitRadius * 2,
       TORPEDO.speed, TORPEDO.damage, TORPEDO.hitRadius, TORPEDO.rangeMetres,
     );
+  }
+
+  /**
+   * Torpedo-SALVE aus mehreren Rohren: `count` Torpedos, gefächert um die
+   * Zielpeilung. Der Abschussversatz richtet sich nach der Rohrlage — aus dem
+   * Bug schießt es über die Rumpflänge, über die Seite über die Breite.
+   */
+  fireTorpedoSalvo(
+    shooter: Vessel,
+    bearingDegrees: number,
+    count: number,
+    laengs: boolean,
+  ): void {
+    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const offset = (laengs ? dims.length / 2 : dims.beam / 2) + TORPEDO.hitRadius * 2;
+    for (const versatz of salvoSpread(count)) {
+      this.launch(
+        shooter, 'torpedo', TORPEDO.model, bearingDegrees + versatz, offset,
+        TORPEDO.speed, TORPEDO.damage, TORPEDO.hitRadius, TORPEDO.rangeMetres,
+      );
+    }
   }
 
   /** Überwasserschiff: Täuschkörper über die SEITE, in Zielpeilung. */

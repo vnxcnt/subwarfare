@@ -1,4 +1,4 @@
-import type { GameMap } from '@subwarfare/shared';
+import type { Atmosphere, GameMap } from '@subwarfare/shared';
 import { Geometry, Mesh, Shader } from 'pixi.js';
 import { WATER } from '../config';
 import { getTilt } from './Projection';
@@ -41,6 +41,12 @@ uniform vec3 uSun;
 uniform vec3 uSkyHorizon;
 uniform vec3 uSkyZenith;
 uniform vec3 uSunColor;
+/** Wie stark die Sonne GERICHTET wirkt — Wolken dämpfen sie bis fast auf null. */
+uniform float uSunStrength;
+/** Physikalische Helligkeit des Wasserkörpers (Tageszeit × Wolken). */
+uniform float uLightLevel;
+/** Belichtung — Anpassung ans Umgebungslicht, ganz am Ende angewandt. */
+uniform float uExposure;
 
 const float TAU = 6.2831853;
 
@@ -192,8 +198,11 @@ void main() {
    */
   float lift = clamp(grad.x / 12.0, -1.0, 1.0);
   float sss = smoothstep(0.25, 1.0, lift) * (0.3 + 0.7 * max(-dot(n, sun), 0.0));
-  vec3 water = body * (0.6 + 0.4 * max(dot(n, sun), 0.0))
-             + vec3(0.02, 0.11, 0.15) * sss * 0.5;
+  // Die gerichtete Aufhellung hängt an der Sonnenstärke: unter geschlossener
+  // Wolkendecke gibt es keine Sonnenseite mehr, nur noch flaches Licht.
+  vec3 water = body * (0.6 + 0.4 * max(dot(n, sun), 0.0) * uSunStrength)
+             + vec3(0.02, 0.11, 0.15) * sss * 0.5 * uSunStrength;
+  water *= uLightLevel;
 
   /*
    * GLITZERPFAD statt Plastik-Glanzpunkt. Eine einzelne enge Keule (früher
@@ -212,7 +221,9 @@ void main() {
   float sparkle = pow(ndh, 220.0) * smoothstep(0.22, 0.55, glitterMask) * 1.6;
   // Nur dort funkeln, wo die Auflösung es hergibt — beim Rauszoomen würde das
   // Funkeln sonst zu einem flimmernden Rauschteppich.
-  vec3 glitter = uSunColor * (broad + sparkle * smoothstep(0.25, 0.8, uZoom)) * fresnel * 3.0;
+  // Ohne Sonne kein Glitzerpfad — bei Bewölkung verschwindet er als Erstes.
+  vec3 glitter =
+    uSunColor * (broad + sparkle * smoothstep(0.25, 0.8, uZoom)) * fresnel * 3.0 * uSunStrength;
 
   /*
    * Schaum. Auf die aktiven Amplituden normiert, sonst wandert die Grenze mit
@@ -254,8 +265,11 @@ void main() {
   // Schaum ist eine STREUENDE Schicht: er liegt auf dem Wasser statt es
   // einzufärben, wird also über alles andere geblendet — und er ist nie ganz
   // deckend, sonst wirkt er wie aufgemalt.
+  // Schaum ist weiß und streut — er folgt der allgemeinen Helligkeit, nicht
+  // der Sonnenrichtung allein. Nachts bleibt er der hellste Teil des Bildes.
   vec3 foamColor = mix(vec3(0.66, 0.74, 0.80), vec3(0.93, 0.97, 1.0), crest)
-                 * (0.6 + 0.4 * max(dot(n, sun), 0.0));
+                 * (0.6 + 0.4 * max(dot(n, sun), 0.0) * uSunStrength)
+                 * (0.35 + 0.65 * uLightLevel);
 
   /*
    * Zusätzlich zum gespiegelten Himmel bekommt die Fläche diffuses HIMMELSLICHT
@@ -267,7 +281,10 @@ void main() {
   vec3 col = mix(water + ambient, sky, fresnel) + glitter;
   col = mix(col, foamColor, foam * 0.7);
 
-  finalColor = vec4(col, 1.0);
+  // Belichtung ganz zuletzt: sie hebt alles gemeinsam an und lässt die
+  // Verhältnisse untereinander unberührt — sonst wäre eine Nachtszene
+  // physikalisch korrekt und trotzdem unbrauchbar.
+  finalColor = vec4(col * uExposure, 1.0);
 }
 `;
 
@@ -323,6 +340,9 @@ export class Ocean {
           uSkyHorizon: { value: new Float32Array(WATER.skyHorizon), type: 'vec3<f32>' },
           uSkyZenith: { value: new Float32Array(WATER.skyZenith), type: 'vec3<f32>' },
           uSunColor: { value: new Float32Array(WATER.sunColor), type: 'vec3<f32>' },
+          uSunStrength: { value: 1, type: 'f32' },
+          uLightLevel: { value: 1, type: 'f32' },
+          uExposure: { value: 1, type: 'f32' },
         },
       },
     });
@@ -339,9 +359,27 @@ export class Ocean {
     buffer.update();
   }
 
-  /** Seegang von 0 (spiegelglatt) bis 1. Später vom Server steuerbar. */
+  /** Seegang von 0 (spiegelglatt) bis 1. Kommt vom Server (Karten-Wetter). */
   setSeaState(value: number): void {
     this.shader.resources['oceanUniforms'].uniforms.uSeaState = Math.min(Math.max(value, 0), 1);
+  }
+
+  /**
+   * Sonnenstand, Himmelsfarben und Helligkeit setzen.
+   *
+   * Die WERTE kommen aus `atmosphereFor` in shared — hier landen sie nur in
+   * den Uniforms. Die Farben werden in vorhandene Float32Arrays geschrieben
+   * statt neu angelegt: das läuft potenziell jeden Frame (Tag/Nacht-Uhr).
+   */
+  setAtmosphere(atmosphere: Atmosphere): void {
+    const uniforms = this.shader.resources['oceanUniforms'].uniforms;
+    (uniforms.uSun as Float32Array).set(atmosphere.sunDirection);
+    (uniforms.uSunColor as Float32Array).set(atmosphere.sunColor);
+    (uniforms.uSkyHorizon as Float32Array).set(atmosphere.skyHorizon);
+    (uniforms.uSkyZenith as Float32Array).set(atmosphere.skyZenith);
+    uniforms.uSunStrength = atmosphere.sunStrength;
+    uniforms.uLightLevel = atmosphere.lightLevel;
+    uniforms.uExposure = atmosphere.exposure;
   }
 
   update(deltaSeconds: number, zoom: number): void {

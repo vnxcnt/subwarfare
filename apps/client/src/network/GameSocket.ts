@@ -7,6 +7,7 @@ import type {
   StatePayload,
   VesselModel,
   WeaponId,
+  WeatherState,
   WelcomePayload,
 } from '@subwarfare/shared';
 import { io, type Socket } from 'socket.io-client';
@@ -20,6 +21,8 @@ export interface GameSocketHandlers {
   onFx: (payload: FxPayload) => void;
   /** Das EIGENE Boot wurde versenkt — Respawn folgt server-seitig. */
   onDestroyed: (payload: DestroyedPayload) => void;
+  /** Wetterwechsel zur Laufzeit (heute: Entwicklermenü). */
+  onWeather: (payload: WeatherState) => void;
   /** Sitzungsende — Rauswurf, Ablehnung des Tickets oder Verbindungsabriss. */
   onEnded: (message: string) => void;
 }
@@ -64,6 +67,7 @@ export class GameSocket {
     socket.on('player:left', (payload) => handlers.onPlayerLeft(payload.id));
     socket.on('fx', handlers.onFx);
     socket.on('destroyed', handlers.onDestroyed);
+    socket.on('weather', handlers.onWeather);
     socket.on('kicked', (payload) => end(payload.message));
     socket.on('connect_error', (error) => end(error.message || 'Verbindung abgelehnt.'));
     socket.on('disconnect', (reason) => {
@@ -99,9 +103,23 @@ export class GameSocket {
     this.socket?.emit('order:fire', { weapon, bearingDegrees });
   }
 
+  /**
+   * Rohr-Befehl: laden oder scharf schalten. Index −1 gilt für alle Rohre.
+   * Wie jeder Befehl nur eine ABSICHT — ob das Rohr überhaupt leer ist und ob
+   * Vorrat da ist, entscheidet der Server.
+   */
+  sendTube(index: number, action: 'laden' | 'scharf', armed?: boolean): void {
+    this.socket?.emit('order:tube', { index, action, armed });
+  }
+
   /** Entwickler: eigenes Schiffsmodell wechseln. Der Server prüft die Rolle. */
   sendDevModel(model: VesselModel): void {
     this.socket?.emit('dev:model', { model });
+  }
+
+  /** Entwickler: Wetterlage setzen. Rolle und Wertebereiche prüft der Server. */
+  sendDevWeather(weather: WeatherState): void {
+    this.socket?.emit('dev:weather', weather);
   }
 
   disconnect(): void {

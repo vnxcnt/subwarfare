@@ -25,6 +25,26 @@ const tilt = computed(
   () => `${hud.value.tilt.toFixed(2)} · ${((Math.asin(hud.value.tilt) * 180) / Math.PI).toFixed(0)}°`,
 );
 
+/**
+ * Wetterlage in Seemannssprache: Bordzeit, Bewölkung, Seegang.
+ * Der Seegang wird auf die vertraute 0–9-Skala gebracht, nicht als 0..1 gezeigt.
+ */
+const weather = computed(() => {
+  const { weather: w, hour } = hud.value;
+  const stunde = Math.floor(hour);
+  const minute = Math.floor((hour - stunde) * 60);
+  const uhr = `${String(stunde).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  const himmel =
+    w.cloudCover < 0.2
+      ? 'klar'
+      : w.cloudCover < 0.5
+        ? 'heiter'
+        : w.cloudCover < 0.85
+          ? 'bedeckt'
+          : 'geschlossen';
+  return `${uhr} · ${himmel} · Seegang ${Math.round(w.seaState * 9)}`;
+});
+
 /** Der Hinweistext folgt der tatsächlichen Belegung — nicht den Defaults. */
 const keyHint = computed(
   () =>
@@ -38,6 +58,7 @@ const keyHint = computed(
   <header class="status">
     <span class="status__title">Sub Warfare</span>
     <span class="status__item">{{ hud.mapId }}</span>
+    <span class="status__item">{{ weather }}</span>
     <span class="status__item hud__num">{{ position }}</span>
     <span class="status__item hud__num">{{ course }}</span>
     <span class="status__item hud__num">{{ speed }}</span>

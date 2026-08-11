@@ -1,4 +1,5 @@
-import type { GameMap } from '@subwarfare/shared';
+import type { GameMap, WeatherState } from '@subwarfare/shared';
+import { atmosphereFor } from '@subwarfare/shared';
 import { Container, Graphics, Matrix, Point } from 'pixi.js';
 import { FALLBACK_MAP, FOLLOW, HULL, VIEW, VISION } from '../config';
 import { EntityLayer } from './entities/EntityLayer';
@@ -181,6 +182,15 @@ export class World {
   }
 
   /**
+   * Wetterlage übernehmen: Seegang und die daraus abgeleitete Atmosphäre.
+   * Läuft bei stehender Uhr einmal, bei laufendem Tag/Nacht-Wechsel je Frame.
+   */
+  setWeather(weather: WeatherState, hour: number): void {
+    this.ocean?.setSeaState(weather.seaState);
+    this.ocean?.setAtmosphere(atmosphereFor(weather, hour));
+  }
+
+  /**
    * Startet einen Kampf-Effekt: Einschlag (klein) oder Versenkung (groß).
    * Der Zeitpunkt kommt vom Server (fx-Ereignis) — hier wird nur gezeichnet.
    */
@@ -265,7 +275,15 @@ export class World {
    * früheren Wegpunktlinie; ungültige Peilung wird rot.
    */
   setAimLine(
-    line: { x0: number; y0: number; x1: number; y1: number; valid: boolean } | null,
+    line: {
+      x0: number;
+      y0: number;
+      x1: number;
+      y1: number;
+      valid: boolean;
+      /** Halber Streuwinkel in Grad (Seegang) — 0 zeichnet nur die Linie. */
+      spreadDeg?: number;
+    } | null,
   ): void {
     const g = this.aimLine;
     g.clear();
@@ -275,6 +293,30 @@ export class World {
     g.moveTo(line.x0, line.y0)
       .lineTo(line.x1, line.y1)
       .stroke({ color, alpha: line.valid ? 0.55 : 0.7, pixelLine: true });
+
+    /*
+     * Streukegel bei Seegang. Er ist keine Verzierung, sondern Ehrlichkeit:
+     * Der Server würfelt die Peilung innerhalb dieses Winkels aus. Ohne die
+     * Anzeige gingen Schüsse scheinbar grundlos daneben — mit ihr sieht man,
+     * wie die See die Genauigkeit frisst, und kann näher heranfahren.
+     */
+    const spread = line.spreadDeg ?? 0;
+    if (spread > 0.05) {
+      const dx = line.x1 - line.x0;
+      const dy = line.y1 - line.y0;
+      const laenge = Math.hypot(dx, dy);
+      if (laenge > 1) {
+        const winkel = Math.atan2(dy, dx);
+        const halb = (spread * Math.PI) / 180;
+        for (const seite of [-1, 1]) {
+          const a = winkel + halb * seite;
+          g.moveTo(line.x0, line.y0)
+            .lineTo(line.x0 + Math.cos(a) * laenge, line.y0 + Math.sin(a) * laenge)
+            .stroke({ color, alpha: line.valid ? 0.28 : 0.35, pixelLine: true });
+        }
+      }
+    }
+
     // Kleine Marke am Zielpunkt — dieselbe Sprache wie der alte Wegpunktring.
     g.circle(line.x1, line.y1, Math.max(18, 10 / this.camera.zoom)).stroke({
       color,

@@ -8,5 +8,25 @@
  */
 export function isTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  return target.closest('input, textarea, select, [contenteditable="true"]') !== null;
+  const feld = target.closest('input, textarea, select, [contenteditable="true"]');
+  if (!feld) return false;
+  // Nur ECHTE Texteingaben blocken. Ein Schieberegler ist ein `input`, nimmt
+  // aber keine Zeichen entgegen — bliebe er hier drin, verschluckte ein
+  // angeklickter Regler im Entwicklermenü anschließend Ruder, Telegraf und
+  // Feuertaste, bis man wieder auf die Karte klickt.
+  if (feld instanceof HTMLInputElement && NICHT_TEXT.has(feld.type)) return false;
+  return true;
 }
+
+/** Eingabearten, die keine Zeichen entgegennehmen. */
+const NICHT_TEXT = new Set([
+  'range',
+  'checkbox',
+  'radio',
+  'button',
+  'submit',
+  'reset',
+  'color',
+  'file',
+  'image',
+]);

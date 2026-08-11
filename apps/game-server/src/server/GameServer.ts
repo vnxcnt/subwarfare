@@ -21,12 +21,26 @@ import {
   TORPEDO,
   angleDelta,
   clampStep,
+  currentHour,
+  effectiveSensorRange,
   isVesselModel,
+  sanitizeWeather,
 } from '@subwarfare/shared';
+import type { TubePosition, TubeState, WeatherState } from '@subwarfare/shared';
+import { TUBE, tubeBearing, tubeLayoutFor } from '@subwarfare/shared';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
+
+/** Ein Rohr auf dem Server — wie `TubeState`, nur mit der Restzeit in Sekunden. */
+interface Tube {
+  position: TubePosition;
+  status: 'leer' | 'laedt' | 'geladen';
+  /** Restliche Ladezeit in Sekunden; 0, sobald geladen. */
+  remaining: number;
+  armed: boolean;
+}
 import { Server, type Socket } from 'socket.io';
 import { env } from '../env.js';
-import { ocean01 } from '../maps/ocean01.js';
+import { ocean01, ocean01Weather } from '../maps/ocean01.js';
 import { Bots } from '../sim/Bots.js';
 import { ShipCatalog } from '../sim/ShipCatalog.js';
 import { World, type WorldEvents } from '../world/World.js';
@@ -56,6 +70,21 @@ const ORTUNG_HYSTERESE = 1.05;
 export class GameServer {
   private readonly ships = new ShipCatalog();
   private readonly world = new World(ocean01, this.ships);
+  /**
+   * Wetterlage dieser Karte — Quelle für Seegang-Wirkung und Client-Optik.
+   * Nicht `readonly`: das Entwicklermenü kann sie zur Laufzeit setzen.
+   */
+  private weather: WeatherState = ocean01Weather;
+  /**
+   * Wann die aktuelle Wetterlage gesetzt wurde (hrtime-Sekunden).
+   *
+   * Nötig, sobald die Tag/Nacht-Uhr läuft: `weather.timeOfDay` ist die
+   * AUSGANGSZEIT, die Uhr läuft client-seitig weiter. Ohne diese Zeitbasis
+   * bekäme ein später Beitretender die eingefrorene Ausgangszeit und stünde
+   * dauerhaft in einer anderen Tageszeit als alle anderen — bei einem
+   * 10-Minuten-Tag schnell ein halber Tag Versatz.
+   */
+  private weatherSetAt = process.hrtime.bigint();
   private bots: Bots | null = null;
 
   private http: HttpServer | null = null;
@@ -82,6 +111,12 @@ export class GameServer {
     string,
     { torpedo: number; taeuschkoerper: number; geschuetz: number; wasserbombe: number }
   >();
+  /**
+   * Torpedorohre je Account, in Anzeige-Reihenfolge. Der Ladezustand ist
+   * SPIELSTAND, kein Anzeigewert: geladen wird von Hand, geschossen wird als
+   * Salve aus allen scharf geschalteten Rohren.
+   */
+  private readonly tubes = new Map<string, Tube[]>();
   /** Versenkte Spieler, die auf ihren Wiedereinstieg warten. */
   private readonly pendingRespawns = new Map<string, { seconds: number; model: VesselModel }>();
 
@@ -96,6 +131,8 @@ export class GameServer {
 
     // Katalog VOR dem ersten Spawn — die Bots fahren bereits damit.
     await this.ships.load();
+    // Seegang in die Welt: er streut jeden Schuss von rollendem Deck.
+    this.world.setSeaState(this.weather.seaState);
     this.bots = new Bots(this.world, env.bots);
 
     this.http = createServer((request, response) => this.handleHttp(request, response));
@@ -220,6 +257,7 @@ export class GameServer {
       isVesselModel(ticketModel) ? ticketModel : undefined,
     );
     this.refillAmmo(accountId);
+    this.resetTubes(accountId, vessel.model);
     console.log(`[game-server] ${name} (${accountId}) verbunden — ${this.sockets.size} Spieler.`);
 
     socket.emit('welcome', {
@@ -227,6 +265,9 @@ export class GameServer {
       selfId: accountId,
       map: this.world.map,
       ships: this.ships.all(),
+      // Fortgeschriebene Tageszeit statt der Ausgangszeit — sonst begänne der
+      // Tag für jeden Beitretenden von vorn.
+      weather: this.currentWeather(),
       tick: this.tick,
     });
     this.sendOwn(socket, vessel);
@@ -293,6 +334,13 @@ export class GameServer {
       const stats = this.ships.get(own.model);
       if (!stats.armament.includes(weapon)) return;
 
+      // Der Torpedo läuft über die ROHRE: gefeuert wird, was scharf und
+      // geladen ist — der Vorrat wurde schon beim Laden verbraucht.
+      if (weapon === 'torpedo') {
+        this.fireSalvo(socket, own, payload?.bearingDegrees);
+        return;
+      }
+
       const ammo = this.ammo.get(accountId);
       if (!ammo || ammo[weapon] <= 0) return;
       // Rohr-Sperre je Waffe in Server-Ticks — der Knopf im Client ist Höflichkeit.
@@ -304,12 +352,11 @@ export class GameServer {
       const isSubmarine = stats.type === SHIP_TYPE_SUBMARINE;
 
       if (isSubmarine) {
-        // U-Boote zielen nicht: Torpedo aus dem Bugrohr voraus, Täuschkörper
-        // achtern. Geschütz und Wasserbombe führt kein U-Boot (der Katalog
-        // fängt das schon, die Prüfung hier ist das zweite Netz).
-        if (weapon === 'geschuetz' || weapon === 'wasserbombe') return;
-        if (weapon === 'torpedo') this.world.fireTorpedo(own);
-        else this.world.fireDecoy(own);
+        // U-Boote zielen nicht: Täuschkörper achtern. Geschütz und
+        // Wasserbombe führt kein U-Boot (der Katalog fängt das schon, die
+        // Prüfung hier ist das zweite Netz); der Torpedo ist oben abgebogen.
+        if (weapon !== 'taeuschkoerper') return;
+        this.world.fireDecoy(own);
       } else {
         // Überwasserschiffe feuern SEKTORGEBUNDEN auf die gezielte Peilung:
         // Geschütz im Bugsektor, Torpedo/Täuschkörper über die Seiten.
@@ -336,24 +383,45 @@ export class GameServer {
           if (Math.abs(Math.abs(offset) - 90) > SIDE_LAUNCH_HALF_ANGLE_DEG + SECTOR_TOLERANCE_DEG) {
             return;
           }
-          if (weapon === 'torpedo') this.world.fireTorpedoSide(own, bearing);
-          else this.world.fireDecoySide(own, bearing);
+          this.world.fireDecoySide(own, bearing);
         }
       }
 
       const spec =
-        weapon === 'torpedo'
-          ? TORPEDO
-          : weapon === 'taeuschkoerper'
-            ? DECOY
-            : weapon === 'wasserbombe'
-              ? DEPTH_CHARGE
-              : GUN;
+        weapon === 'taeuschkoerper'
+          ? DECOY
+          : weapon === 'wasserbombe'
+            ? DEPTH_CHARGE
+            : GUN;
       ammo[weapon] -= 1;
       gates[weapon] = this.tick + Math.round(spec.cooldownSeconds / SIM_STEP_SECONDS);
       this.nextFireTick.set(accountId, gates);
       // Munitionsstand sofort bestätigen, nicht erst mit dem nächsten Tick.
       this.sendOwn(socket, own);
+    });
+
+    socket.on('order:tube', (payload) => {
+      this.handleTubeOrder(socket, accountId, payload);
+    });
+
+    socket.on('dev:weather', (payload) => {
+      // Wie bei dev:model: Rolle aus dem TICKET, nicht aus dem Ereignis.
+      if (socket.data.role < ROLE_DEVELOPER) return;
+      const weather = sanitizeWeather(payload);
+      if (!weather) return;
+
+      this.weather = weather;
+      this.weatherSetAt = process.hrtime.bigint();
+      // Der Seegang wirkt server-seitig auf die Schussstreuung — ohne diese
+      // Zeile wäre die Änderung reine Optik.
+      this.world.setSeaState(weather.seaState);
+      // An ALLE: Wetter ist Weltzustand, nicht Ansichtssache. Sonst sähen zwei
+      // Spieler verschiedene Seen, während beide dieselbe Streuung abbekommen.
+      for (const other of this.sockets.values()) other.emit('weather', weather);
+      console.log(
+        `[game-server] ${name} setzt Wetter: Seegang ${weather.seaState.toFixed(2)}, ` +
+          `${weather.timeOfDay.toFixed(1)} h, Wolken ${weather.cloudCover.toFixed(2)}.`,
+      );
     });
 
     socket.on('dev:model', (payload) => {
@@ -372,6 +440,8 @@ export class GameServer {
       // neuen Modells, volle Munition. Reines Entwickler-Werkzeug.
       this.world.resetHp(accountId);
       this.refillAmmo(accountId);
+      // Anderes Modell heißt andere Rohrbestückung.
+      this.resetTubes(accountId, payload.model);
       // Wer vom U-Boot auf ein Überwasserschiff wechselt, taucht zwangsläufig
       // auf und fährt das Periskop ein — beides über die normalen Wege.
       if (this.ships.get(payload.model).type !== SHIP_TYPE_SUBMARINE) {
@@ -391,10 +461,158 @@ export class GameServer {
       this.pendingRespawns.delete(accountId);
       this.ammo.delete(accountId);
       this.nextFireTick.delete(accountId);
+      this.tubes.delete(accountId);
       this.world.remove(accountId);
       this.notifyLeft(accountId);
       console.log(`[game-server] ${name} getrennt — ${this.sockets.size} Spieler.`);
     });
+  }
+
+  /**
+   * Rohr-Befehl: laden oder scharf schalten. Index −1 gilt für ALLE Rohre —
+   * das ist der „alles laden"/„alles scharf"-Griff aus der Anzeige.
+   */
+  private handleTubeOrder(socket: GameSocket, accountId: string, payload: unknown): void {
+    const tubes = this.tubes.get(accountId);
+    if (!tubes || tubes.length === 0) return;
+    const order = payload as { index?: unknown; action?: unknown; armed?: unknown } | undefined;
+    const action = order?.action;
+    if (action !== 'laden' && action !== 'scharf') return;
+    if (!isFiniteNumber(order?.index)) return;
+
+    const index = Math.trunc(order.index);
+    if (index !== -1 && (index < 0 || index >= tubes.length)) return;
+    const betroffen = index === -1 ? tubes : [tubes[index] as Tube];
+
+    let geaendert = false;
+    if (action === 'laden') {
+      const ammo = this.ammo.get(accountId);
+      for (const tube of betroffen) {
+        if (tube.status !== 'leer') continue;
+        // Der Vorrat wird beim LADEN verbraucht, nicht beim Schuss: ein
+        // geladenes Rohr ist bereits bezahlt.
+        if (!ammo || ammo.torpedo <= 0) break;
+        ammo.torpedo -= 1;
+        tube.status = 'laedt';
+        tube.remaining = TUBE.reloadSeconds;
+        geaendert = true;
+      }
+    } else {
+      // Beim Sammelbefehl entscheidet der erste betroffene Zustand, ob
+      // scharf gemacht oder entschärft wird — sonst würde „alles scharf"
+      // bei gemischtem Zustand die Hälfte wieder ausschalten.
+      const ziel =
+        typeof order?.armed === 'boolean'
+          ? order.armed
+          : !betroffen.some((tube) => tube.status === 'geladen' && tube.armed);
+      for (const tube of betroffen) {
+        // Nur geladene Rohre lassen sich scharf schalten.
+        if (tube.status !== 'geladen') continue;
+        if (tube.armed === ziel) continue;
+        tube.armed = ziel;
+        geaendert = true;
+      }
+    }
+
+    if (geaendert) {
+      const own = this.world.get(accountId);
+      if (own) this.sendOwn(socket, own);
+    }
+  }
+
+  /**
+   * Torpedo-Salve: alle scharfen, geladenen Rohre feuern gleichzeitig.
+   *
+   * Rohre schießen in ihre Einbaurichtung. Beim Überwasserschiff zielt der
+   * Spieler zusätzlich, und dann feuern nur die Rohre der passenden SEITE —
+   * ein Backbordrohr schießt nicht nach Steuerbord.
+   */
+  private fireSalvo(socket: GameSocket, own: Vessel, bearing: unknown): void {
+    const accountId = socket.data.accountId;
+    const tubes = this.tubes.get(accountId);
+    if (!tubes) return;
+
+    const stats = this.ships.get(own.model);
+    const isSubmarine = stats.type === SHIP_TYPE_SUBMARINE;
+
+    /** Rohre nach Einbaulage gruppieren — je Lage eine eigene Salve. */
+    const gruppen = new Map<TubePosition, Tube[]>();
+    for (const tube of tubes) {
+      if (tube.status !== 'geladen' || !tube.armed) continue;
+      const liste = gruppen.get(tube.position);
+      if (liste) liste.push(tube);
+      else gruppen.set(tube.position, [tube]);
+    }
+    if (gruppen.size === 0) return;
+
+    let gefeuert = false;
+    for (const [position, gruppe] of gruppen) {
+      // Richtung: U-Boot schießt starr in die Einbaurichtung, das
+      // Überwasserschiff auf die gezielte Peilung — sofern sie zur Seite passt.
+      let richtung = tubeBearing(position, own.rotation);
+      if (!isSubmarine) {
+        if (!isFiniteNumber(bearing)) continue;
+        const abweichung = Math.abs(angleDelta(richtung, bearing));
+        if (abweichung > SIDE_LAUNCH_HALF_ANGLE_DEG + SECTOR_TOLERANCE_DEG) continue;
+        richtung = bearing;
+      }
+
+      const laengs = position === 'bug' || position === 'heck';
+      this.world.fireTorpedoSalvo(own, richtung, gruppe.length, laengs);
+      for (const tube of gruppe) {
+        tube.status = 'leer';
+        tube.armed = false;
+        tube.remaining = 0;
+      }
+      gefeuert = true;
+    }
+
+    if (gefeuert) this.sendOwn(socket, own);
+  }
+
+  /** Lädt laufende Rohre weiter. Läuft mit dem Simulationstakt. */
+  private updateTubes(deltaSeconds: number): void {
+    for (const [accountId, tubes] of this.tubes) {
+      let fertig = false;
+      for (const tube of tubes) {
+        if (tube.status !== 'laedt') continue;
+        tube.remaining -= deltaSeconds;
+        if (tube.remaining > 0) continue;
+        tube.remaining = 0;
+        tube.status = 'geladen';
+        fertig = true;
+      }
+      // Nur das FERTIGWERDEN meldet sich sofort; der laufende Ladebalken
+      // steckt in der ownSignature und läuft über den normalen Vergleich.
+      if (!fertig) continue;
+      const socket = this.sockets.get(accountId);
+      const own = this.world.get(accountId);
+      if (socket && own) this.sendOwn(socket, own);
+    }
+  }
+
+  /** Rohr-Zustände für das `own`-Ereignis. */
+  private tubeStates(accountId: string): TubeState[] {
+    const tubes = this.tubes.get(accountId) ?? [];
+    return tubes.map((tube) => ({
+      position: tube.position,
+      status: tube.status,
+      progress:
+        tube.status === 'laedt' ? 1 - Math.min(tube.remaining / TUBE.reloadSeconds, 1) : 0,
+      armed: tube.armed,
+    }));
+  }
+
+  /**
+   * Rohre neu bestücken. Ein Boot läuft mit vollen Rohren aus — der Vorrat
+   * bleibt davon unberührt, das ist die Grundausstattung.
+   */
+  private resetTubes(accountId: string, model: VesselModel): void {
+    const layout = tubeLayoutFor(model);
+    this.tubes.set(
+      accountId,
+      layout.map((position) => ({ position, status: 'geladen', remaining: 0, armed: false })),
+    );
   }
 
   /** Volle Munition und offene Rohre — Spawn, Respawn, Modellwechsel. */
@@ -423,6 +641,7 @@ export class GameServer {
         geschuetz: ammo?.geschuetz ?? 0,
         wasserbombe: ammo?.wasserbombe ?? 0,
       },
+      tubes: this.tubeStates(accountId),
       serial: vessel.serial,
     });
   }
@@ -448,6 +667,7 @@ export class GameServer {
       const events = this.world.update(SIM_STEP_SECONDS);
       this.handleCombatEvents(events);
       this.updateRespawns(SIM_STEP_SECONDS);
+      this.updateTubes(SIM_STEP_SECONDS);
       this.accumulator -= SIM_STEP_SECONDS;
       this.tick += 1;
       steps += 1;
@@ -507,6 +727,7 @@ export class GameServer {
 
       const vessel = this.world.spawn(accountId, socket.data.name, pending.model);
       this.refillAmmo(accountId);
+      this.resetTubes(accountId, pending.model);
       this.sendOwn(socket, vessel);
     }
   }
@@ -522,7 +743,11 @@ export class GameServer {
       if (!observer) continue;
       const dx = x - observer.x;
       const dy = y - observer.y;
-      const range = observer.sensorRange;
+      // Dieselbe gedämpfte Reichweite wie Fahrzeug- und Projektilfilter. Mit
+      // dem rohen Basiswert kämen bei Seegang Explosionen samt Koordinaten für
+      // Gefechte durch, die das eigene Sonar gar nicht sieht — genau die
+      // Aufklärung, die die Filterung verhindern soll.
+      const range = this.sensorRangeFor(observer);
       if (dx * dx + dy * dy <= range * range) socket.emit('fx', { kind, x, y });
     }
   }
@@ -565,7 +790,7 @@ export class GameServer {
 
       // Projektile durch denselben Sonar-Filter — ohne Hysterese: sie laufen
       // mit ~68 m/s, ein Flackern an der Reichweitengrenze dauert Sekundenbruchteile.
-      const range = observer.sensorRange;
+      const range = this.sensorRangeFor(observer);
       const visible = projectiles.filter((p) => {
         const dx = p.x - observer.x;
         const dy = p.y - observer.y;
@@ -587,6 +812,26 @@ export class GameServer {
    * hoher Fahrt, Tauchtiefe, Thermalschichten — gehören HIER hinein, damit
    * Netzverkehr und Sonaranzeige zwangsläufig dieselbe Wahrheit zeigen.
    */
+  /**
+   * Wirksame Sonarreichweite eines Beobachters unter dem Seegang dieser Karte.
+   * Wird an DREI Stellen gebraucht (Fahrzeug-, Projektil- und fx-Filter) —
+   * deshalb ein Helfer statt dreimal derselben Rechnung. Wer eine vierte
+   * Filterstelle baut, nimmt bitte auch diese hier.
+   */
+  /**
+   * Die Wetterlage mit FORTGESCHRIEBENER Tageszeit. Steht die Uhr
+   * (`dayLengthMinutes` 0), ist das die gespeicherte Lage unverändert.
+   */
+  private currentWeather(): WeatherState {
+    if (this.weather.dayLengthMinutes <= 0) return this.weather;
+    const verstrichen = Number(process.hrtime.bigint() - this.weatherSetAt) / 1e9;
+    return { ...this.weather, timeOfDay: currentHour(this.weather, verstrichen) };
+  }
+
+  private sensorRangeFor(observer: Vessel): number {
+    return effectiveSensorRange(observer.sensorRange, this.weather.seaState, observer.depth);
+  }
+
   private updateDetection(accountId: string, observer: Vessel): Set<string> {
     let held = this.detected.get(accountId);
     if (!held) {
@@ -594,8 +839,12 @@ export class GameServer {
       this.detected.set(accountId, held);
     }
 
-    const acquire = observer.sensorRange;
-    const release = observer.sensorRange * ORTUNG_HYSTERESE;
+    // Seegang frisst Ortung: Wellenlärm an der Oberfläche kürzt die
+    // Reichweite. Wer getaucht horcht, ist davon kaum betroffen — das ist der
+    // Grund, warum schwere See dem U-Boot in die Hände spielt.
+    const reichweite = this.sensorRangeFor(observer);
+    const acquire = reichweite;
+    const release = reichweite * ORTUNG_HYSTERESE;
 
     for (const vessel of this.world.all()) {
       if (vessel.id === accountId) {
@@ -640,7 +889,12 @@ export class GameServer {
       `${vessel.serial}:${vessel.telegraphStep}:${vessel.waypoint ? 'z' : '-'}:` +
       `${vessel.diveTarget ? 't' : 'o'}:${vessel.periscopeTarget ? 'p' : '-'}:` +
       `${this.world.hp(accountId)}:${ammo?.torpedo ?? 0}:${ammo?.taeuschkoerper ?? 0}:` +
-      `${ammo?.geschuetz ?? 0}:${ammo?.wasserbombe ?? 0}`
+      `${ammo?.geschuetz ?? 0}:${ammo?.wasserbombe ?? 0}:` +
+      // Rohre mit: der Ladebalken läuft, und ohne ihn in der Signatur bliebe
+      // die Anzeige beim Ladevorgang stehen.
+      (this.tubes.get(accountId) ?? [])
+        .map((t) => `${t.status[0]}${t.armed ? 'S' : '-'}${Math.round(t.remaining * 4)}`)
+        .join(',')
     );
   }
 
