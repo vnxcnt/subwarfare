@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   adoptToken,
@@ -7,6 +7,7 @@ import {
   discordLoginUrl,
   loadAuthMethods,
   loginDev,
+  loginGoogle,
   restoreSession,
 } from '../state/auth';
 
@@ -16,11 +17,84 @@ const busy = ref(false);
 const error = ref<string | null>(null);
 
 /**
- * Im Produkt ist Discord der einzige Anmeldeweg. Der Entwickler-Zugang
- * existiert ausschließlich im Dev-Build — Vite ersetzt die Konstante zur
- * Bauzeit, im Produktionsbundle fällt der ganze Zweig weg.
+ * Der Entwickler-Zugang existiert ausschließlich im Dev-Build — Vite ersetzt
+ * die Konstante zur Bauzeit, im Produktionsbundle fällt der ganze Zweig weg.
  */
 const IS_DEV_BUILD: boolean = import.meta.env.DEV;
+
+/* --- Google-Login (GIS-Button) ------------------------------------------ */
+
+/**
+ * Die Client-ID ist BAUZEIT-Konfiguration (Vite), ob Google aktiv ist, sagt
+ * der SERVER (/auth/methods) — der Button erscheint nur, wenn beides passt.
+ * Die ID ist nicht geheim; geprüft wird das ID-Token server-seitig.
+ */
+const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '';
+
+/** Minimale Sicht auf das GIS-Skript — offizielle Typen lohnen sich nicht. */
+interface GisId {
+  initialize(config: { client_id: string; callback: (r: { credential: string }) => void }): void;
+  renderButton(parent: HTMLElement, options: Record<string, unknown>): void;
+}
+
+const googleSlot = ref<HTMLElement | null>(null);
+let googleReady = false;
+
+function gis(): GisId | null {
+  return (
+    (window as { google?: { accounts?: { id?: GisId } } }).google?.accounts?.id ?? null
+  );
+}
+
+/**
+ * Lädt das GIS-Skript erst, wenn der Server Google anbietet — wer nur Discord
+ * fährt, lädt keinen Google-Code. Danach den Button in den Slot rendern.
+ */
+function mountGoogleButton(): void {
+  if (googleReady || !GOOGLE_CLIENT_ID || !authMethods.value?.google || !googleSlot.value) return;
+
+  const render = (): void => {
+    const id = gis();
+    const slot = googleSlot.value;
+    if (!id || !slot) return;
+    googleReady = true;
+    id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential });
+    // Breite passend zum Discord-Knopf; Theme hell, damit er auf dem dunklen
+    // Panel als Fremd-Login heraussticht (wie Discords Blurple).
+    id.renderButton(slot, { theme: 'outline', size: 'large', text: 'signin_with', width: 320 });
+  };
+
+  if (gis()) {
+    render();
+    return;
+  }
+  const script = document.createElement('script');
+  script.src = 'https://accounts.google.com/gsi/client';
+  script.async = true;
+  script.onload = render;
+  document.head.appendChild(script);
+}
+
+/** Rücklauf des GIS-Buttons: das ID-Token geht zur Prüfung an unseren Server. */
+function onGoogleCredential(response: { credential: string }): void {
+  void (async () => {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = null;
+    const failure = await loginGoogle(response.credential);
+    busy.value = false;
+    if (failure) {
+      error.value = failure;
+      return;
+    }
+    await router.replace({ name: 'menu' });
+  })();
+}
+
+// /auth/methods kommt asynchron — sobald Google gemeldet ist, Button bauen.
+// flush: 'post', weil der Slot selbst per v-if an den methods hängt und erst
+// NACH dem DOM-Update existiert.
+watch(authMethods, () => mountGoogleButton(), { flush: 'post' });
 
 /**
  * Rücklauf des Discord-Logins: Token oder Fehler stehen im URL-Fragment.
@@ -88,6 +162,14 @@ onMounted(() => {
         </svg>
         Mit Discord anmelden
       </a>
+
+      <!-- Google (GIS-Button): erscheint nur, wenn der Server Google anbietet
+           UND der Build eine Client-ID trägt — der Slot wird von GIS gefüllt. -->
+      <template v-if="authMethods?.google && GOOGLE_CLIENT_ID">
+        <div v-if="authMethods?.discord" class="login__divider login__divider--gap"><span>oder</span></div>
+        <div ref="googleSlot" class="login__google"></div>
+      </template>
+
       <!--
         Entwickler-Zugang NUR im Dev-Build (Vite ersetzt import.meta.env.DEV
         zur Bauzeit — im Produktionsbundle existiert dieser Zweig nicht).
@@ -95,7 +177,7 @@ onMounted(() => {
         der Server lehnt ihn produktiv ohnehin ab (AUTH_DEV=0).
       -->
       <template v-if="IS_DEV_BUILD && authMethods?.dev">
-        <div v-if="authMethods?.discord" class="login__divider login__divider--gap"><span>oder</span></div>
+        <div v-if="authMethods?.discord || authMethods?.google" class="login__divider login__divider--gap"><span>oder</span></div>
         <form class="login__form" @submit.prevent="submitDev">
           <label class="login__label" for="login-name">Entwickler-Zugang (nur Dev-Build)</label>
           <input
@@ -115,7 +197,7 @@ onMounted(() => {
         </form>
       </template>
 
-      <p v-if="authMethods && !authMethods.discord" class="hud__empty">
+      <p v-if="authMethods && !authMethods.discord && !authMethods.google" class="hud__empty">
         Die Anmeldung ist derzeit nicht verfügbar.
       </p>
 
@@ -191,6 +273,14 @@ onMounted(() => {
 .login__discord-mark {
   width: 1.1rem;
   height: auto;
+}
+
+/* Der GIS-Button bringt sein eigenes Aussehen mit — hier nur zentrieren und
+   Platz reservieren, damit das Panel beim Nachladen nicht springt. */
+.login__google {
+  display: flex;
+  justify-content: center;
+  min-height: 44px;
 }
 
 .login__divider--gap {
