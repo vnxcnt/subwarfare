@@ -18,19 +18,19 @@ unpassenden Ränder in die Mitte wandern) und die entstandene Naht dort mit
 einem ANDEREN Ausschnitt derselben Vorlage überblendet. Danach ist die Kachel
 nahtlos und sieht immer noch aus wie das Original.
 
-Ausgabe ist EINE Datei `ocean_detail.webp`, RGB:
-  R = Höhe        (das Wellenfeld)
-  G = Schaummaske (die Adern)
-  B = frei
+Ausgabe ist EINE Datei `ocean_water.webp`: die Vorlage in FARBE, nur nahtlos
+gemacht. Genau so, wie sie ist — mit ihren Wellen, ihren Schaumkronen und ihrem
+Blau. Der Shader zeigt sie an und verzerrt sie; er rechnet sie nicht nach.
 
-Die NEIGUNG steckt bewusst nicht mit drin, obwohl sie in den Shader muss: als
-verlustfreie Normalmap kostete sie 635 KB, abgeleitet aus der Höhe kostet sie
-zwei zusätzliche Texturabtastungen pro Pixel und nichts an Ladezeit.
+⚠️ FARBE BEHALTEN, das ist der ganze Punkt. Eine frühere Fassung zog aus der
+Vorlage ein Höhenfeld und eine Schaummaske und ließ den Shader daraus alles neu
+beleuchten. Ergebnis: auf dem Bildschirm stand der Shader, nicht die Vorlage —
+die Farbe war weg, die Beleuchtung herausgerechnet, und vier gedrehte Lagen
+übereinander zerstörten den Rest der Wiedererkennbarkeit. Wer das hier wieder
+in Graustufen zerlegt, bekommt dasselbe Ergebnis.
 
-⚠️ RGB und NICHT RGBA: WebP räumt die Farbkanäle dort auf, wo Alpha 0 ist. Als
-die Schaummaske noch im Alphakanal lag — zu 86 % 0 —, standen R, G und B auf
-ebenso vielen Pixeln exakt auf null, und Höhenfeld wie Normalen waren weg.
-Daten gehören nie in den Alphakanal.
+⚠️ RGB und NICHT RGBA: WebP räumt die Farbkanäle dort auf, wo Alpha 0 ist —
+Daten oder Farbe unter transparenten Pixeln sind verloren.
 
 ⚠️ Kantenlänge MUSS eine Zweierpotenz sein. Pixi 8 fällt bei fehlendem WebGL2
 auf WebGL1 zurück, und dort erlaubt der Wiederholmodus nur Zweierpotenzen —
@@ -52,7 +52,7 @@ ZIEL = os.path.join(os.path.dirname(__file__), "..", "apps", "client", "src", "a
 
 def felder_aus_mosaik(bild: np.ndarray) -> list[np.ndarray]:
     """
-    Zerlegt ein Blatt mit hellen Trennlinien in seine Felder.
+    Zerlegt ein Blatt mit hellen Trennlinien in seine Felder — in FARBE.
 
     Erzeugte „Kachelblätter" haben oft ein eingezeichnetes Raster. Die Linien
     müssen weg, sonst landen sie als heller Balken in der fertigen Textur.
@@ -91,14 +91,14 @@ def felder_aus_mosaik(bild: np.ndarray) -> list[np.ndarray]:
     # Ein paar Pixel Sicherheitsabstand zur Linie — sie franst weich aus.
     rand = 3
     return [
-        grau[z + rand : z + k - rand, s + rand : s + k - rand]
+        bild[z + rand : z + k - rand, s + rand : s + k - rand]
         for z, _ in zeilen
         for s, _ in spalten
     ]
 
 
 def auf_groesse(feld: np.ndarray, n: int) -> np.ndarray:
-    bild = Image.fromarray(np.clip(feld, 0, 255).astype(np.uint8), "L")
+    bild = Image.fromarray(np.clip(feld, 0, 255).astype(np.uint8), "RGB")
     return np.asarray(bild.resize((n, n), Image.LANCZOS), dtype=np.float64)
 
 
@@ -121,16 +121,19 @@ def nahtlos_machen(feld: np.ndarray, partner: np.ndarray) -> np.ndarray:
     d = np.minimum(np.abs(achse - n // 2), breite)
     keil = 1.0 - d / breite
     keil = keil * keil * (3 - 2 * keil)
-    maske = np.maximum(keil[:, None], keil[None, :])
+    maske = np.maximum(keil[:, None], keil[None, :])[..., None]
     return versetzt * (1 - maske) + fremd * maske
 
 
 def gauss_periodisch(feld: np.ndarray, sigma: float) -> np.ndarray:
-    """Weichzeichnen mit UMLAUF — zerstört die Kachelbarkeit nicht."""
+    """Weichzeichnen mit UMLAUF, kanalweise — zerstört die Kachelbarkeit nicht."""
     n = feld.shape[0]
     k = np.hypot(np.fft.fftfreq(n)[None, :], np.fft.fftfreq(n)[:, None])
     kern = np.exp(-2.0 * (np.pi * sigma * k) ** 2)
-    return np.real(np.fft.ifft2(np.fft.fft2(feld) * kern))
+    aus = np.empty_like(feld)
+    for c in range(feld.shape[2]):
+        aus[..., c] = np.real(np.fft.ifft2(np.fft.fft2(feld[..., c]) * kern))
+    return aus
 
 
 def naht_rang(f: np.ndarray, achse: int) -> float:
@@ -159,9 +162,9 @@ def speichern(name: str, kanaele: np.ndarray, modus: str) -> None:
 
 
 def name_aus(quelle: str) -> str:
-    """Zielname: `ocean_detail.webp`, oder mit Zusatz beim Vergleichslauf."""
+    """Zielname: `ocean_water.webp`, oder mit Zusatz beim Vergleichslauf."""
     zusatz = os.environ.get("KACHEL_NAME")
-    return f"ocean_detail_{zusatz}.webp" if zusatz else "ocean_detail.webp"
+    return f"ocean_water_{zusatz}.webp" if zusatz else "ocean_water.webp"
 
 
 def main() -> None:
@@ -183,28 +186,19 @@ def main() -> None:
 
     kachel = nahtlos_machen(haupt, partner)
 
-    # Beleuchtungsverlauf herausrechnen: Vorlagen haben fast immer eine
-    # großflächige Aufhellung. Gekachelt wäre die als regelmäßiges Muster
-    # sichtbar. NUR die gröbste Lage abziehen (sigma = n/6) — mehr nicht:
-    # die Wellenschattierung selbst sitzt knapp darunter, und wer zu viel
-    # abzieht, behält nur die Schaumadern und damit ein Rissnetz.
-    verlauf = gauss_periodisch(kachel, sigma=n / 6.0)
-    flach = kachel - verlauf
+    # Beleuchtungsverlauf ausgleichen: Vorlagen haben fast immer eine
+    # großflächige Aufhellung; gekachelt wäre die als regelmäßiges Muster
+    # sichtbar. NUR die gröbste Lage (sigma = n/5) gegen den Bildmittelwert
+    # tauschen — die Wellenschattierung sitzt knapp darunter und muss bleiben.
+    verlauf = gauss_periodisch(kachel, sigma=n / 5.0)
+    mittel = kachel.reshape(-1, kachel.shape[2]).mean(axis=0)
+    ausgeglichen = np.clip(kachel - verlauf + mittel, 0, 255)
 
-    streuung = flach.std()
-    hoehe = np.clip(flach / max(streuung, 1e-6) * 0.22 + 0.5, 0, 1)
-
-    # Schaum: die obersten Helligkeiten der NAHTLOSEN Kachel — hier darf nichts
-    # gefiltert werden, die Adern sind das Wertvolle an der Vorlage.
-    p88, p998 = np.percentile(kachel, 88), np.percentile(kachel, 99.8)
-    schaum = np.clip((kachel - p88) / max(p998 - p88, 1e-6), 0, 1) ** 1.2
-
-    struktur = np.stack([hoehe, schaum, np.zeros_like(hoehe)], axis=-1)
-    speichern(name_aus(quelle), struktur, "RGB")
+    speichern(name_aus(quelle), ausgeglichen / 255.0, "RGB")
 
     print("Nahtprüfung (100 % = Bruch, alles darunter unauffällig):")
-    for bez, f in (("Höhe", hoehe), ("Schaum", schaum)):
-        print(f"  {bez:<8} l/r {naht_rang(f, 1):5.0f}%   o/u {naht_rang(f, 0):5.0f}%")
+    grau = ausgeglichen.mean(axis=2)
+    print(f"  Farbe    l/r {naht_rang(grau, 1):5.0f}%   o/u {naht_rang(grau, 0):5.0f}%")
     print(f"Ziel: {os.path.abspath(ZIEL)}\n")
 
 

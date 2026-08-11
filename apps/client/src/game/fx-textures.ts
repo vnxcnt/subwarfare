@@ -2,7 +2,7 @@ import { Assets, Rectangle, Texture } from 'pixi.js';
 
 import explosionUrl from '../assets/fx/explosion_sheet.webp';
 import foamUrl from '../assets/fx/foam_puff.webp';
-import oceanDetailUrl from '../assets/fx/ocean_detail.webp';
+import oceanWaterUrl from '../assets/fx/ocean_water.webp';
 import smokeUrl from '../assets/fx/smoke_puff.webp';
 import splashUrl from '../assets/fx/splash_sheet.webp';
 
@@ -22,7 +22,7 @@ const BILDER = 25;
 
 let foam: Texture | null = null;
 let smoke: Texture | null = null;
-let oceanDetail: Texture | null = null;
+let oceanWater: Texture | null = null;
 let splash: Texture[] = [];
 let explosion: Texture[] = [];
 
@@ -53,7 +53,7 @@ export async function loadFxTextures(): Promise<void> {
   const [f, s, ozean, sp, ex] = await Promise.all([
     Assets.load<Texture>({ src: foamUrl, data: { autoGenerateMipmaps: true } }),
     Assets.load<Texture>({ src: smokeUrl, data: { autoGenerateMipmaps: true } }),
-    Assets.load<Texture>({ src: oceanDetailUrl, data: { autoGenerateMipmaps: true } }),
+    Assets.load<Texture>({ src: oceanWaterUrl, data: { autoGenerateMipmaps: true } }),
     zerlegen(splashUrl),
     zerlegen(explosionUrl),
   ]);
@@ -63,17 +63,18 @@ export async function loadFxTextures(): Promise<void> {
   ozean.source.style.addressMode = 'repeat';
   foam = f;
   smoke = s;
-  oceanDetail = ozean;
+  oceanWater = ozean;
   splash = sp;
   explosion = ex;
 }
 
 /**
- * Detailkachel der Wasseroberfläche: R = Höhe, G = Schaummaske.
- * Erzeugt von `tools/ocean-texture.py` aus einer Wasser-Vorlage.
+ * Die Wasseroberfläche als kachelnde FARBAUFNAHME — erzeugt von
+ * `tools/ocean-texture.py`. Der Ozean-Shader zeigt sie an und verzerrt sie;
+ * Wellen, Kämme und Schaum stecken bereits im Bild.
  */
-export function oceanDetailTexture(): Texture | null {
-  return oceanDetail;
+export function oceanWaterTexture(): Texture | null {
+  return oceanWater;
 }
 
 /** Schaumbatzen für Kielwasser und Gischt. Null, solange nicht geladen. */
