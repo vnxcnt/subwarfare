@@ -165,6 +165,12 @@ export class MySqlAccountStore implements AccountStore {
     await this.pool.execute('UPDATE accounts SET coins = coins + ? WHERE id = ?', [amount, id]);
   }
 
+  async deleteAccount(id: string): Promise<void> {
+    // dev_accounts, account_items und ship_loadouts hängen mit ON DELETE
+    // CASCADE am Konto — eine Anweisung räumt alles.
+    await this.pool.execute('DELETE FROM accounts WHERE id = ?', [id]);
+  }
+
   async close(): Promise<void> {
     await closePool();
   }

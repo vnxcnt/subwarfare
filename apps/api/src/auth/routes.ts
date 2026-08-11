@@ -1,6 +1,7 @@
 import type { AuthResponse } from '@subwarfare/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AccountStore } from '../accounts/store.js';
+import type { InventoryStore } from '../economy/store.js';
 import { sanitizeDisplayName, toProfile } from '../accounts/store.js';
 import { env } from '../env.js';
 import { discordAuthorizeUrl, discordEnabled, redeemDiscordCode } from './discord.js';
@@ -25,7 +26,11 @@ export async function accountFromRequest(
   return accounts.byId(claims.sub);
 }
 
-export function registerAuthRoutes(app: FastifyInstance, accounts: AccountStore): void {
+export function registerAuthRoutes(
+  app: FastifyInstance,
+  accounts: AccountStore,
+  inventory: InventoryStore,
+): void {
   /** Welche Anmeldewege dieser Server anbietet — der Client richtet sich danach. */
   app.get('/auth/methods', async () => ({
     google: googleEnabled(),
@@ -113,5 +118,25 @@ export function registerAuthRoutes(app: FastifyInstance, accounts: AccountStore)
     const account = await accountFromRequest(request, accounts);
     if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
     return toProfile(account);
+  });
+
+  /**
+   * Endgültige Konto-Löschung durch den Spieler selbst.
+   *
+   * Die Bestätigung ist Sache des Clients — hier zählt nur das gültige
+   * Sitzungs-Token: wer es besitzt, IST der Kontoinhaber. Mitgelöscht wird
+   * alles Abhängige (CASCADE); das noch umlaufende Sitzungs-Token wird damit
+   * wertlos, weil jede Prüfung das Konto nicht mehr findet.
+   */
+  app.delete('/account', async (request, reply) => {
+    const account = await accountFromRequest(request, accounts);
+    if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
+    await accounts.deleteAccount(account.id);
+    // Besitz und Ausrüstung miträumen — in MariaDB ein No-op (CASCADE), im
+    // Speicher-Betrieb hingegen Pflicht, sonst erbte ein neues Konto mit
+    // zufällig gleicher ID nichts, aber die Maps wüchsen endlos.
+    await inventory.purge(account.id);
+    console.log(`[api] Konto ${account.id} (${account.displayName}) auf Wunsch gelöscht.`);
+    return { ok: true };
   });
 }

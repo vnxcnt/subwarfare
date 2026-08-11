@@ -45,8 +45,14 @@ const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
 
 // Auf dem VPS liefert Caddy Client und Backend unter derselben Herkunft aus,
 // dann greift CORS gar nicht. Lokal laufen sie auf getrennten Ports und
-// brauchen es.
-await app.register(cors, { origin: env.corsOrigin, credentials: true });
+// brauchen es. DELETE muss EXPLIZIT erlaubt werden — der Plugin-Default
+// deckt nur GET/HEAD/POST, und der Preflight der Konto-Löschung scheiterte
+// lokal genau daran.
+await app.register(cors, {
+  origin: env.corsOrigin,
+  credentials: true,
+  methods: ['GET', 'HEAD', 'POST', 'DELETE'],
+});
 
 // Alles unter /api: auf dem VPS reicht dem Reverse-Proxy dann EINE Regel, und
 // die HTTP-Routen liegen im selben Namensraum wie der Lobby-Socket-Pfad
@@ -54,7 +60,7 @@ await app.register(cors, { origin: env.corsOrigin, credentials: true });
 await app.register(
   async (scope) => {
     scope.get('/health', async () => ({ ok: true }));
-    registerAuthRoutes(scope, accounts);
+    registerAuthRoutes(scope, accounts, inventory);
     registerEconomyRoutes(scope, accounts, inventory);
 
     // Interner Kanal für den Spielserver — derselbe Schlüssel wie dessen

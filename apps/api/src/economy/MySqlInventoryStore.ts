@@ -90,4 +90,9 @@ export class MySqlInventoryStore implements InventoryStore {
       connection.release();
     }
   }
+
+  async purge(): Promise<void> {
+    // Nichts zu tun: account_items und ship_loadouts hängen mit ON DELETE
+    // CASCADE am Konto — die Löschung der accounts-Zeile räumt beide mit.
+  }
 }

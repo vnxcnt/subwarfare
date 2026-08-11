@@ -6,6 +6,7 @@ import DevMenu from './DevMenu.vue';
 import DivePanel from './DivePanel.vue';
 import PeriscopePanel from './PeriscopePanel.vue';
 import QuestLog from './QuestLog.vue';
+import SettingsPanel from './SettingsPanel.vue';
 import SonarPanel from './SonarPanel.vue';
 import StatusBar from './StatusBar.vue';
 import TelegraphPanel from './TelegraphPanel.vue';
@@ -14,6 +15,7 @@ import { isTextEntry } from './dom';
 defineProps<{ error?: string | null }>();
 
 const devMenu = ref<InstanceType<typeof DevMenu> | null>(null);
+const settingsOpen = ref(false);
 
 /**
  * Das Browser-Kontextmenü wird bisher nur auf dem Canvas unterdrückt
@@ -43,9 +45,11 @@ function suppressContextMenu(event: MouseEvent): void {
       sonst könnte ihr Hintergrund nicht bis an die Kanten reichen.
     -->
     <div class="hud-root__top">
-      <StatusBar @toggle-dev="devMenu?.toggle()" />
+      <StatusBar @toggle-dev="devMenu?.toggle()" @toggle-settings="settingsOpen = !settingsOpen" />
       <div class="hud-root__strip"></div>
     </div>
+
+    <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
 
     <div class="hud-root__middle">
       <QuestLog />

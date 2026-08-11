@@ -97,6 +97,19 @@ export class MemoryAccountStore implements AccountStore {
     if (account) account.coins += amount;
   }
 
+  async deleteAccount(id: string): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (!account) return;
+    this.byIdMap.delete(id);
+    // Auch die Rückwärts-Verweise räumen — sonst zeigte der nächste Login mit
+    // derselben Identität auf ein Konto, das nicht mehr existiert.
+    if (account.googleSub) this.byGoogle.delete(account.googleSub);
+    if (account.discordId) this.byDiscord.delete(account.discordId);
+    for (const [key, accountId] of this.byDevName) {
+      if (accountId === id) this.byDevName.delete(key);
+    }
+  }
+
   async close(): Promise<void> {
     // Nichts zu schließen.
   }

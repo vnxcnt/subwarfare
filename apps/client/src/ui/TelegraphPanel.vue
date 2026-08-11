@@ -3,6 +3,7 @@ import { TELEGRAPH_STANDARD } from '@subwarfare/shared';
 import { computed, onBeforeUnmount, onMounted } from 'vue';
 import { KNOTS } from '../config';
 import { hud, nudgeTelegraph, orderTelegraph } from '../state/hud';
+import { keys, settingsModalOpen } from '../state/settings';
 import { isTextEntry } from './dom';
 
 /** Von unten nach oben anzeigen: Volle Kraft oben, Zurück unten. */
@@ -28,13 +29,17 @@ function onWheel(event: WheelEvent): void {
 }
 
 function onKey(event: KeyboardEvent): void {
-  if (isTextEntry(event.target)) return;
+  if (isTextEntry(event.target) || settingsModalOpen.value) return;
 
-  const key = event.key.toLowerCase();
-  if (key === 'w') nudgeTelegraph(event.shiftKey ? TELEGRAPH_STANDARD.length : 1);
-  else if (key === 's') nudgeTelegraph(event.shiftKey ? -TELEGRAPH_STANDARD.length : -1);
-  else if (key === 'x') orderTelegraph(3);
-  else return;
+  // Belegung aus den Einstellungen — `code` statt `key`, damit die Bindung an
+  // der physischen Taste hängt und Shift die Bedeutung nicht verändert.
+  if (event.code === keys.value.telegraphUp) {
+    nudgeTelegraph(event.shiftKey ? TELEGRAPH_STANDARD.length : 1);
+  } else if (event.code === keys.value.telegraphDown) {
+    nudgeTelegraph(event.shiftKey ? -TELEGRAPH_STANDARD.length : -1);
+  } else if (event.code === keys.value.telegraphStop) {
+    orderTelegraph(3);
+  } else return;
 
   event.preventDefault();
 }

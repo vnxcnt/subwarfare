@@ -139,3 +139,25 @@ export function logout(): void {
   storeToken(null);
   account.value = null;
 }
+
+/**
+ * Löscht das Konto endgültig auf dem Server und meldet lokal ab.
+ * Liefert null bei Erfolg, sonst die Fehlermeldung — die BESTÄTIGUNG davor
+ * ist Sache der Oberfläche, hier wird nur noch ausgeführt.
+ */
+export async function deleteAccount(): Promise<string | null> {
+  try {
+    const response = await api('/account', { method: 'DELETE' });
+    // 401 heißt hier: das Konto existiert bereits nicht mehr (z. B. in einem
+    // zweiten Tab gelöscht). Das GEWÜNSCHTE Ergebnis ist eingetreten — lokal
+    // abmelden statt eine verwirrende Fehlermeldung zu zeigen.
+    if (!response.ok && response.status !== 401) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      return body?.error ?? `Löschen fehlgeschlagen (HTTP ${response.status}).`;
+    }
+    logout();
+    return null;
+  } catch {
+    return 'Server ist nicht erreichbar.';
+  }
+}

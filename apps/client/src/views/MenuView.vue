@@ -13,7 +13,7 @@ import {
   itemById,
   progressionFromXp,
 } from '@subwarfare/shared';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import menuMusicUrl from '../assets/audio/mainmenu.mp3';
 import { API_URL, account, logout, restoreSession } from '../state/auth';
@@ -34,9 +34,14 @@ import {
   queuePosition,
   queueState,
 } from '../state/lobby';
+import { itemIconUrl } from '../ui/itemIcons';
 import { rankIconUrl } from '../ui/rankIcons';
+import SettingsPanel from '../ui/SettingsPanel.vue';
+import { volumes } from '../state/settings';
 
 const router = useRouter();
+
+const settingsOpen = ref(false);
 
 /**
  * Wählbare Karten. Solange es genau eine gibt, ist das eine Liste mit einem
@@ -44,7 +49,7 @@ const router = useRouter();
  * KNOWN_MAPS des Backends passen, sonst antwortet die Lobby „Unbekannte Karte".
  */
 const MAPS = [
-  { id: 'ocean01', label: 'Ocean 01', detail: '10 × 10 km · offene See' },
+  { id: 'ocean01', label: 'Nordatlantik', detail: '10 × 10 km · offene See' },
 ] as const;
 
 const selectedMap = ref<string>(MAPS[0].id);
@@ -206,10 +211,15 @@ function signOut(): void {
 /**
  * Dezent untergemischt: 0,15 ist Kulisse, kein Vordergrund. Eingeblendet wird
  * über eine Sekunde — ein harter Einsatz bei voller Ziellautstärke wirkt wie
- * ein Fehler, nicht wie Musik.
+ * ein Fehler, nicht wie Musik. Der Ambient-Regler aus den Einstellungen
+ * skaliert das Ziel; `watch` unten zieht ihn live nach.
  */
 const MUSIC_VOLUME = 0.15;
 const FADE_SECONDS = 1;
+
+function musicTarget(): number {
+  return MUSIC_VOLUME * volumes.value.ambient;
+}
 
 let music: HTMLAudioElement | null = null;
 let fadeTimer: number | null = null;
@@ -220,13 +230,22 @@ function fadeIn(audio: HTMLAudioElement): void {
   const step = MUSIC_VOLUME / ((FADE_SECONDS * 1000) / stepMs);
   audio.volume = 0;
   fadeTimer = window.setInterval(() => {
-    audio.volume = Math.min(audio.volume + step, MUSIC_VOLUME);
-    if (audio.volume >= MUSIC_VOLUME && fadeTimer !== null) {
+    audio.volume = Math.min(audio.volume + step, musicTarget());
+    if (audio.volume >= musicTarget() && fadeTimer !== null) {
       clearInterval(fadeTimer);
       fadeTimer = null;
     }
   }, stepMs);
 }
+
+// Regler-Änderung wirkt sofort auf die laufende Musik (sofern nicht gerade
+// eingeblendet wird — die Blende endet ohnehin am neuen Ziel).
+watch(
+  () => volumes.value.ambient,
+  () => {
+    if (music && fadeTimer === null) music.volume = musicTarget();
+  },
+);
 
 function startMusic(): void {
   if (!music) return;
@@ -293,6 +312,15 @@ onBeforeUnmount(() => {
     <!-- Links: Wer bin ich, was habe ich — darunter die Perks. -->
     <div class="menu__col">
       <section class="gold-panel menu__panel menu__identity" aria-label="Konto">
+        <button
+          class="menu__settings"
+          type="button"
+          title="Einstellungen"
+          aria-label="Einstellungen"
+          @click="settingsOpen = true"
+        >
+          <span class="material-symbols-outlined">settings</span>
+        </button>
         <header class="menu__head">
           <img
             v-if="account?.avatarUrl"
@@ -519,6 +547,12 @@ onBeforeUnmount(() => {
         <template v-if="sideTab === 'inventar'">
           <ul v-if="ownedList.length > 0" class="menu__items">
             <li v-for="item in ownedList" :key="item.id" class="menu__item">
+              <img
+                v-if="itemIconUrl(item.id)"
+                class="menu__item-icon"
+                :src="itemIconUrl(item.id)!"
+                alt=""
+              />
               <span class="menu__item-name">{{ item.name }}</span>
               <span class="menu__item-qty hud__num">×{{ item.quantity }}</span>
             </li>
@@ -529,6 +563,12 @@ onBeforeUnmount(() => {
         <template v-else>
           <ul class="menu__items">
             <li v-for="item in shopItems" :key="item.id" class="menu__item menu__item--shop">
+              <img
+                v-if="itemIconUrl(item.id)"
+                class="menu__item-icon"
+                :src="itemIconUrl(item.id)!"
+                alt=""
+              />
               <span class="menu__item-name">{{ item.name }}</span>
               <span class="menu__item-price hud__num">
                 <img class="menu__coin menu__coin--small" src="../assets/ui/coin.png" alt="" />
@@ -548,6 +588,8 @@ onBeforeUnmount(() => {
         </template>
       </section>
     </div>
+
+    <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
   </div>
 </template>
 
@@ -555,7 +597,9 @@ onBeforeUnmount(() => {
 .menu {
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(320px, 1fr) minmax(260px, 320px);
+  /* Rechte Spalte bewusst breiter (+30 %): Inventar- und Shop-Zeilen tragen
+     Icon + Name + Preis + Knopf — in 320 px wurde das gequetscht. */
+  grid-template-columns: minmax(260px, 320px) minmax(320px, 1fr) minmax(340px, 420px);
   gap: 1rem;
   align-items: start;
   padding: 1.25rem;
@@ -602,10 +646,37 @@ onBeforeUnmount(() => {
 
 /* --- Identität ---------------------------------------------------------- */
 
+.menu__settings {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.75rem;
+  display: inline-flex;
+  padding: 0.15rem;
+  border: none;
+  background: none;
+  color: var(--gold);
+  opacity: 0.65;
+  cursor: pointer;
+}
+
+.menu__settings:hover {
+  opacity: 1;
+}
+
+.menu__settings .material-symbols-outlined {
+  font-size: 20px;
+}
+
 .menu__head {
   display: flex;
   align-items: center;
   gap: 0.8rem;
+  /* Platz fürs absolut sitzende Zahnrad — lange Namen liefen sonst darunter. */
+  padding-right: 2rem;
+}
+
+.menu__who {
+  min-width: 0;
 }
 
 .menu__avatar {
@@ -628,6 +699,8 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 1.05rem;
   letter-spacing: 0.06em;
+  /* Discord-Handles ohne Leerzeichen brechen sonst gar nicht um. */
+  overflow-wrap: anywhere;
 }
 
 .menu__meta {
@@ -1066,6 +1139,14 @@ onBeforeUnmount(() => {
   border: 1px solid var(--gold-border);
   background: rgb(0 0 0 / 20%);
   font-size: 0.8125rem;
+}
+
+.menu__item-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  image-rendering: -webkit-optimize-contrast;
 }
 
 .menu__item-name {

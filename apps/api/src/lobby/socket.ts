@@ -307,13 +307,23 @@ export class LobbyGateway {
     }
 
     // Rolle FRISCH aus dem Konto, nicht aus der Session — ein Entzug wirkt
-    // damit spaetestens beim naechsten Ticket.
+    // damit spaetestens beim naechsten Ticket. Fehlt das Konto ganz (zwischen
+    // Einreihen und Ticket gelöscht), gibt es KEIN Ticket: sonst spielte ein
+    // gelöschtes Konto mit dem Gratis-Schiff einfach weiter.
     const account = await this.accounts.byId(accountId);
+    if (!account) {
+      this.reservations.delete(accountId);
+      this.io
+        .of('/lobby')
+        .to(`account:${accountId}`)
+        .emit('queue:error', { message: 'Konto nicht gefunden.' });
+      return false;
+    }
     const ticket = await signTicket({
       sub: accountId,
       name,
       mapId,
-      role: account?.role ?? 0,
+      role: account.role,
       shipModel,
     });
 

@@ -1,4 +1,5 @@
 import { AUDIO } from '../config';
+import { volumes } from '../state/settings';
 
 import ambientUnderwaterUrl from '../assets/audio/ambient_underwater01.mp3';
 import ambientWaterUrl from '../assets/audio/ambient_water.mp3';
@@ -117,28 +118,35 @@ export class GameAudio {
     const depth = own ? Math.min(Math.max(own.depth, 0), 1) : 0;
     const power = own ? Math.min(Math.max(own.power, 0), 1) : 0;
 
-    this.setGain(this.ambientWater, AUDIO.ambientWater * (1 - depth));
-    this.setGain(this.ambientUnderwater, AUDIO.ambientUnderwater * depth);
-    this.setGain(this.engineShip, own && !own.submarine ? AUDIO.engineMax * power : 0);
-    this.setGain(this.engineSubmarine, own?.submarine ? AUDIO.engineMax * power : 0);
+    // Regler aus den Einstellungen: Kulisse und Motor/Effekte getrennt. Läuft
+    // jeden Frame durch dieselbe Gain-Glättung — Sliderziehen knackt nicht.
+    const ambient = volumes.value.ambient;
+    const effects = volumes.value.effects;
+    this.setGain(this.ambientWater, AUDIO.ambientWater * (1 - depth) * ambient);
+    this.setGain(this.ambientUnderwater, AUDIO.ambientUnderwater * depth * ambient);
+    this.setGain(this.engineShip, own && !own.submarine ? AUDIO.engineMax * power * effects : 0);
+    this.setGain(this.engineSubmarine, own?.submarine ? AUDIO.engineMax * power * effects : 0);
   }
 
   /** Torpedoabschuss — U-Boot und Überwasserschiff klingen verschieden. */
   playFire(fromSubmarine: boolean, distanceMetres: number): void {
     this.playOnce(
       fromSubmarine ? this.fireSubmarineBuffer : this.fireShipBuffer,
-      AUDIO.fire * falloff(distanceMetres),
+      AUDIO.fire * falloff(distanceMetres) * volumes.value.effects,
     );
   }
 
   /** Geschützschuss — kurzer Knall, gleiche Entfernungsdämpfung. */
   playGunFire(distanceMetres: number): void {
-    this.playOnce(this.fireGunBuffer, AUDIO.fire * falloff(distanceMetres));
+    this.playOnce(this.fireGunBuffer, AUDIO.fire * falloff(distanceMetres) * volumes.value.effects);
   }
 
   /** Torpedoeinschlag (auch Versenkung — die ist nur der letzte Einschlag). */
   playImpact(distanceMetres: number): void {
-    this.playOnce(this.impactBuffer, AUDIO.impact * falloff(distanceMetres));
+    this.playOnce(
+      this.impactBuffer,
+      AUDIO.impact * falloff(distanceMetres) * volumes.value.effects,
+    );
   }
 
   destroy(): void {

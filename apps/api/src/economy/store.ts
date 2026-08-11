@@ -25,6 +25,12 @@ export interface InventoryStore {
   ): Promise<void>;
   /** Kauf: Coins abziehen + 1 Stück gutschreiben. 'poor' = Guthaben reicht nicht. */
   purchase(accountId: string, itemId: ItemId, price: number): Promise<'ok' | 'poor'>;
+  /**
+   * Räumt Besitz und Zuordnungen eines Kontos — Teil der Konto-Löschung.
+   * In MariaDB erledigt das der CASCADE-Fremdschlüssel, dort ist es ein No-op;
+   * der Speicher-Betrieb hat keine Fremdschlüssel und muss selbst aufräumen.
+   */
+  purge(accountId: string): Promise<void>;
 }
 
 /** Speicher-Variante für die Entwicklung ohne Datenbank. */
@@ -80,5 +86,10 @@ export class MemoryInventoryStore implements InventoryStore {
     }
     map.set(itemId, (map.get(itemId) ?? 0) + 1);
     return 'ok';
+  }
+
+  async purge(accountId: string): Promise<void> {
+    this.owned.delete(accountId);
+    this.equipped.delete(accountId);
   }
 }

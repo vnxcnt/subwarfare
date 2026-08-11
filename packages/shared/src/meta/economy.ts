@@ -17,7 +17,12 @@ import type { VesselModel } from '../types/Player.js';
  * Kategorie an. ASCII-bewusst — die Kennungen landen in DB-Spalten und
  * Netz-Payloads.
  */
-export type ItemCategory = 'torpedo' | 'taeuschkoerper' | 'munition' | 'panzerung';
+export type ItemCategory =
+  | 'torpedo'
+  | 'wasserbombe'
+  | 'taeuschkoerper'
+  | 'munition'
+  | 'panzerung';
 
 export interface ItemDefinition {
   id: ItemId;
@@ -45,6 +50,7 @@ export const ITEMS = [
   { id: 'torpedo_mk3', name: 'Torpedo MK III', category: 'torpedo', shopPrice: 20 },
   { id: 'torpedo_mk4', name: 'Torpedo MK IV', category: 'torpedo', shopPrice: null },
   { id: 'torpedo_mk5', name: 'Torpedo MK V Prototype', category: 'torpedo', shopPrice: null },
+  { id: 'wasserbombe', name: 'Wasserbombe', category: 'wasserbombe', shopPrice: 10 },
   { id: 'taeuschkoerper', name: 'Täuschkörper', category: 'taeuschkoerper', shopPrice: 15 },
   { id: 'panzerung_mk1', name: 'Panzerung MK I', category: 'panzerung', shopPrice: 25 },
   { id: 'panzerung_mk2', name: 'Panzerung MK II', category: 'panzerung', shopPrice: 50 },
@@ -76,6 +82,7 @@ export function itemById(id: ItemId): ItemDefinition {
 /** Anzeigenamen der Kategorien für Slots, Inventar-Gruppen und Shop. */
 export const CATEGORY_LABELS: Record<ItemCategory, string> = {
   torpedo: 'Torpedo',
+  wasserbombe: 'Wasserbombe',
   taeuschkoerper: 'Täuschkörper',
   munition: '125mm Munition',
   panzerung: 'Panzerung',
@@ -89,6 +96,7 @@ export const CATEGORY_LABELS: Record<ItemCategory, string> = {
 export function equipSlotsForArmament(armament: readonly WeaponId[]): ItemCategory[] {
   const slots: ItemCategory[] = [];
   if (armament.includes('torpedo')) slots.push('torpedo');
+  if (armament.includes('wasserbombe')) slots.push('wasserbombe');
   if (armament.includes('taeuschkoerper')) slots.push('taeuschkoerper');
   if (armament.includes('geschuetz')) slots.push('munition');
   slots.push('panzerung');

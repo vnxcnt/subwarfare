@@ -50,6 +50,11 @@ export interface AccountStore {
   spendCoins(id: string, amount: number): Promise<boolean>;
   /** Schreibt Coins gut — Erstattungen und (später) Belohnungen. */
   addCoins(id: string, amount: number): Promise<void>;
+  /**
+   * Löscht das Konto endgültig — samt allem, was daran hängt (Inventar,
+   * Ausrüstung, Dev-Verknüpfung; in MariaDB über die CASCADE-Fremdschlüssel).
+   */
+  deleteAccount(id: string): Promise<void>;
   close(): Promise<void>;
 }
 

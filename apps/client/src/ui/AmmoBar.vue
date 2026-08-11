@@ -3,6 +3,7 @@ import type { WeaponId } from '@subwarfare/shared';
 import { computed, onBeforeUnmount, onMounted } from 'vue';
 import { WEAPON_SLOTS } from '../config';
 import { hud, orderFire } from '../state/hud';
+import { keys, settingsModalOpen } from '../state/settings';
 import { isTextEntry } from './dom';
 
 /**
@@ -46,11 +47,13 @@ function fire(slot: { id: string; fireable: boolean; count: number }): void {
   orderFire(slot.id as WeaponId);
 }
 
-/** Ziffern 1..n feuern den jeweiligen Slot, Leertaste den Torpedo. */
+/** Ziffern 1..n feuern den jeweiligen Slot, die Feuertaste den Torpedo. */
 function onKey(event: KeyboardEvent): void {
-  if (isTextEntry(event.target)) return;
+  // Offene Einstellungen: die Leertaste aktiviert dort Dialog-Knöpfe — sie
+  // darf dabei nicht nebenbei einen echten Torpedo abfeuern.
+  if (isTextEntry(event.target) || settingsModalOpen.value) return;
 
-  if (event.code === 'Space') {
+  if (event.code === keys.value.fireTorpedo) {
     const torpedo = slots.value.find((slot) => slot.id === 'torpedo');
     if (torpedo) {
       fire(torpedo);

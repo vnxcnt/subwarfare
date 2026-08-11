@@ -4,11 +4,12 @@ import { computed } from 'vue';
 import { KNOTS } from '../config';
 import { account } from '../state/auth';
 import { hud } from '../state/hud';
+import { keyLabel, keys } from '../state/settings';
 
 const isDev = import.meta.env.DEV;
 const isDeveloper = computed(() => (account.value?.role ?? 0) >= ROLE_DEVELOPER);
 
-const emit = defineEmits<{ 'toggle-dev': [] }>();
+const emit = defineEmits<{ 'toggle-dev': []; 'toggle-settings': [] }>();
 
 const position = computed(() =>
   hud.value.ready ? `${Math.round(hud.value.x)} / ${Math.round(hud.value.y)}` : '—',
@@ -22,6 +23,14 @@ const speed = computed(() =>
 );
 const tilt = computed(
   () => `${hud.value.tilt.toFixed(2)} · ${((Math.asin(hud.value.tilt) * 180) / Math.PI).toFixed(0)}°`,
+);
+
+/** Der Hinweistext folgt der tatsächlichen Belegung — nicht den Defaults. */
+const keyHint = computed(
+  () =>
+    `${keyLabel(keys.value.steerLeft)}/${keyLabel(keys.value.steerRight)} steuern, ` +
+    `${keyLabel(keys.value.telegraphUp)}/${keyLabel(keys.value.telegraphDown)} Telegraf, ` +
+    'Rad zoomt, Ziehen verschiebt',
 );
 </script>
 
@@ -37,23 +46,39 @@ const tilt = computed(
       {{ hud.following ? 'Folgen an' : 'Folgen aus' }}
     </span>
     <span v-if="isDev" class="status__item hud__num">Neigung {{ tilt }}</span>
-    <span class="status__hint">
-      A/D steuern, W/S Telegraf, Rad zoomt, Ziehen verschiebt<template v-if="isDev">, [ ] neigt</template>
-    </span>
     <!--
-      Entwicklerwerkzeuge — nur mit Entwicklerrolle sichtbar. Die Anzeige ist
-      Höflichkeit; durchgesetzt wird die Rolle server-seitig am dev:model-Handler.
+      Hinweis und Knöpfe in EINEM rechtsbündigen Block: der Hinweis wird auf
+      schmalen Fenstern ausgeblendet, und ein verschwundenes Element trägt
+      keinen auto-Margin mehr — die Knöpfe blieben sonst links hängen.
     -->
-    <button
-      v-if="isDeveloper"
-      class="status__dev"
-      type="button"
-      title="Entwicklermenü"
-      aria-label="Entwicklermenü"
-      @click="emit('toggle-dev')"
-    >
-      <span class="material-symbols-outlined">build_circle</span>
-    </button>
+    <span class="status__right">
+      <span class="status__hint">
+        {{ keyHint }}<template v-if="isDev">, [ ] neigt</template>
+      </span>
+      <!--
+        Entwicklerwerkzeuge — nur mit Entwicklerrolle sichtbar. Die Anzeige ist
+        Höflichkeit; durchgesetzt wird die Rolle server-seitig am dev:model-Handler.
+      -->
+      <button
+        v-if="isDeveloper"
+        class="status__dev"
+        type="button"
+        title="Entwicklermenü"
+        aria-label="Entwicklermenü"
+        @click="emit('toggle-dev')"
+      >
+        <span class="material-symbols-outlined">build_circle</span>
+      </button>
+      <button
+        class="status__dev"
+        type="button"
+        title="Einstellungen"
+        aria-label="Einstellungen"
+        @click="emit('toggle-settings')"
+      >
+        <span class="material-symbols-outlined">settings</span>
+      </button>
+    </span>
   </header>
 </template>
 
@@ -94,9 +119,15 @@ const tilt = computed(
   opacity: 0.85;
 }
 
+.status__right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .status__hint {
   opacity: 0.4;
-  margin-left: auto;
 }
 
 .status__dev {
@@ -123,6 +154,14 @@ const tilt = computed(
 @media (max-width: 900px) {
   .status__hint {
     display: none;
+  }
+}
+
+/* Sehr schmal: umbrechen statt abschneiden — das Zahnrad muss klickbar
+   bleiben, sonst sind die Einstellungen im Spiel unerreichbar. */
+@media (max-width: 640px) {
+  .status {
+    flex-wrap: wrap;
   }
 }
 </style>

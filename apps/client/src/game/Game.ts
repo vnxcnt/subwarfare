@@ -28,6 +28,7 @@ import {
   profileForShip,
 } from '@subwarfare/shared';
 import { GameSocket } from '../network/GameSocket';
+import { keys, settingsModalOpen } from '../state/settings';
 import { getTilt, setTilt } from './Projection';
 import { GameAudio } from './sound';
 import { loadVesselTextures } from './textures';
@@ -72,6 +73,14 @@ export class Game {
   } | null = null;
   private steerLeft = false;
   private steerRight = false;
+  /**
+   * PHYSISCHE Taste, die die jeweilige Ruderlage gesetzt hat. Das keyup muss
+   * auch dann lösen, wenn die Belegung ZWISCHEN Drücken und Loslassen
+   * geändert wurde (Einstellungen offen bei gehaltener Taste) — sonst bleibt
+   * das Ruder liegen und das Boot fährt dauerhaft im Kreis.
+   */
+  private steerLeftCode: string | null = null;
+  private steerRightCode: string | null = null;
   private sentSteer = 0;
   /** Unterdrückt das Browser-Kontextmenü auf dem Canvas (Rechtsklick tut nichts mehr). */
   private contextMenuBlocker: ((event: Event) => void) | null = null;
@@ -584,11 +593,19 @@ export class Game {
    * pro Frame und nicht pro Auto-Repeat.
    */
   private attachSteering(): void {
+    // Belegung LIVE aus den Einstellungen lesen — nicht beim Anhängen
+    // einfrieren, sonst wirkt eine Umbelegung erst nach Kartenwechsel.
     const down = (event: KeyboardEvent): void => {
-      if (isTextEntry(event.target) || event.repeat) return;
-      if (event.code === 'KeyA') this.steerLeft = true;
-      else if (event.code === 'KeyD') this.steerRight = true;
-      else if (event.code === 'KeyQ') {
+      // Offenes Einstellungs-Panel: Drücken wirkt nicht (Loslassen unten
+      // schon — eine gehaltene Taste muss immer lösen können).
+      if (isTextEntry(event.target) || event.repeat || settingsModalOpen.value) return;
+      if (event.code === keys.value.steerLeft) {
+        this.steerLeft = true;
+        this.steerLeftCode = event.code;
+      } else if (event.code === keys.value.steerRight) {
+        this.steerRight = true;
+        this.steerRightCode = event.code;
+      } else if (event.code === keys.value.aimToggle) {
         this.toggleAiming();
         event.preventDefault();
         return;
@@ -597,9 +614,15 @@ export class Game {
       event.preventDefault();
     };
     const up = (event: KeyboardEvent): void => {
-      if (event.code === 'KeyA') this.steerLeft = false;
-      else if (event.code === 'KeyD') this.steerRight = false;
-      else return;
+      // Auch gegen die MERKTE physische Taste prüfen — die Belegung kann sich
+      // zwischen Drücken und Loslassen geändert haben.
+      if (event.code === keys.value.steerLeft || event.code === this.steerLeftCode) {
+        this.steerLeft = false;
+        this.steerLeftCode = null;
+      } else if (event.code === keys.value.steerRight || event.code === this.steerRightCode) {
+        this.steerRight = false;
+        this.steerRightCode = null;
+      } else return;
       this.pushSteer();
     };
     // Fensterwechsel mit gehaltener Taste: das keyup kommt nie an — ohne den
@@ -607,6 +630,8 @@ export class Game {
     const blur = (): void => {
       this.steerLeft = false;
       this.steerRight = false;
+      this.steerLeftCode = null;
+      this.steerRightCode = null;
       this.pushSteer();
     };
 
