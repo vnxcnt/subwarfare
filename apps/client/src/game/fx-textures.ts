@@ -2,6 +2,7 @@ import { Assets, Rectangle, Texture } from 'pixi.js';
 
 import explosionUrl from '../assets/fx/explosion_sheet.webp';
 import foamUrl from '../assets/fx/foam_puff.webp';
+import oceanDetailUrl from '../assets/fx/ocean_detail.webp';
 import smokeUrl from '../assets/fx/smoke_puff.webp';
 import splashUrl from '../assets/fx/splash_sheet.webp';
 
@@ -21,6 +22,7 @@ const BILDER = 25;
 
 let foam: Texture | null = null;
 let smoke: Texture | null = null;
+let oceanDetail: Texture | null = null;
 let splash: Texture[] = [];
 let explosion: Texture[] = [];
 
@@ -48,16 +50,30 @@ async function zerlegen(url: string): Promise<Texture[]> {
 
 export async function loadFxTextures(): Promise<void> {
   if (foam) return;
-  const [f, s, sp, ex] = await Promise.all([
+  const [f, s, ozean, sp, ex] = await Promise.all([
     Assets.load<Texture>({ src: foamUrl, data: { autoGenerateMipmaps: true } }),
     Assets.load<Texture>({ src: smokeUrl, data: { autoGenerateMipmaps: true } }),
+    Assets.load<Texture>({ src: oceanDetailUrl, data: { autoGenerateMipmaps: true } }),
     zerlegen(splashUrl),
     zerlegen(explosionUrl),
   ]);
+  // Die Ozean-Kachel wird über die ganze Karte WIEDERHOLT — ohne diesen Modus
+  // klemmt Pixi die Koordinate am Rand fest und die Fläche wäre außerhalb der
+  // ersten Kachel ein einziger verschmierter Streifen.
+  ozean.source.style.addressMode = 'repeat';
   foam = f;
   smoke = s;
+  oceanDetail = ozean;
   splash = sp;
   explosion = ex;
+}
+
+/**
+ * Detailkachel der Wasseroberfläche: R = Höhe, G = Schaummaske.
+ * Erzeugt von `tools/ocean-texture.py` aus einer Wasser-Vorlage.
+ */
+export function oceanDetailTexture(): Texture | null {
+  return oceanDetail;
 }
 
 /** Schaumbatzen für Kielwasser und Gischt. Null, solange nicht geladen. */

@@ -1,6 +1,7 @@
 import type { Atmosphere, GameMap } from '@subwarfare/shared';
-import { Geometry, Mesh, Shader } from 'pixi.js';
+import { Geometry, Mesh, Shader, Texture } from 'pixi.js';
 import { WATER } from '../config';
+import { oceanDetailTexture } from './fx-textures';
 import { getTilt } from './Projection';
 
 /*
@@ -48,6 +49,15 @@ uniform float uLightLevel;
 /** Belichtung — Anpassung ans Umgebungslicht, ganz am Ende angewandt. */
 uniform float uExposure;
 
+/**
+ * Detailkachel der Wasseroberfläche. R = Höhe, G = Schaummaske.
+ * Erzeugt aus einer echten Wasser-Vorlage (tools/ocean-texture.py) und dort
+ * nahtlos gemacht. Sie ersetzt die drei feinsten Rauschlagen UND die vier
+ * Rauschfelder, aus denen der Schaum kam — beides sah zwangsläufig nach
+ * Gitterrauschen aus, weil es Gitterrauschen WAR.
+ */
+uniform sampler2D uDetail;
+
 const float TAU = 6.2831853;
 
 float hash21(vec2 p) {
@@ -62,6 +72,37 @@ float valueNoise(vec2 p) {
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), u.x),
              mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+/*
+ * Eine Lage aus der Detailkachel, in WELTkoordinaten abgetastet.
+ *
+ * "kachel" ist die Weltgröße einer Kachelkante in Metern, "rot" dreht die Lage
+ * gegen die Weltachsen, "drift" lässt sie wandern. Zwei Lagen mit KRUMMEM
+ * Größenverhältnis und verschiedenen Drehwinkeln übereinander — sonst erkennt
+ * das Auge das Kachelraster sofort wieder.
+ *
+ * Rückgabe: .x = Auslenkung, .yz = Weltgradient, .w = Schaummaske.
+ * Der Gradient kommt aus zwei Nachbarabtastungen; die Rückdrehung ist die
+ * transponierte Drehmatrix, weil ein Gradient sich gegenläufig transformiert.
+ *
+ * Drei Abtastungen je Lage klingt teuer, ersetzt aber sieben valueNoise-Aufrufe
+ * mit je vier Hash-Auswertungen — unterm Strich ist das der billigere Weg.
+ */
+vec4 detailLayer(vec2 world, float kachel, vec2 drift, float rot, float amp) {
+  float c = cos(rot);
+  float s = sin(rot);
+  vec2 gedreht = vec2(world.x * c - world.y * s, world.x * s + world.y * c);
+  vec2 p = gedreht / kachel + drift * uTime;
+
+  float e = 2.0 / 512.0;
+  vec2 mitte = texture(uDetail, p).rg;
+  float hx = texture(uDetail, p + vec2(e, 0.0)).r;
+  float hy = texture(uDetail, p + vec2(0.0, e)).r;
+
+  vec2 gp = vec2(hx - mitte.r, hy - mitte.r) / (e * kachel);
+  vec2 g = vec2(gp.x * c + gp.y * s, -gp.x * s + gp.y * c);
+  return vec4((mitte.r - 0.5) * amp, g * amp, mitte.g);
 }
 
 /*
@@ -123,32 +164,38 @@ void main() {
   float s = uSeaState;
   float a1 = 5.20 * s * layerFade(155.0);
   float a2 = 2.90 * s * layerFade(83.0);
-  float a3 = 1.60 * s * layerFade(47.0);
-  float a4 = 0.90 * s * layerFade(29.0);
-  float a5 = 0.50 * s * layerFade(16.0);
-  float a6 = 0.26 * s * layerFade(9.0);
-  float a7 = 0.13 * s * layerFade(5.0);
 
   /*
-   * Zweiter, feinerer Domain-Warp NUR für die kurzen Lagen: sie sollen
-   * mäandern statt schnurgerade durchzulaufen.
+   * FÜNF der sieben Sinuslagen sind ERSETZT durch drei Abtastungen der
+   * Detailkachel. Sie waren die Ursache der Diagonalstreifen: sieben fast
+   * parallele Sinuslagen ergeben nun einmal kein Wasser, sondern ein Wellblech
+   * mit Rauschmodulation. Die Kachel bringt sich kreuzende Wellenzüge mit,
+   * weil sie aus einer echten Wasseraufnahme stammt.
+   *
+   * Übrig bleiben nur die zwei LÄNGSTEN Lagen (155 m, 83 m) plus die Dünung —
+   * Wellenlängen, für die eine 512er-Kachel zu grob aufgelöst wäre.
+   *
+   * Die drei Kachelgrößen stehen bewusst in KRUMMEN Verhältnissen
+   * (340 : 96 : 23) und sind gegeneinander verdreht. Bei glatten Verhältnissen
+   * fielen die Raster periodisch zusammen und wären als Muster zu sehen.
    */
-  vec2 qk = q + (valueNoise(q * 0.03 - uTime * 0.06) - 0.5) * 9.0;
-
   /*
-   * Richtungsfächer: die LANGEN Lagen dürfen weit auseinanderlaufen (Dünung
-   * aus mehreren Wettergebieten), die KURZEN laufen fast parallel zum Wind.
-   * Genau umgekehrt entsteht sonst ein Karomuster — kurze Wellen quer
-   * zueinander kreuzen sich sichtbar zu einem Gitter, und der Nahzoom sieht
-   * aus wie ein Drahtnetz statt wie Wasser.
+   * Die WEITESTE Lage bleibt beim Rauszoomen stehen (layerFade auf 200 m
+   * bezogen). Ohne sie zerfiel die Übersicht in genau die diagonalen Streifen,
+   * die sie vorher hatte: die feinen Kachellagen sind dort längst wegge-
+   * blendet, und zwei Sinuslagen allein ergeben ein Wellblech.
    */
-  vec3 chop = waveLayer(q,  vec2( 1.00,  0.32), 155.0, 0.63, a1, 0.7)
-            + waveLayer(q,  vec2(-0.52,  1.00),  83.0, 0.86, a2, 1.9)
-            + waveLayer(q,  vec2( 0.86, -0.74),  47.0, 1.14, a3, 2.6)
-            + waveLayer(q,  vec2( 0.72,  0.62),  29.0, 1.45, a4, 4.3)
-            + waveLayer(qk, vec2( 0.96,  0.44),  16.0, 1.96, a5, 5.8)
-            + waveLayer(qk, vec2( 1.00,  0.16),   9.0, 2.61, a6, 7.2)
-            + waveLayer(qk, vec2( 0.88,  0.52),   5.0, 3.50, a7, 8.9);
+  vec4 dSehrWeit = detailLayer(q, 700.0, vec2(0.0006, -0.0004), 2.40, 3.40 * s * layerFade(200.0));
+  vec4 dWeit = detailLayer(q, 340.0, vec2( 0.0012,  0.0008), 0.00, 2.30 * s * layerFade(70.0));
+  vec4 dGrob = detailLayer(q,  96.0, vec2( 0.0035, -0.0021), 0.62, 1.25 * s * layerFade(24.0));
+  vec4 dFein = detailLayer(q,  23.0, vec2(-0.0090,  0.0062), 1.85, 0.55 * s * layerFade(7.0));
+
+  vec3 chop = waveLayer(q, vec2( 1.00,  0.32), 155.0, 0.63, a1, 0.7)
+            + waveLayer(q, vec2(-0.52,  1.00),  83.0, 0.86, a2, 1.9)
+            + dSehrWeit.xyz
+            + dWeit.xyz
+            + dGrob.xyz
+            + dFein.xyz;
 
   // z groß halten: sanfte Normalen. Kleine Werte lassen die Fläche wie
   // Wellblech aussehen statt wie Wasser.
@@ -232,23 +279,34 @@ void main() {
    * Schaum sonst als Punktraster erscheint. Zwei Stufen: heller Kamm und ein
    * breiterer, schwacher Saum, der ihn ausfransen lässt.
    */
-  float ampSum = a1 + a2 + a3 + a4 + a5 + a6 + a7;
+  float ampSum = (a1 + a2) + (3.40 + 2.30 + 1.25 + 0.55) * s * 0.6 + 0.5;
   float rel = chop.x / max(ampSum, 0.001);
-  // ACHTUNG beim Umbenennen: "patch" ist in GLSL ES 3.00 ein RESERVIERTES Wort
-  // (Tessellation) — auf dem WebGL2-Pfad scheitert die Kompilierung daran.
-  // (Und keine Backticks in diesem Shader: er lebt in einem Template-Literal.)
-  float patchiness = valueNoise(q * 0.02 + uTime * 0.05);
-  float fleck = smoothstep(0.35, 0.80, patchiness);
-  float crest = smoothstep(0.72, 0.98, rel) * fleck;
-  float wash = smoothstep(0.48, 0.90, rel) * fleck * 0.45;
+  /*
+   * Wo Schaum überhaupt vorkommt, sagt jetzt die Kachel — nicht mehr ein
+   * eigenes Rauschfeld. Das war die Ursache der zelligen Klumpen: der Schaum
+   * kam aus EINER Oktave Wertrauschen auf einem achsenparallelen 50-m-Gitter,
+   * und dieses Gitter hat man gesehen. Die grobe Lage liefert die Flecken, in
+   * denen es überhaupt bricht, die feine die Adern darin.
+   *
+   * ACHTUNG beim Umbenennen: "patch" ist in GLSL ES 3.00 ein RESERVIERTES Wort
+   * (Tessellation) — auf dem WebGL2-Pfad scheitert die Kompilierung daran.
+   * (Und keine Backticks in diesem Shader: er lebt in einem Template-Literal.)
+   *
+   * ⚠️ Die Maske MODULIERT, sie sperrt nicht. Als reiner Faktor
+   * (smoothstep(0.02, 0.35, ...)) blieb das Wasser komplett schaumlos: die
+   * Maske ist zu knapp 89 % exakt null, und ein Kamm bräuchte dann zufällig
+   * genau dort eine Ader, um überhaupt zu brechen.
+   */
+  float fleck = 0.30 + 0.70 * smoothstep(0.0, 0.22, dGrob.w);
+  float crest = smoothstep(0.62, 0.94, rel) * fleck;
+  float wash = smoothstep(0.40, 0.84, rel) * fleck * 0.45;
   /*
    * Aufbrechen des Schaums. Ohne diesen Schritt liegt er als geschlossene
    * weiße Insel auf dem Kamm und sieht aus wie eine Eisscholle; Gischt ist
-   * aber löchrig und ausgefranst. Zwei Rauschlagen unterschiedlicher Feinheit
-   * fressen Löcher hinein, die feinere driftet schneller.
+   * aber löchrig und ausgefranst. Die feine Kachellage bringt genau diese
+   * Adern mit — sie stammen aus einer echten Wasseraufnahme.
    */
-  float shred = valueNoise(q * 0.25 + uTime * 0.35) * 0.65
-              + valueNoise(q * 0.8 - uTime * 0.6) * 0.35;
+  float shred = dFein.w;
   /*
    * Die Zerfaserung arbeitet auf 1–4 m — beim Rauszoomen liegt das unter einem
    * Pixel und alisiert zu einem Punktraster (in der Übersicht sah die See aus
@@ -257,7 +315,7 @@ void main() {
    * Übersicht ganz: einzelne Schaumkronen sind dort ohnehin unsichtbar klein.
    */
   float detail = smoothstep(0.25, 0.9, uZoom);
-  float shredded = mix(1.0, smoothstep(0.18, 0.62, shred), detail);
+  float shredded = mix(1.0, 0.35 + 0.65 * smoothstep(0.0, 0.30, shred), detail);
   float foam = clamp(crest + wash, 0.0, 1.0) * uSeaState
              * shredded
              * smoothstep(0.30, 0.75, uZoom);
@@ -289,9 +347,17 @@ void main() {
 `;
 
 /**
- * Die Wasserfläche: ein einziges Rechteck in Weltkoordinaten mit prozeduralem
- * Wellen-Shader. Kein Kachelraster, keine Textur, keine Assets — die Kosten
- * hängen nur an der Bildschirmfläche, nicht an der Kartengröße.
+ * Die Wasserfläche: ein einziges Rechteck in Weltkoordinaten mit einem Shader
+ * aus zwei Sinus-Wellenlagen, der Dünung und VIER Abtastungen einer
+ * Detailkachel. Die Kosten hängen nur an der Bildschirmfläche, nicht an der
+ * Kartengröße — es gibt weiterhin kein Kachel-Mesh, nur eine Textur, die in
+ * Weltkoordinaten wiederholt abgetastet wird.
+ *
+ * (Bis August 2026 war der Shader rein prozedural. Sieben Sinuslagen mit
+ * Rauschmodulation ergaben aber sichtbare Diagonalstreifen, und der Schaum kam
+ * aus einer Oktave Wertrauschen auf einem achsenparallelen 50-m-Gitter — man
+ * sah das Gitter. Die Kachel bringt sich kreuzende Wellenzüge und echte
+ * Schaumadern mit, weil sie aus einer Wasseraufnahme stammt.)
  *
  * Das Mesh hängt im `groundLayer`, deshalb stecken Kamera, Zoom und Neigung
  * bereits in Pixis eigenen Matrizen. `vWorld` ist dadurch die echte, ungekippte
@@ -344,6 +410,13 @@ export class Ocean {
           uLightLevel: { value: 1, type: 'f32' },
           uExposure: { value: 1, type: 'f32' },
         },
+        // Texturen sind in Pixi 8 RESSOURCEN, keine Uniforms: die Quelle und
+        // ihr Abtaststil gehen getrennt hinein. `loadFxTextures` läuft in
+        // Game.init VOR `new World()`, die Kachel ist hier also da; der
+        // Weiß-Ersatz greift nur, wenn das Laden fehlschlug — dann fehlt dem
+        // Wasser das Feindetail, es bleibt aber lauffähig.
+        uDetail: (oceanDetailTexture() ?? Texture.WHITE).source,
+        uDetailStyle: (oceanDetailTexture() ?? Texture.WHITE).source.style,
       },
     });
 
