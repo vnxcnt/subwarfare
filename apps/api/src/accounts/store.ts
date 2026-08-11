@@ -42,6 +42,14 @@ export interface AccountStore {
   upsertDev(displayName: string): Promise<Account>;
   byId(id: string): Promise<Account | null>;
   touchLogin(id: string): Promise<void>;
+  /**
+   * Zieht Coins ab, aber nur wenn das Guthaben reicht — Prüfung und Abzug in
+   * EINEM Schritt, sonst könnten zwei gleichzeitige Käufe dasselbe Guthaben
+   * doppelt ausgeben. `false` = zu wenig Coins, nichts abgebucht.
+   */
+  spendCoins(id: string, amount: number): Promise<boolean>;
+  /** Schreibt Coins gut — Erstattungen und (später) Belohnungen. */
+  addCoins(id: string, amount: number): Promise<void>;
   close(): Promise<void>;
 }
 

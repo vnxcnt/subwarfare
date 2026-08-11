@@ -41,6 +41,50 @@ export interface AuthResponse {
 
 export interface QueueJoinRequest {
   mapId: string;
+  /**
+   * Gewähltes Schiff für diesen Einsatz. Die api prüft Freischalt-Level und
+   * zieht die Einsatzkosten bei der Ticketausgabe ab (`SHIP_ACCESS`). Fehlt
+   * das Feld (alter Client), fährt die kostenlose Fregatte.
+   */
+  shipModel?: string;
+}
+
+/* --- Inventar, Shop, Ausrüstung (REST unter /api) ----------------------- */
+
+/** Ein Besitz-Eintrag: Item und Stückzahl. */
+export interface InventoryItem {
+  itemId: string;
+  quantity: number;
+}
+
+/** Eine Slot-Belegung: Schiff, Slot-Kategorie, zugewiesenes Item. */
+export interface LoadoutEntry {
+  model: string;
+  slot: string;
+  itemId: string;
+}
+
+/** Antwort von `GET /api/inventory` — Besitz und Zuordnungen eines Kontos. */
+export interface InventoryPayload {
+  items: InventoryItem[];
+  loadouts: LoadoutEntry[];
+}
+
+export interface ShopBuyRequest {
+  itemId: string;
+}
+
+/** Antwort eines Kaufs: neuer Kontostand + frischer Besitz. */
+export interface ShopBuyResponse {
+  coins: number;
+  items: InventoryItem[];
+}
+
+export interface LoadoutUpdateRequest {
+  model: string;
+  slot: string;
+  /** `null` räumt den Slot. */
+  itemId: string | null;
 }
 
 /** Zwischenstand, solange die Karte voll ist. */

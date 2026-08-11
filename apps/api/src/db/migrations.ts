@@ -117,4 +117,38 @@ export const MIGRATIONS: readonly Migration[] = [
        ON DUPLICATE KEY UPDATE model = model`,
     ],
   },
+  {
+    id: 7,
+    name: 'inventar-und-werft',
+    statements: [
+      // Item-BESITZ je Konto. Der Katalog (Namen, Preise, Kategorien) lebt im
+      // Code (`@subwarfare/shared`, ITEMS) — hier steht nur, wer wie viele
+      // wovon hat. Kein Fremdschlüssel auf einen Item-Katalog: den gibt es als
+      // Tabelle bewusst nicht.
+      `CREATE TABLE IF NOT EXISTS account_items (
+         account_id CHAR(36) NOT NULL,
+         item_id VARCHAR(32) NOT NULL,
+         quantity INT UNSIGNED NOT NULL DEFAULT 0,
+         PRIMARY KEY (account_id, item_id),
+         CONSTRAINT fk_account_items_account FOREIGN KEY (account_id)
+           REFERENCES accounts (id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      // Ausrüstungs-Zuordnung je Konto und Schiff: welcher Slot (Kategorie)
+      // trägt welches Item. Ein Slot, ein Item — der Primärschlüssel erzwingt
+      // das. Leere Slots stehen nicht in der Tabelle.
+      `CREATE TABLE IF NOT EXISTS ship_loadouts (
+         account_id CHAR(36) NOT NULL,
+         model VARCHAR(32) NOT NULL,
+         slot VARCHAR(16) NOT NULL,
+         item_id VARCHAR(32) NOT NULL,
+         PRIMARY KEY (account_id, model, slot),
+         CONSTRAINT fk_ship_loadouts_account FOREIGN KEY (account_id)
+           REFERENCES accounts (id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      // Dritte Modellwelle: der Endgame-Zerstörer.
+      `INSERT INTO ships (model, hp, type, armament, speed) VALUES
+         ('destroyer02', 750, 3, '["torpedo","wasserbombe","taeuschkoerper","geschuetz"]', 1.15)
+       ON DUPLICATE KEY UPDATE model = model`,
+    ],
+  },
 ];

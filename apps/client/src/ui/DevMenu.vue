@@ -30,6 +30,7 @@ const MODEL_LABELS: Record<string, string> = {
   fregatte02: 'Fregatte II',
   submarine02: 'U-Boot II',
   destroyer01: 'Zerstörer',
+  destroyer02: 'Zerstörer II',
 };
 
 function choose(model: (typeof VESSEL_MODELS)[number]): void {

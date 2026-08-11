@@ -1,6 +1,8 @@
 export interface QueueEntry {
   accountId: string;
   name: string;
+  /** Gewähltes Schiff — bereits gegen Level geprüft; bezahlt wird beim Ticket. */
+  shipModel: string;
   /** Millisekunden-Zeitstempel des Einreihens. */
   joinedAt: number;
 }
@@ -26,6 +28,12 @@ export interface MatchQueue {
   size(mapId: string): Promise<number>;
   /** Alle Wartenden einer Karte in Reihenfolge. */
   list(mapId: string): Promise<QueueEntry[]>;
+  /**
+   * Lebenszeichen: setzt die Ablauffrist des Eintrags zurück. Der Lobby-Takt
+   * ruft das für alle Wartenden mit offener Verbindung — die TTL trifft damit
+   * nur noch echte Karteileichen, keine geduldig Wartenden.
+   */
+  touch(mapId: string, accountId: string): Promise<void>;
 }
 
 /** Wartende verfallen nach dieser Zeit — sonst blockieren Karteileichen. */
@@ -66,6 +74,11 @@ export class MemoryQueue implements MatchQueue {
 
   async list(mapId: string): Promise<QueueEntry[]> {
     return this.queueFor(mapId).map((entry) => ({ ...entry }));
+  }
+
+  async touch(mapId: string, accountId: string): Promise<void> {
+    const entry = this.queueFor(mapId).find((item) => item.accountId === accountId);
+    if (entry) entry.joinedAt = Date.now();
   }
 
   /** Holt die Schlange und wirft dabei Abgelaufene raus. */

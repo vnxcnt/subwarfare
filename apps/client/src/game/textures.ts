@@ -3,6 +3,8 @@ import { Assets, Spritesheet, Texture, type SpritesheetData } from 'pixi.js';
 
 import destroyerData from '../assets/vessels/destroyer01/atlas.json';
 import destroyerUrl from '../assets/vessels/destroyer01/atlas.webp';
+import destroyer2Data from '../assets/vessels/destroyer02/atlas.json';
+import destroyer2Url from '../assets/vessels/destroyer02/atlas.webp';
 import fregatteData from '../assets/vessels/fregatte01/atlas.json';
 import fregatteUrl from '../assets/vessels/fregatte01/atlas.webp';
 import fregatte2Data from '../assets/vessels/fregatte02/atlas.json';
@@ -101,6 +103,12 @@ const DEFINITIONS: Record<string, ModelDefinition> = {
     url: destroyerUrl,
     lengthMetres: HULL_DIMENSIONS.destroyer01.length,
     sideProfilePx: 394,
+  },
+  destroyer02: {
+    data: destroyer2Data as unknown as SpritesheetData,
+    url: destroyer2Url,
+    lengthMetres: HULL_DIMENSIONS.destroyer02.length,
+    sideProfilePx: 754,
   },
   // Projektile: gleiche Atlas-Pipeline, nur kein fahrbares Schiff. Länge ist
   // Spielsichtbarkeit (echte Torpedos wären auf Kartenzoom unsichtbar klein).

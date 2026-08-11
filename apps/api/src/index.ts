@@ -1,3 +1,4 @@
+import { DEFAULT_SHIP_STATS } from '@subwarfare/shared';
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import { Server } from 'socket.io';
@@ -5,6 +6,9 @@ import { MemoryAccountStore } from './accounts/MemoryAccountStore.js';
 import { MySqlAccountStore } from './accounts/MySqlAccountStore.js';
 import type { AccountStore } from './accounts/store.js';
 import { registerAuthRoutes } from './auth/routes.js';
+import { registerEconomyRoutes } from './economy/routes.js';
+import { MySqlInventoryStore } from './economy/MySqlInventoryStore.js';
+import { MemoryInventoryStore, type InventoryStore } from './economy/store.js';
 import { migrate } from './db/migrate.js';
 import { env, warnAboutDefaults } from './env.js';
 import { fetchGameServerStatus } from './gameserver/status.js';
@@ -16,7 +20,26 @@ warnAboutDefaults();
 
 await migrate();
 
+// Struktur-Vertrag der Werft prüfen: die Ausrüstungs-Slots leiten sich aus der
+// Bewaffnung im CODE-Katalog ab (equipSlotsForArmament) — die ships-Tabelle
+// darf ZAHLEN (HP, Speed) abweichen, aber nicht die Bewaffnung, sonst zeigt
+// das Menü Slots, die der Spielserver verweigert. Nur warnen, nicht abbrechen:
+// der Betrieb ist mit falscher Anzeige lästig, ohne api aber tot.
+for (const ship of await loadShipStats()) {
+  const expected = [...(DEFAULT_SHIP_STATS[ship.model]?.armament ?? [])].sort().join(',');
+  const actual = [...ship.armament].sort().join(',');
+  if (expected !== actual) {
+    console.warn(
+      `[api] ships.${ship.model}: Bewaffnung in der DB (${actual || '—'}) weicht vom ` +
+        `Code-Katalog (${expected || '—'}) ab — die Ausrüstungs-Slots folgen dem Code.`,
+    );
+  }
+}
+
 const accounts: AccountStore = env.databaseUrl ? new MySqlAccountStore() : new MemoryAccountStore();
+const inventory: InventoryStore = env.databaseUrl
+  ? new MySqlInventoryStore()
+  : new MemoryInventoryStore(accounts);
 
 const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
 
@@ -32,6 +55,7 @@ await app.register(
   async (scope) => {
     scope.get('/health', async () => ({ ok: true }));
     registerAuthRoutes(scope, accounts);
+    registerEconomyRoutes(scope, accounts, inventory);
 
     // Interner Kanal für den Spielserver — derselbe Schlüssel wie dessen
     // /status. Von außen kommt man über Caddy zwar an die URL, aber ohne

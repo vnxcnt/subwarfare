@@ -98,6 +98,13 @@ export const DEFAULT_SHIP_STATS: Record<VesselModel, ShipStats> = {
     armament: ['torpedo', 'wasserbombe', 'taeuschkoerper', 'geschuetz'],
     speedFactor: 1.1,
   },
+  destroyer02: {
+    model: 'destroyer02',
+    hp: 750,
+    type: SHIP_TYPE_VESSEL,
+    armament: ['torpedo', 'wasserbombe', 'taeuschkoerper', 'geschuetz'],
+    speedFactor: 1.15,
+  },
 };
 
 /**

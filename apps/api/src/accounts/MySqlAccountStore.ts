@@ -1,4 +1,4 @@
-import type { Pool, RowDataPacket } from 'mysql2/promise';
+import type { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
 import { closePool, getPool } from '../db/pool.js';
 import type { Account, AccountStore, DiscordIdentity, GoogleIdentity } from './store.js';
@@ -148,6 +148,21 @@ export class MySqlAccountStore implements AccountStore {
     await this.pool.execute('UPDATE accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?', [
       id,
     ]);
+  }
+
+  async spendCoins(id: string, amount: number): Promise<boolean> {
+    // Bedingtes UPDATE statt Lesen-dann-Schreiben: die Guthabenprüfung läuft
+    // in derselben Anweisung wie der Abzug — zwei gleichzeitige Abbuchungen
+    // können so nie beide durchgehen, wenn nur eine gedeckt ist.
+    const [result] = await this.pool.execute<ResultSetHeader>(
+      'UPDATE accounts SET coins = coins - ? WHERE id = ? AND coins >= ?',
+      [amount, id, amount],
+    );
+    return result.affectedRows === 1;
+  }
+
+  async addCoins(id: string, amount: number): Promise<void> {
+    await this.pool.execute('UPDATE accounts SET coins = coins + ? WHERE id = ?', [amount, id]);
   }
 
   async close(): Promise<void> {

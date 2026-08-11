@@ -16,6 +16,9 @@ export * from './meta/ships.js';
 // Kampfwerte: Waffen, Rumpfmaße für die Kollision, Respawn-Zeiten.
 export * from './meta/combat.js';
 
+// Ökonomie: Item-Katalog, Ausrüstungs-Slots, Schiffszugang (Level + Kosten).
+export * from './meta/economy.js';
+
 // Fahrmodell. Liegt hier, damit Client und Server denselben Code fahren —
 // der Server rechnet damit autoritativ, der Client rendert das Ergebnis und
 // nutzt es nur im Offline-Demobetrieb selbst.

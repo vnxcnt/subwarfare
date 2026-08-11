@@ -29,7 +29,7 @@ import { ocean01 } from '../maps/ocean01.js';
 import { Bots } from '../sim/Bots.js';
 import { ShipCatalog } from '../sim/ShipCatalog.js';
 import { World, type WorldEvents } from '../world/World.js';
-import { redeemTicket } from './tickets.js';
+import { consumeTicket, verifyTicket } from './tickets.js';
 
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, GameSocketData>;
 
@@ -165,19 +165,28 @@ export class GameServer {
   }
 
   private async authorize(socket: GameSocket, next: (error?: Error) => void): Promise<void> {
-    const result = await redeemTicket(socket.handshake.auth?.['ticket']);
+    const result = await verifyTicket(socket.handshake.auth?.['ticket']);
     if (!result.ok) {
       next(new Error(result.reason));
       return;
     }
+    // Kapazität VOR dem Verbrauch der jti prüfen: die Einsatzkosten sind bei
+    // Ticketausgabe bereits bezahlt — ein an der Kapazität gescheiterter
+    // Versuch muss das Ticket gültig lassen, sonst wäre jeder Voll-Reject
+    // verbranntes Guthaben.
     if (this.sockets.size >= env.maxPlayers && !this.sockets.has(result.claims.sub)) {
       next(new Error('Server ist voll.'));
+      return;
+    }
+    if (!consumeTicket(result.claims.jti, result.expiresAt)) {
+      next(new Error('Ticket wurde bereits eingelöst.'));
       return;
     }
 
     socket.data.accountId = result.claims.sub;
     socket.data.name = result.claims.name;
     socket.data.role = result.claims.role;
+    socket.data.shipModel = result.claims.shipModel;
     next();
   }
 
@@ -200,7 +209,15 @@ export class GameServer {
     this.pendingRespawns.delete(accountId);
 
     this.sockets.set(accountId, socket);
-    const vessel = this.world.spawn(accountId, name);
+    // Das Modell kommt aus dem signierten Ticket — Level und Einsatzkosten hat
+    // die api dort schon geprüft. Die isVesselModel-Prüfung ist das Sicherheits-
+    // netz gegen ein älteres Backend oder eine Kennung ohne Client-Atlas.
+    const ticketModel = socket.data.shipModel;
+    const vessel = this.world.spawn(
+      accountId,
+      name,
+      isVesselModel(ticketModel) ? ticketModel : undefined,
+    );
     this.refillAmmo(accountId);
     console.log(`[game-server] ${name} (${accountId}) verbunden — ${this.sockets.size} Spieler.`);
 

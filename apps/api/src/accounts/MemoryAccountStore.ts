@@ -85,6 +85,18 @@ export class MemoryAccountStore implements AccountStore {
     if (account) account.lastLoginAt = new Date().toISOString();
   }
 
+  async spendCoins(id: string, amount: number): Promise<boolean> {
+    const account = this.byIdMap.get(id);
+    if (!account || account.coins < amount) return false;
+    account.coins -= amount;
+    return true;
+  }
+
+  async addCoins(id: string, amount: number): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (account) account.coins += amount;
+  }
+
   async close(): Promise<void> {
     // Nichts zu schließen.
   }

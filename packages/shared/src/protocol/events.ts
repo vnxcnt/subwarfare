@@ -194,6 +194,8 @@ export interface GameSocketData {
   name: string;
   /** Kontorolle aus dem Ticket — Grundlage für Dev-/Admin-Befehle. */
   role: number;
+  /** Schiffsmodell aus dem Ticket — die api hat Level und Kosten geprüft. */
+  shipModel: string;
 }
 
 /** Inhalt eines Join-Tickets. Vom Backend signiert, vom Spielserver geprüft. */
@@ -204,6 +206,11 @@ export interface TicketClaims {
   mapId: string;
   /** Kontorolle zum Zeitpunkt der Ticketausgabe. */
   role: number;
+  /**
+   * Bezahltes und freigeschaltetes Schiff für diesen Einsatz. Der Spielserver
+   * spawnt genau dieses Modell — die Prüfung (Level, Coins) lief in der api.
+   */
+  shipModel: string;
   /** Einmalkennung — der Spielserver merkt sich verbrauchte Tickets. */
   jti: string;
 }

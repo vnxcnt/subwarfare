@@ -15,6 +15,7 @@ export const VESSEL_MODELS = [
   'fregatte02',
   'submarine02',
   'destroyer01',
+  'destroyer02',
 ] as const;
 export type VesselModel = (typeof VESSEL_MODELS)[number];
 
