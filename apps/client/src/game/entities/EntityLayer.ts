@@ -143,7 +143,11 @@ export class EntityLayer {
       // MODELLE, nicht die Ansichten.
       const sichtbar = isOwn || this.inVision(entry.model.x, entry.model.y);
       entry.view.setVisible(sichtbar);
+      // Unsichtbare Fahrzeuge werden nicht gezeichnet, ihre Schaumspur muss
+      // aber weiter altern — sonst stünde sie beim Wiederauftauchen eingefroren
+      // da, als wäre sie eben erst entstanden (siehe VesselView.age).
       if (sichtbar) entry.view.sync(entry.model, zoom, frameSeconds, isOwn);
+      else entry.view.age(frameSeconds);
     }
 
     // Projektile durch dieselbe Sichtprüfung — ein Torpedo außerhalb von

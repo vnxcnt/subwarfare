@@ -1,11 +1,22 @@
 import type { GameMap, WeatherState } from '@subwarfare/shared';
 import { atmosphereFor } from '@subwarfare/shared';
-import { Container, Graphics, Matrix, Point } from 'pixi.js';
+import { Container, Graphics, Matrix, Point, Sprite } from 'pixi.js';
 import { FALLBACK_MAP, FOLLOW, HULL, VIEW, VISION } from '../config';
 import { EntityLayer } from './entities/EntityLayer';
 import type { Vessel } from '@subwarfare/shared';
+import { explosionFrame, splashFrame } from './fx-textures';
 import { Ocean } from './Ocean';
 import { PROJECTION, getTilt, project } from './Projection';
+
+/** Weltgröße der Kampf-Effekte in Metern — Sichtbarkeit vor Maßstabstreue. */
+const FX_SIZE = {
+  /** Einschlag einer Granate oder eines Torpedos. */
+  splash: 95,
+  /** Wassersäule beim Untergang. */
+  bigSplash: 190,
+  /** Feuerball beim Untergang, bei vollem Aufquellen. */
+  fire: 240,
+} as const;
 
 /** Blickpunkt auf die Welt, in Weltkoordinaten. */
 export interface Camera {
@@ -56,12 +67,23 @@ export class World {
   private readonly visionShade = new Graphics();
 
   /**
-   * Kampf-Effekte (Einschläge, Versenkungen): kurzlebige, jeden Frame neu
-   * gezeichnete Ringe in der Wasserebene — eine Explosion liegt AUF dem
-   * Wasser, die Projektion macht die Ellipse daraus.
+   * Kampf-Effekte (Einschläge, Versenkungen) als Bildfolgen.
+   *
+   * Bewusst ZWEI Ebenen, weil die beiden Anteile verschieden im Raum liegen:
+   * die Wasserfontäne breitet sich FLACH auf der Oberfläche aus und gehört in
+   * die gekippte Wasserebene, der Feuerball steigt SENKRECHT auf und gehört in
+   * die aufrechte Ebene — dort würde ihn die Projektion sonst platt scheren.
    */
-  private readonly fx = new Graphics();
-  private readonly fxEntries: Array<{ x: number; y: number; age: number; big: boolean }> = [];
+  private readonly fxWater = new Container();
+  private readonly fxUpright = new Container();
+  private readonly fxEntries: Array<{
+    x: number;
+    y: number;
+    age: number;
+    duration: number;
+    splash: Sprite;
+    fire: Sprite | null;
+  }> = [];
 
   /**
    * Ziellinie des Waffen-Zielmodus (Q): vom eigenen Boot zur Maus, in der
@@ -86,15 +108,18 @@ export class World {
     this.ocean = new Ocean(this.map);
     this.groundLayer.addChild(this.ocean.mesh, this.visionShade);
     // Effekte über die Rümpfe: eine Explosion verdeckt das Schiff, nicht
-    // umgekehrt. `hullLayer` sortiert nach zIndex — hoch genug wählen.
-    this.fx.zIndex = 1_000_000;
-    this.hullLayer.addChild(this.fx);
+    // umgekehrt. Beide Ebenen sortieren nach zIndex — hoch genug wählen.
+    this.fxWater.zIndex = 1_000_000;
+    this.hullLayer.addChild(this.fxWater);
     // Ziellinie knapp darunter — über allen Spuren, unter den Explosionen.
     this.aimLine.zIndex = 999_999;
     this.hullLayer.addChild(this.aimLine);
     // Wegpunktgrafik in die Wasserebene, Richtungs-Billboards in die
     // aufrechte Ebene — siehe EntityLayer.
     this.entities = new EntityLayer(this.hullLayer, this.entityLayer);
+    // Feuerbälle über alle Billboards.
+    this.fxUpright.zIndex = 1_000_000;
+    this.entityLayer.addChild(this.fxUpright);
 
     this.centerOnMap();
   }
@@ -195,45 +220,69 @@ export class World {
    * Der Zeitpunkt kommt vom Server (fx-Ereignis) — hier wird nur gezeichnet.
    */
   spawnImpact(x: number, y: number, big: boolean): void {
-    this.fxEntries.push({ x, y, age: 0, big });
-  }
+    const erstes = splashFrame(0);
+    if (!erstes) return;
 
-  /** Malt alle laufenden Effekte neu und wirft abgelaufene ab. */
-  private updateFx(frameSeconds: number): void {
-    const g = this.fx;
-    if (this.fxEntries.length === 0) {
-      // Nur einmal leeren, nicht jeden Frame neu — clear() invalidiert Geometrie.
-      if (g.context.instructions.length > 0) g.clear();
-      return;
+    const splash = new Sprite({ texture: erstes, anchor: 0.5 });
+    splash.position.set(x, y);
+    splash.width = big ? FX_SIZE.bigSplash : FX_SIZE.splash;
+    splash.height = splash.width;
+    this.fxWater.addChild(splash);
+
+    let fire: Sprite | null = null;
+    const feuerbild = big ? explosionFrame(0) : null;
+    if (feuerbild) {
+      fire = new Sprite({ texture: feuerbild, anchor: 0.5 });
+      // Aufrechte Ebene: die Weltposition muss die Stauchung mitbringen,
+      // weil diese Ebene sie nicht selbst anwendet (wie bei den Billboards).
+      fire.position.set(x, y * getTilt());
+      fire.width = FX_SIZE.fire;
+      fire.height = FX_SIZE.fire;
+      // ⚠️ NICHT additiv: die Bildfolge geht nach dem Feuer in grauen Rauch
+      // über, und additiv aufgetragener Rauch ist auf dunklem Wasser
+      // unsichtbar. Die hellen Anfangsbilder tragen sich auch normal.
+      this.fxUpright.addChild(fire);
     }
 
-    g.clear();
+    this.fxEntries.push({
+      x,
+      y,
+      age: 0,
+      duration: big ? 1.8 : 1.0,
+      splash,
+      fire,
+    });
+  }
+
+  /** Schaltet die Bildfolgen weiter und räumt abgelaufene Effekte ab. */
+  private updateFx(frameSeconds: number): void {
     for (let i = this.fxEntries.length - 1; i >= 0; i -= 1) {
       const fx = this.fxEntries[i]!;
       fx.age += frameSeconds;
-      const dauer = fx.big ? 1.6 : 0.9;
-      if (fx.age >= dauer) {
+      const t = fx.age / fx.duration;
+      if (t >= 1) {
+        fx.splash.destroy();
+        fx.fire?.destroy();
         this.fxEntries.splice(i, 1);
         continue;
       }
 
-      const t = fx.age / dauer;
-      const maxRadius = fx.big ? 120 : 55;
-      const radius = 8 + t * maxRadius;
-      const fade = 1 - t;
+      const splashBild = splashFrame(t);
+      if (splashBild) fx.splash.texture = splashBild;
+      // Die Deckkraft der Bildfolge trägt das Ausklingen schon; der Faktor hier
+      // fängt nur das letzte Fünftel ab, damit nichts hart verschwindet.
+      fx.splash.alpha = Math.min(1, (1 - t) * 5);
 
-      // Heller Kern, der schnell verglüht, plus auslaufender Druckring.
-      if (t < 0.35) {
-        const kern = 1 - t / 0.35;
-        g.circle(fx.x, fx.y, radius * 0.5).fill({ color: 0xffd27a, alpha: 0.75 * kern });
-      }
-      g.circle(fx.x, fx.y, radius).stroke({
-        color: fx.big ? 0xff9a4a : 0xf2e8c8,
-        alpha: 0.8 * fade,
-        width: fx.big ? 6 : 3,
-      });
-      if (fx.big) {
-        g.circle(fx.x, fx.y, radius * 0.62).stroke({ color: 0xffd27a, alpha: 0.5 * fade, width: 3 });
+      if (fx.fire) {
+        // Feuer im ersten Drittel, Rauch danach — beides steckt in derselben
+        // Bildfolge, sie läuft über die volle Dauer des Effekts.
+        const bild = explosionFrame(t);
+        if (bild) fx.fire.texture = bild;
+        fx.fire.alpha = Math.min(1, (1 - t) * 4);
+        // Der Feuerball quillt auf, statt in fester Größe zu stehen.
+        const groesse = FX_SIZE.fire * (0.5 + t * 0.85);
+        fx.fire.width = groesse;
+        fx.fire.height = groesse;
       }
     }
   }

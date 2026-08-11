@@ -138,23 +138,67 @@ export const DEMO_TRAFFIC = [
 export const PATROL_MARGIN = 600;
 
 /**
- * Kielwasser: prozedural gezeichnete Schaumspur + Bugwellen-V je Fahrzeug.
- * Rein optisch, client-seitig aus den interpolierten Positionen — keine
- * Netzdaten, keine Assets. Intensität ∝ Fahrt, getaucht (depth→1) verschwindet
- * die Oberflächenspur.
+ * Kielwasser: Schaumspur aus Schaum-Sprites + Bugwellen-V je Fahrzeug.
+ * Client-seitig aus den interpolierten Positionen — keine Netzdaten.
+ * Intensität ∝ Fahrt, getaucht (depth→1) verschwindet die Oberflächenspur.
  */
 export const WAKE = {
-  /** Lebensdauer einer Schaumprobe in Sekunden — danach ist sie verblasst. */
-  maxAgeSeconds: 3.5,
-  /** Mindestabstand zwischen zwei Proben in Metern (begrenzt die Segmentzahl). */
-  minSampleDistance: 12,
-  foamColor: 0xdfeef4,
+  /**
+   * Lebensdauer einer Schaumprobe in Sekunden.
+   *
+   * 22 s und nicht die früheren 3,5: bei Marschfahrt (~16 m/s) ergaben 3,5 s
+   * ganze 56 m Spur — kürzer als das Schiff lang ist, weshalb praktisch kein
+   * Kielwasser zu sehen war. Jetzt reicht die Spur ~350 m nach achtern und ist
+   * damit auch beim Rauszoomen das, was Fahrt überhaupt sichtbar macht.
+   */
+  maxAgeSeconds: 22,
+  /** Mindestabstand zwischen zwei Proben in Metern (begrenzt die Sprite-Zahl). */
+  minSampleDistance: 11,
+  foamColor: 0xe6f2f7,
   /** Deckkraft der frischen Spur direkt am Heck. */
-  foamAlpha: 0.3,
+  foamAlpha: 0.8,
+  /**
+   * Abklingexponent der Spur.
+   *
+   * Unter 1 (also langsamer als linear) und NICHT quadratisch: mit (1−t)² war
+   * die Spur nach einem Drittel ihrer Länge optisch weg, egal wie lang man sie
+   * leben ließ — der lange Schwanz ist aber gerade das, was Fahrt erzählt.
+   */
+  fadeExponent: 0.65,
+  /**
+   * Obergrenze der Proben je Fahrzeug — jede kostet drei Sprites.
+   *
+   * Bei Höchstfahrt reicht die Lebensdauer für gut 56 Proben; die Grenze
+   * greift also nur, falls jemand später an Tempo oder Lebensdauer dreht.
+   * Sie ist die Zusicherung, dass ein Fahrzeug nie mehr als ~220 Sprites
+   * kostet, egal was in dieser Datei steht.
+   */
+  maxSamples: 70,
+  /** Halbe Breite der frischen Spur in Schiffsbreiten … */
+  spreadStart: 0.4,
+  /** … und am Ende der Lebensdauer — die Spur läuft nach achtern auseinander. */
+  spreadEnd: 2.4,
+  /** Durchmesser eines Schaumbatzens in Schiffsbreiten, frisch bzw. alt. */
+  puffStart: 2.1,
+  puffEnd: 5.4,
+  /** Deckkraft des Füllbatzens in der Spurmitte, relativ zu den Randbahnen. */
+  centreAlpha: 0.6,
   /** Halber Öffnungswinkel des Bugwellen-V. Kelvin-Winkel ≈ 19,47°. */
   bowAngleDeg: 19,
   /** Länge der V-Schenkel bei voller Fahrt, in Schiffslängen. */
-  bowLengthFactor: 1.1,
+  bowLengthFactor: 1.8,
+  /**
+   * Zahl der Schaumbatzen je V-Schenkel — und ihre Deckkraft.
+   *
+   * Bewusst schwächer als die Hecksee: die Bugwelle STÜTZT das Bild, die Spur
+   * hinter dem Heck ist das, was ein Schiff auf See kenntlich macht. In der
+   * ersten Fassung war es umgekehrt, und das Ergebnis sah aus wie zwei
+   * gezogene Striche.
+   */
+  bowPuffs: 7,
+  bowAlpha: 0.34,
+  /** Deckkraft des Schattens, den der Rumpf aufs Wasser wirft. */
+  shadowAlpha: 0.34,
 } as const;
 
 /**

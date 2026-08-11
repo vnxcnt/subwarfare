@@ -1,6 +1,7 @@
 import { DEG, DEFAULT_VESSEL_MODEL, HULL_DIMENSIONS, angleDelta } from '@subwarfare/shared';
-import { Container, Graphics, Sprite } from 'pixi.js';
+import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { HULL, WAKE } from '../../config';
+import { foamTexture, smokeTexture } from '../fx-textures';
 import { getTilt } from '../Projection';
 import { directionFrame, hasVesselTextures, periscopeFrame } from '../textures';
 import type { Vessel } from '@subwarfare/shared';
@@ -30,7 +31,10 @@ const SILHOUETTE = [
 const PING_SECONDS = 0.3;
 
 /** Lebensdauer eines Rauchpartikels in Sekunden. */
-const SMOKE_MAX_AGE = 2.4;
+const SMOKE_MAX_AGE = 3.4;
+
+/** Eckenzahl des Kontaktschattens — genug, dass die Ellipse rund wirkt. */
+const SHADOW_SEGMENTS = 20;
 
 /**
  * Dauer der Überblendung beim Framewechsel. Kurz genug, um bei 8°/s Drehrate
@@ -68,9 +72,30 @@ export class VesselView {
    * Kielwasser: Schaumspur aus der Positionshistorie plus Bugwellen-V. Liegt
    * wie die Wegpunktgrafik IN der Wasserebene — Schaum liegt AUF dem Wasser
    * und soll die Projektion mitmachen.
+   *
+   * Der Schaum besteht aus Sprites, nicht aus Strichen: eine Linie mit runder
+   * Kappe ist eine Linie, egal wie breit man sie zieht. Die Kontur des
+   * Schaumbatzens macht den Unterschied.
    */
-  private readonly wake = new Graphics();
-  private readonly wakeSamples: Array<{ x: number; y: number; age: number }> = [];
+  private readonly wakeRoot = new Container();
+  private readonly wakeShapes = new Graphics();
+  private readonly foamLayer = new Container();
+  private readonly foamPool: Sprite[] = [];
+  private readonly wakeSamples: Array<{
+    x: number;
+    y: number;
+    age: number;
+    /** Kurs beim Ablegen der Probe — bestimmt, wohin die Spur auseinanderläuft. */
+    heading: number;
+    /** Fahrtanteil beim Ablegen: langsame Fahrt hinterlässt blasseren Schaum. */
+    strength: number;
+    /** Feste Zufallsdrehung, damit sich die Batzen nicht als Muster wiederholen. */
+    spin: number;
+  }> = [];
+  /** Läuft mit, damit die Bugsee atmet statt starr am Bug zu kleben. */
+  private sprayPhase = 0;
+  /** Umriss des Kontaktschattens, wiederverwendet — das läuft jeden Frame. */
+  private readonly shadowPoints = new Array<number>(SHADOW_SEGMENTS * 2).fill(0);
 
   /**
    * Überblendung beim Framewechsel: der ALTE Frame liegt kurz über dem neuen
@@ -89,16 +114,21 @@ export class VesselView {
   private readonly periscope: Sprite | null = null;
 
   /**
-   * Schadensrauch: prozedurale Partikel (aufsteigende, wachsende, verblassende
-   * Kreise) ÜBER dem Rumpf. Lebt im aufrechten Billboard-Container — Rauch
-   * steigt senkrecht im Bild, die Wasserebene würde ihn flach scheren.
+   * Schadensrauch: aufsteigende, wachsende, verblassende Rauchballen ÜBER dem
+   * Rumpf. Lebt im aufrechten Billboard-Container — Rauch steigt senkrecht im
+   * Bild, die Wasserebene würde ihn flach scheren.
    */
-  private readonly smoke = new Graphics();
+  private readonly smokeLayer = new Container();
+  private readonly smokePool: Sprite[] = [];
   private readonly smokeParticles: Array<{
     x: number;
-    drift: number;
+    /** Bildschirm-Drift pro Sekunde: Fahrtwind nach achtern plus Seitenwind. */
+    vx: number;
+    vy: number;
     age: number;
     dark: boolean;
+    spin: number;
+    turn: number;
   }> = [];
   private smokeSpawnIn = 0;
 
@@ -106,6 +136,9 @@ export class VesselView {
   private pingAge = PING_SECONDS;
 
   constructor() {
+    // Schatten und Bugwellen-V unter den Schaum: der Schaum liegt obenauf.
+    this.wakeRoot.addChild(this.wakeShapes, this.foamLayer);
+
     this.hull = createHull();
     this.root.addChild(this.hull);
 
@@ -123,23 +156,55 @@ export class VesselView {
     }
 
     // Rauch als OBERSTES Kind — er soll über Rumpf und Aufbauten liegen.
-    this.root.addChild(this.smoke);
+    this.root.addChild(this.smokeLayer);
   }
 
   /** Außerhalb der optischen Sicht wird gar nicht erst gezeichnet. */
   setVisible(visible: boolean): void {
     this.root.visible = visible;
     this.order.visible = visible;
-    this.wake.visible = visible;
+    this.wakeRoot.visible = visible;
+  }
+
+  /**
+   * Alterung OHNE Zeichnen — für Fahrzeuge außerhalb der optischen Sicht.
+   *
+   * `EntityLayer.syncViews` ruft `sync` für sie nicht auf. Ohne diesen Tick
+   * stünde die Schaumspur eingefroren im Vorrat: verschwindet ein Kontakt für
+   * eine Minute aus dem Sichtkreis und taucht wieder auf, erschiene schlagartig
+   * eine 22 s alte Spur, als wäre sie eben entstanden. Bei der früheren
+   * Lebensdauer von 3,5 s fiel das nicht auf, bei 22 s sehr wohl.
+   *
+   * Kostet nur das Fortschreiben zweier Zahlenlisten — es werden weder Sprites
+   * angefasst noch Geometrie neu gebaut.
+   */
+  age(frameSeconds: number): void {
+    for (const sample of this.wakeSamples) sample.age += frameSeconds;
+    while (
+      this.wakeSamples.length > 0 &&
+      (this.wakeSamples[0]!.age > WAKE.maxAgeSeconds || this.wakeSamples.length > WAKE.maxSamples)
+    ) {
+      this.wakeSamples.shift();
+    }
+
+    for (const particle of this.smokeParticles) particle.age += frameSeconds;
+    while (this.smokeParticles.length > 0 && this.smokeParticles[0]!.age > SMOKE_MAX_AGE) {
+      this.smokeParticles.shift();
+    }
   }
 
   attach(waterLayer: Container, billboardLayer: Container): void {
     // Spur zuerst — sie soll UNTER Wegpunktgrafik und Effekten liegen.
-    waterLayer.addChild(this.wake, this.order);
+    waterLayer.addChild(this.wakeRoot, this.order);
     billboardLayer.addChild(this.root);
   }
 
   sync(model: Vessel, zoom: number, frameSeconds: number, isOwn = false): void {
+    // Alterung an EINER Stelle — dieselbe, die auch für unsichtbare Fahrzeuge
+    // läuft. Getrennte Zähler in drawWake und updateSmoke wären zwangsläufig
+    // irgendwann auseinandergelaufen.
+    this.age(frameSeconds);
+
     // Vorprojiziert: die aufrechte Ebene staucht nicht selbst, also muss die
     // Position die Stauchung mitbringen. `tilt` pro Frame gelesen — er ist
     // zur Laufzeit verstellbar.
@@ -257,52 +322,77 @@ export class VesselView {
    * leicht nach Lee, wachsen und verblassen. Unter Wasser raucht nichts.
    */
   private updateSmoke(model: Vessel, frameSeconds: number): void {
-    const g = this.smoke;
     const level = model.smoke;
     const active = level > 0 && model.depth < 0.5;
-
-    for (const particle of this.smokeParticles) particle.age += frameSeconds;
-    while (this.smokeParticles.length > 0 && this.smokeParticles[0]!.age > SMOKE_MAX_AGE) {
-      this.smokeParticles.shift();
-    }
+    // Die Alterung der Partikel ist bereits in `age()` passiert.
 
     if (active) {
       this.smokeSpawnIn -= frameSeconds;
       if (this.smokeSpawnIn <= 0) {
-        this.smokeSpawnIn = level === 2 ? 0.16 : 0.32;
+        this.smokeSpawnIn = level === 2 ? 0.13 : 0.26;
+        // Fahrtwind: der Qualm bleibt zurück, während das Schiff weiterfährt.
+        // Ohne das klebt die Fahne am Schornstein, egal wie schnell es läuft.
+        // Richtung im BILD, nicht in der Welt — der Rauch lebt in der
+        // aufrechten Ebene, deren y-Achse die Kippung schon eingerechnet hat.
+        const heading = model.rotation * DEG;
+        const achtern = -Math.min(Math.abs(model.speed), 40) * 0.6;
         // `Math.random` ist hier erlaubt: reine Client-Optik, keine Simulation.
         this.smokeParticles.push({
           x: (Math.random() - 0.5) * 8,
-          drift: 3 + Math.random() * 5,
+          vx: Math.sin(heading) * achtern + (Math.random() - 0.5) * 6,
+          vy: -Math.cos(heading) * achtern * getTilt() + (Math.random() - 0.5) * 4,
           age: 0,
           dark: level === 2,
+          spin: Math.random() * Math.PI * 2,
+          turn: (Math.random() - 0.5) * 0.9,
         });
-        if (this.smokeParticles.length > 24) this.smokeParticles.shift();
+        if (this.smokeParticles.length > 32) this.smokeParticles.shift();
       }
     }
 
-    if (this.smokeParticles.length === 0) {
-      if (g.context.instructions.length > 0) g.clear();
-      return;
+    const texture = smokeTexture();
+    let used = 0;
+    if (texture) {
+      for (const particle of this.smokeParticles) {
+        const t = particle.age / SMOKE_MAX_AGE;
+        const alpha = (particle.dark ? 0.85 : 0.55) * (1 - t);
+        if (alpha < 0.015) continue;
+        const sprite = this.smokeAt(used, texture);
+        used += 1;
+        // Aufsteigend, nach Lee driftend, wachsend — und langsam drehend,
+        // damit der Ballen quillt statt nur größer zu werden.
+        const size = 10 + t * 38;
+        sprite.position.set(
+          particle.x + particle.vx * particle.age,
+          -(6 + particle.age * 16) + particle.vy * particle.age,
+        );
+        sprite.width = size;
+        sprite.height = size;
+        sprite.alpha = alpha;
+        sprite.rotation = particle.spin + particle.turn * particle.age;
+        // ⚠️ Der schwarze Rauch muss DEUTLICH dunkler sein als das Wasser
+        // (≈0x192830). Mit einem mittleren Grau war er zwar da — 14 Sprites im
+        // Baum —, aber vom Ozean nicht zu unterscheiden.
+        sprite.tint = particle.dark ? 0x0a0d10 : 0xe8eef2;
+      }
     }
+    for (let i = used; i < this.smokePool.length; i += 1) this.smokePool[i]!.visible = false;
+    for (let i = 0; i < used; i += 1) this.smokePool[i]!.visible = true;
+  }
 
-    g.clear();
-    for (const particle of this.smokeParticles) {
-      const t = particle.age / SMOKE_MAX_AGE;
-      const alpha = (particle.dark ? 0.42 : 0.3) * (1 - t);
-      if (alpha < 0.015) continue;
-      const radius = 2.5 + t * 9;
-      const rise = 6 + particle.age * 14;
-      g.circle(particle.x + particle.drift * particle.age, -rise, radius).fill({
-        color: particle.dark ? 0x16181b : 0xdde3e8,
-        alpha,
-      });
+  private smokeAt(index: number, texture: Texture): Sprite {
+    let sprite = this.smokePool[index];
+    if (!sprite) {
+      sprite = new Sprite({ texture, anchor: 0.5 });
+      this.smokePool.push(sprite);
+      this.smokeLayer.addChild(sprite);
     }
+    return sprite;
   }
 
   detach(): void {
     this.order.removeFromParent();
-    this.wake.removeFromParent();
+    this.wakeRoot.removeFromParent();
     this.root.removeFromParent();
   }
 
@@ -310,8 +400,9 @@ export class VesselView {
     this.detach();
     // `context: true` ist nötig — die eigenen GraphicsContexts hängen nicht an
     // den Default-DestroyOptions und blieben sonst samt Geometrie auf der GPU.
+    // Die Effekt-Texturen sind geteilt und werden bewusst NICHT mitzerstört.
     this.order.destroy({ context: true });
-    this.wake.destroy({ context: true });
+    this.wakeRoot.destroy({ children: true, context: true });
     this.root.destroy({ children: true, context: true });
   }
 
@@ -321,12 +412,9 @@ export class VesselView {
    * Boot hinterlässt an der Oberfläche nichts (Faktor 1 − depth).
    */
   private drawWake(model: Vessel, frameSeconds: number): void {
-    const g = this.wake;
-
-    for (const sample of this.wakeSamples) sample.age += frameSeconds;
-    while (this.wakeSamples.length > 0 && this.wakeSamples[0]!.age > WAKE.maxAgeSeconds) {
-      this.wakeSamples.shift();
-    }
+    const g = this.wakeShapes;
+    this.sprayPhase += frameSeconds;
+    // Die Alterung der Proben ist bereits in `age()` passiert.
 
     const speedRatio =
       model.maxForward > 0 ? Math.min(Math.abs(model.speed) / model.maxForward, 1) : 0;
@@ -345,49 +433,171 @@ export class VesselView {
       intensity > 0.05 &&
       (!newest || Math.hypot(sternX - newest.x, sternY - newest.y) > WAKE.minSampleDistance)
     ) {
-      this.wakeSamples.push({ x: sternX, y: sternY, age: 0 });
+      // `Math.random` ist hier erlaubt: reine Client-Optik, keine Simulation.
+      this.wakeSamples.push({
+        x: sternX,
+        y: sternY,
+        age: 0,
+        heading,
+        strength: intensity,
+        spin: Math.random() * Math.PI * 2,
+      });
     }
 
     g.clear();
-    if (this.wakeSamples.length === 0 && intensity <= 0.05) return;
+    this.drawContactShadow(model, dims, heading, surface);
 
-    // Schaumspur: jedes Segment verblasst quadratisch (Schaum zerfällt erst
-    // langsam, dann schnell) und läuft dabei in die Breite.
-    for (let i = 1; i < this.wakeSamples.length; i += 1) {
-      const a = this.wakeSamples[i - 1]!;
-      const b = this.wakeSamples[i]!;
-      const age = (a.age + b.age) / 2;
-      const t = age / WAKE.maxAgeSeconds;
-      const alpha = WAKE.foamAlpha * (1 - t) * (1 - t);
-      if (alpha < 0.015) continue;
-      const width = dims.beam * (0.45 + t * 1.1);
-      g.moveTo(a.x, a.y).lineTo(b.x, b.y).stroke({ color: WAKE.foamColor, alpha, width });
-    }
-    // Die jüngste Probe ans Heck anbinden, sonst klafft bei Fahrt eine Lücke.
-    if (newest && intensity > 0.05) {
-      const t = newest.age / WAKE.maxAgeSeconds;
-      g.moveTo(newest.x, newest.y)
-        .lineTo(sternX, sternY)
-        .stroke({
-          color: WAKE.foamColor,
-          alpha: WAKE.foamAlpha * (1 - t),
-          width: dims.beam * 0.45,
-        });
-    }
+    const bowX = model.x + forwardX * dims.length * 0.5;
+    const bowY = model.y + forwardY * dims.length * 0.5;
+    this.drawFoam(model, dims, intensity, bowX, bowY, sternX, sternY);
+  }
 
-    // Bugwellen-V: zwei Schenkel schräg nach achtern, Länge ∝ Fahrt.
-    if (intensity > 0.05) {
-      const bowX = model.x + forwardX * dims.length * 0.5;
-      const bowY = model.y + forwardY * dims.length * 0.5;
-      const length = dims.length * WAKE.bowLengthFactor * intensity;
-      const backDegrees = model.rotation + 180;
+  /**
+   * Kontaktschatten unter dem Rumpf.
+   *
+   * Ohne ihn klebt das Billboard wie ein Aufkleber auf dem Wasser — es fehlt
+   * jeder Hinweis, dass der Rumpf im Wasser LIEGT. Bewusst zentriert statt in
+   * Sonnenrichtung versetzt: das ist keine Schlagschatten-Simulation, sondern
+   * die Verdrängung und Verschattung direkt unter dem Schiff.
+   */
+  private drawContactShadow(
+    model: Vessel,
+    dims: { length: number; beam: number },
+    heading: number,
+    surface: number,
+  ): void {
+    if (surface <= 0.05) return;
+
+    const halfLength = dims.length * 0.52;
+    const halfBeam = dims.beam * 0.62;
+    const cos = Math.cos(heading);
+    const sin = Math.sin(heading);
+    for (let i = 0; i < SHADOW_SEGMENTS; i += 1) {
+      const a = (i / SHADOW_SEGMENTS) * Math.PI * 2;
+      const quer = Math.sin(a) * halfBeam;
+      const laengs = Math.cos(a) * halfLength;
+      this.shadowPoints[i * 2] = model.x + quer * cos + laengs * sin;
+      this.shadowPoints[i * 2 + 1] = model.y + quer * sin - laengs * cos;
+    }
+    // Deutlich dunkler als das Wasser gewählt: bei 0x04141d lag der Schatten so
+    // nah am Ozeanblau, dass er schlicht nicht zu sehen war.
+    this.wakeShapes
+      .poly(this.shadowPoints, true)
+      .fill({ color: 0x01070b, alpha: WAKE.shadowAlpha * surface });
+  }
+
+  /**
+   * Schaum als Sprites: je Probe zwei Batzen links und rechts der Spurmitte,
+   * dazu Bugsee und die beiden Kelvin-Schenkel. Ein Strich mit runder Kappe
+   * bleibt ein Strich — erst die ausgefranste Kontur sieht nach Schaum aus,
+   * und genau daran scheiterte die vorherige `Graphics`-Fassung.
+   */
+  private drawFoam(
+    model: Vessel,
+    dims: { length: number; beam: number },
+    intensity: number,
+    bowX: number,
+    bowY: number,
+    sternX: number,
+    sternY: number,
+  ): void {
+    const texture = foamTexture();
+    if (!texture) return;
+
+    let used = 0;
+    for (const sample of this.wakeSamples) {
+      const t = sample.age / WAKE.maxAgeSeconds;
+      const alpha = WAKE.foamAlpha * sample.strength * (1 - t) ** WAKE.fadeExponent;
+      if (alpha < 0.012) continue;
+
+      const spread = dims.beam * (WAKE.spreadStart + t * (WAKE.spreadEnd - WAKE.spreadStart));
+      const size = dims.beam * (WAKE.puffStart + t * (WAKE.puffEnd - WAKE.puffStart));
+      const quer = Math.cos(sample.heading);
+      const laengs = Math.sin(sample.heading);
+
+      // Mitte zuerst, blasser und breiter: die beiden Randbahnen allein lasen
+      // sich als zwei getrennte Streifen mit einem Loch dazwischen — dabei ist
+      // gerade die Mitte der Spur das aufgewühlte Wasser.
+      const mitte = this.foamAt(used, texture);
+      used += 1;
+      mitte.position.set(sample.x, sample.y);
+      mitte.width = size * 1.35;
+      mitte.height = mitte.width;
+      mitte.alpha = alpha * WAKE.centreAlpha;
+      mitte.rotation = sample.spin * 2.3;
+
       for (const side of [-1, 1]) {
-        const angle = (backDegrees + side * WAKE.bowAngleDeg) * DEG;
-        g.moveTo(bowX, bowY)
-          .lineTo(bowX + Math.sin(angle) * length, bowY - Math.cos(angle) * length)
-          .stroke({ color: WAKE.foamColor, alpha: 0.3 * intensity, width: dims.beam * 0.14 });
+        const sprite = this.foamAt(used, texture);
+        used += 1;
+        sprite.position.set(sample.x + quer * spread * side, sample.y + laengs * spread * side);
+        sprite.width = size;
+        sprite.height = size;
+        sprite.alpha = alpha;
+        sprite.rotation = sample.spin + side * 1.7;
       }
     }
+
+    if (intensity > 0.08) {
+      const puls = 0.85 + 0.15 * Math.sin(this.sprayPhase * 5.5);
+
+      // Schraubenwasser: der hellste Fleck der ganzen Spur sitzt direkt am
+      // Heck. Die jüngste Probe liegt bis zu `minSampleDistance` dahinter —
+      // ohne diesen Batzen klaffte dort die Lücke, die vorher die Linie zum
+      // Heck geschlossen hat.
+      const kochen = this.foamAt(used, texture);
+      used += 1;
+      kochen.position.set(sternX, sternY);
+      kochen.width = dims.beam * 2.4 * puls;
+      kochen.height = kochen.width;
+      kochen.alpha = WAKE.foamAlpha * intensity;
+      kochen.rotation = this.sprayPhase * 1.4;
+
+      // Bugsee: ein Batzen direkt am Bug, leicht pulsierend, sonst klebte er
+      // starr am Rumpf.
+      const bug = this.foamAt(used, texture);
+      used += 1;
+      bug.position.set(bowX, bowY);
+      bug.width = dims.beam * 1.6 * puls;
+      bug.height = bug.width;
+      bug.alpha = 0.6 * intensity;
+      bug.rotation = this.sprayPhase * 0.6;
+
+      // Kelvin-Schenkel: zwei Reihen Schaumbatzen schräg nach achtern. Als
+      // gezeichnete Linien sahen sie wie mit dem Lineal gezogen aus.
+      const laenge = dims.length * WAKE.bowLengthFactor * intensity;
+      const rueckwaerts = model.rotation + 180;
+      for (const side of [-1, 1]) {
+        const winkel = (rueckwaerts + side * WAKE.bowAngleDeg) * DEG;
+        const dx = Math.sin(winkel);
+        const dy = -Math.cos(winkel);
+        for (let i = 0; i < WAKE.bowPuffs; i += 1) {
+          const f = (i + 1) / WAKE.bowPuffs;
+          const sprite = this.foamAt(used, texture);
+          used += 1;
+          sprite.position.set(bowX + dx * laenge * f, bowY + dy * laenge * f);
+          sprite.width = dims.beam * (0.9 + f * 1.6);
+          sprite.height = sprite.width;
+          sprite.alpha = WAKE.bowAlpha * intensity * (1 - f * 0.8);
+          sprite.rotation = i * 1.3 + side;
+        }
+      }
+    }
+
+    // Übrige Sprites aus dem Vorrat bleiben liegen, aber unsichtbar — sie
+    // jedes Mal neu anzulegen wäre der teure Weg.
+    for (let i = used; i < this.foamPool.length; i += 1) this.foamPool[i]!.visible = false;
+    for (let i = 0; i < used; i += 1) this.foamPool[i]!.visible = true;
+  }
+
+  private foamAt(index: number, texture: Texture): Sprite {
+    let sprite = this.foamPool[index];
+    if (!sprite) {
+      sprite = new Sprite({ texture, anchor: 0.5 });
+      sprite.tint = WAKE.foamColor;
+      this.foamPool.push(sprite);
+      this.foamLayer.addChild(sprite);
+    }
+    return sprite;
   }
 
   private drawOrder(model: Vessel, zoom: number, frameSeconds: number): void {

@@ -56,3 +56,7 @@ lerna-debug.log*
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# --- Python (tools/) ---
+__pycache__/
+*.pyc

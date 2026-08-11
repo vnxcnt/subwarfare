@@ -35,6 +35,7 @@ import {
 } from '@subwarfare/shared';
 import { GameSocket } from '../network/GameSocket';
 import { keys, settingsModalOpen } from '../state/settings';
+import { loadFxTextures } from './fx-textures';
 import { getTilt, setTilt } from './Projection';
 import { GameAudio } from './sound';
 import { loadVesselTextures } from './textures';
@@ -278,8 +279,10 @@ export class Game {
     this.resizeObserver.observe(host);
 
     // Muss VOR dem ersten spawn stehen — `VesselView` greift synchron auf die
-    // Textur zu und fiele sonst auf das Vektorpolygon zurück.
-    await loadVesselTextures();
+    // Textur zu und fiele sonst auf das Vektorpolygon zurück. Die Effekt-
+    // Grafiken hängen mit dran: Kielwasser und Rauch fragen sie jeden Frame
+    // synchron ab und zeichnen ohne sie schlicht nichts.
+    await Promise.all([loadVesselTextures(), loadFxTextures()]);
 
     // Lief destroy() während des Texturladens, hat es `this.app` (oben schon
     // gesetzt) bereits abgeräumt — hier nur noch aussteigen.
