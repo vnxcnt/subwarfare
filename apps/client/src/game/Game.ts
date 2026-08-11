@@ -701,6 +701,26 @@ export class Game {
   }
 
   /**
+   * Kamerafolgen ein- oder ausschalten.
+   *
+   * Bisher wurde das Folgen nur BEILÄUFIG gesetzt: beim Betreten der Karte,
+   * beim Einschalten des Zielmodus — und vom Kamera-Ziehen wieder abgeschaltet.
+   * Damit gab es keinen Weg zurück, außer den Zielmodus zu benutzen. Der Knopf
+   * in der Statusleiste braucht diese Naht.
+   */
+  setFollowing(on: boolean): void {
+    const world = this.world;
+    if (!world) return;
+    const own = this.ownVessel;
+    if (on && own) {
+      world.centerOn(own.x, own.y);
+      world.follow(own);
+    } else {
+      world.stopFollowing();
+    }
+  }
+
+  /**
    * Q schaltet den Zielmodus. Beim Einschalten zentriert die Kamera aufs
    * eigene Boot und folgt ihm — gezielt wird relativ zum Schiff, die Karte
    * soll dabei nicht wegdriften.

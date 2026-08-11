@@ -278,6 +278,14 @@ export function orderPeriscope(extended: boolean): void {
   game?.orderPeriscope(extended);
 }
 
+/**
+ * Kamerafolgen ein-/ausschalten. Rein clientseitig — die Kamera ist keine
+ * Spielmechanik, der Server erfährt davon nichts.
+ */
+export function orderFollow(on: boolean): void {
+  game?.setFollowing(on);
+}
+
 /** Entwickler: eigenes Schiffsmodell wechseln (Server prüft die Rolle). */
 export function devSetModel(model: VesselModel): void {
   game?.devSetModel(model);

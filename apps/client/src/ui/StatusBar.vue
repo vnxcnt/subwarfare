@@ -1,15 +1,34 @@
 <script setup lang="ts">
 import { ROLE_DEVELOPER } from '@subwarfare/shared';
 import { computed } from 'vue';
+import { useRouter } from 'vue-router';
+import devIcon from '../assets/ui/ingame_dev.png';
+import exitIcon from '../assets/ui/ingame_exit.png';
+import followOffIcon from '../assets/ui/ingame_follow_off.png';
+import followOnIcon from '../assets/ui/ingame_follow_on.png';
+import settingsIcon from '../assets/ui/ingame_settings.png';
 import { KNOTS } from '../config';
 import { account } from '../state/auth';
-import { hud } from '../state/hud';
+import { hud, orderFollow } from '../state/hud';
 import { keyLabel, keys } from '../state/settings';
 
 const isDev = import.meta.env.DEV;
 const isDeveloper = computed(() => (account.value?.role ?? 0) >= ROLE_DEVELOPER);
 
 const emit = defineEmits<{ 'toggle-dev': []; 'toggle-settings': [] }>();
+
+/**
+ * Zurück ins Hauptmenü.
+ *
+ * `replace` statt `push`: die Partie ist danach beendet, ein Zurück-Knopf
+ * dürfte nicht auf eine tote Karte führen. Das Aufräumen erledigt PlayView in
+ * seinem `onBeforeUnmount` — dieselbe Naht, über die auch Rauswurf und
+ * Verbindungsabriss zurückführen.
+ */
+const router = useRouter();
+function leaveToMenu(): void {
+  void router.replace({ name: 'menu' });
+}
 
 const position = computed(() =>
   hud.value.ready ? `${Math.round(hud.value.x)} / ${Math.round(hud.value.y)}` : '—',
@@ -63,9 +82,20 @@ const keyHint = computed(
     <span class="status__item hud__num">{{ course }}</span>
     <span class="status__item hud__num">{{ speed }}</span>
     <span class="status__item hud__num">{{ hud.zoom.toFixed(2) }}×</span>
-    <span class="status__chip" :class="{ 'status__chip--on': hud.following }">
-      {{ hud.following ? 'Folgen an' : 'Folgen aus' }}
-    </span>
+    <!--
+      Folgen ist ein SCHALTER, kein Statustext: bisher schaltete das Ziehen der
+      Karte es ab, und es gab keinen Weg zurück außer über den Zielmodus.
+    -->
+    <button
+      class="status__knopf"
+      type="button"
+      :title="hud.following ? 'Kamera folgt — zum Lösen klicken' : 'Kamera folgt nicht — zum Anheften klicken'"
+      :aria-label="hud.following ? 'Kamerafolgen ausschalten' : 'Kamerafolgen einschalten'"
+      :aria-pressed="hud.following"
+      @click="orderFollow(!hud.following)"
+    >
+      <img class="status__icon" :src="hud.following ? followOnIcon : followOffIcon" alt="" />
+    </button>
     <span v-if="isDev" class="status__item hud__num">Neigung {{ tilt }}</span>
     <!--
       Hinweis und Knöpfe in EINEM rechtsbündigen Block: der Hinweis wird auf
@@ -82,22 +112,31 @@ const keyHint = computed(
       -->
       <button
         v-if="isDeveloper"
-        class="status__dev"
+        class="status__knopf"
         type="button"
         title="Entwicklermenü"
         aria-label="Entwicklermenü"
         @click="emit('toggle-dev')"
       >
-        <span class="material-symbols-outlined">build_circle</span>
+        <img class="status__icon" :src="devIcon" alt="" />
       </button>
       <button
-        class="status__dev"
+        class="status__knopf"
         type="button"
         title="Einstellungen"
         aria-label="Einstellungen"
         @click="emit('toggle-settings')"
       >
-        <span class="material-symbols-outlined">settings</span>
+        <img class="status__icon" :src="settingsIcon" alt="" />
+      </button>
+      <button
+        class="status__knopf"
+        type="button"
+        title="Zurück zum Hauptmenü"
+        aria-label="Zurück zum Hauptmenü"
+        @click="leaveToMenu"
+      >
+        <img class="status__icon status__icon--breit" :src="exitIcon" alt="" />
       </button>
     </span>
   </header>
@@ -109,8 +148,10 @@ const keyHint = computed(
   gap: 0.75rem;
   align-items: baseline;
   /* Eigener Innenabstand: `.hud-root` hat keinen mehr, damit der Hintergrund
-     bis an die Fensterkanten reicht. */
-  padding: 0.5rem 16px;
+     bis an die Fensterkanten reicht.
+     Unten deutlich knapper als oben: darunter folgt die Zierleiste, und der
+     symmetrische Abstand ließ dazwischen einen leeren grauen Streifen stehen. */
+  padding: 0.4rem 16px 0.15rem;
   background: #363738;
   font-size: calc(0.8125rem * var(--ui-scale));
   letter-spacing: 0.04em;
@@ -126,20 +167,6 @@ const keyHint = computed(
   opacity: 0.75;
 }
 
-.status__chip {
-  padding: 0.1rem 0.45rem;
-  border: 1px solid currentcolor;
-  border-radius: 2px;
-  opacity: 0.35;
-  font-size: calc(0.6875rem * var(--ui-scale));
-  text-transform: uppercase;
-}
-
-.status__chip--on {
-  color: var(--ui-accent);
-  opacity: 0.85;
-}
-
 .status__right {
   margin-left: auto;
   display: inline-flex;
@@ -151,25 +178,41 @@ const keyHint = computed(
   opacity: 0.4;
 }
 
-.status__dev {
+.status__knopf {
   display: inline-flex;
   align-items: center;
   padding: 0;
   border: none;
   background: none;
-  color: var(--ui-accent);
   cursor: pointer;
-  opacity: 0.8;
-  /* Selbst zentrieren statt an der Baseline hängen — das Icon hat keine. */
+  opacity: 0.9;
+  /* Selbst zentrieren statt an der Baseline hängen — Bilder haben keine. */
   align-self: center;
+  transition: opacity 120ms ease;
 }
 
-.status__dev:hover {
+.status__knopf:hover {
   opacity: 1;
 }
 
-.status__dev .material-symbols-outlined {
-  font-size: 20px;
+.status__knopf:active .status__icon {
+  transform: translateY(1px);
+}
+
+/*
+ * Feste Höhe, Breite aus dem Seitenverhältnis. Die Vorlagen sind 64 px hoch;
+ * auf 26 px verkleinert bleiben die gefassten Ränder sauber, ohne die Leiste
+ * aufzublähen. `display: block` verhindert den Zeilenabstand unter dem Bild,
+ * der sonst die Leiste um ein paar Pixel höher machen würde.
+ */
+.status__icon {
+  display: block;
+  height: 26px;
+  width: auto;
+}
+
+.status__icon--breit {
+  height: 26px;
 }
 
 @media (max-width: 900px) {
