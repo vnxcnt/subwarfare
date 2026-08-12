@@ -3,6 +3,7 @@ import type {
   DestroyedPayload,
   ExtractedPayload,
   FxPayload,
+  LogPayload,
   OwnStatePayload,
   ServerToClientEvents,
   StatePayload,
@@ -24,6 +25,8 @@ export interface GameSocketHandlers {
   onDestroyed: (payload: DestroyedPayload) => void;
   /** Erfolgreich extrahiert — Loot ist gesichert, der Server trennt gleich. */
   onExtracted: (payload: ExtractedPayload) => void;
+  /** Ereignismeldung fürs Log (welt/lokal/event). */
+  onLog: (payload: LogPayload) => void;
   /** Wetterwechsel zur Laufzeit (heute: Entwicklermenü). */
   onWeather: (payload: WeatherState) => void;
   /** Sitzungsende — Rauswurf, Ablehnung des Tickets oder Verbindungsabriss. */
@@ -79,6 +82,7 @@ export class GameSocket {
       handlers.onExtracted(payload);
     });
     socket.on('weather', handlers.onWeather);
+    socket.on('log', handlers.onLog);
     socket.on('kicked', (payload) => end(payload.message));
     socket.on('connect_error', (error) => end(error.message || 'Verbindung abgelehnt.'));
     socket.on('disconnect', (reason) => {

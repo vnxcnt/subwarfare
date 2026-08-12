@@ -96,8 +96,12 @@ const WAFFE_ZU_KIND: Record<Projectile['kind'], WeaponId> = {
 export interface WorldEvents {
   /** Einschläge (Torpedo trifft Rumpf) an ihren Weltpunkten. */
   impacts: Array<{ x: number; y: number }>;
-  /** Versenkte Fahrzeuge. Sie stehen noch in der Welt — entfernen entscheidet der Aufrufer. */
-  destroyed: Array<{ id: PlayerId; x: number; y: number }>;
+  /**
+   * Versenkte Fahrzeuge. Sie stehen noch in der Welt — entfernen entscheidet
+   * der Aufrufer. `killerId` ist der Besitzer des tödlichen Projektils; null
+   * nur, wenn der Schütze nicht mehr feststellbar ist.
+   */
+  destroyed: Array<{ id: PlayerId; x: number; y: number; killerId: PlayerId | null }>;
 }
 
 /**
@@ -492,7 +496,7 @@ export class World {
       const schaden = Math.round(charge.damage * anteil);
       if (schaden <= 0) continue;
 
-      this.applyHit(vessel, schaden, 'wasserbombe', events, sunkThisStep);
+      this.applyHit(vessel, schaden, 'wasserbombe', charge.ownerId, events, sunkThisStep);
     }
   }
 
@@ -512,6 +516,7 @@ export class World {
     vessel: Vessel,
     damage: number,
     kind: ArmorHitKind,
+    killerId: PlayerId,
     events: WorldEvents,
     sunkThisStep: Set<PlayerId>,
   ): void {
@@ -535,7 +540,7 @@ export class World {
     this.hitpoints.set(vessel.id, Math.max(remaining, 0));
     if (remaining <= 0) {
       sunkThisStep.add(vessel.id);
-      events.destroyed.push({ id: vessel.id, x: vessel.x, y: vessel.y });
+      events.destroyed.push({ id: vessel.id, x: vessel.x, y: vessel.y, killerId });
     } else {
       this.applyDamageEffects(vessel, remaining);
     }
@@ -720,6 +725,7 @@ export class World {
         victim,
         projectile.damage,
         projectile.kind === 'torpedo' ? 'torpedo' : 'geschuetz',
+        projectile.ownerId,
         events,
         sunkThisStep,
       );

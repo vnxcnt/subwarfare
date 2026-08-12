@@ -1,6 +1,6 @@
 import type { ArmorState, TubeState, VesselModel, WeaponId, WeatherState } from '@subwarfare/shared';
 import { DEFAULT_WEATHER, SHIP_TYPE_SUBMARINE } from '@subwarfare/shared';
-import { shallowRef, triggerRef } from 'vue';
+import { ref, shallowRef, triggerRef } from 'vue';
 import { SONAR } from '../config';
 import type { Game } from '../game/Game';
 import { getTilt } from '../game/Projection';
@@ -118,6 +118,36 @@ export const hud = shallowRef<HudState>({
   contacts: [],
 });
 
+/** Ein Eintrag im Ereignislog unten links. */
+export interface LogEntry {
+  id: number;
+  kind: 'welt' | 'lokal' | 'event';
+  text: string;
+  /** Ankunft in ms (Date.now) — steuert das Ausblenden alter Einträge. */
+  at: number;
+}
+
+/** Höchstens so viele Einträge gleichzeitig — das Log ist Lauftext, kein Archiv. */
+const LOG_LIMIT = 6;
+
+/**
+ * Ereignislog — eigener Ref NEBEN dem hud-Snapshot: Ereignisse kommen
+ * ereignisgetrieben vom Server, nicht im Frame-Takt, und ein normales
+ * `ref` mit neuem Array je Push reicht dafür völlig.
+ */
+export const logEntries = ref<LogEntry[]>([]);
+let nextLogId = 1;
+
+export function pushLogEntry(kind: LogEntry['kind'], text: string): void {
+  const liste = [...logEntries.value, { id: nextLogId++, kind, text, at: Date.now() }];
+  logEntries.value = liste.slice(-LOG_LIMIT);
+}
+
+/** Beim Verlassen der Karte leeren — alte Meldungen im nächsten Einsatz wären Geister. */
+export function clearLog(): void {
+  logEntries.value = [];
+}
+
 export type FrameListener = (frameSeconds: number, state: HudState) => void;
 
 /**
@@ -151,6 +181,8 @@ export function bindGame(next: Game | null): void {
   game = next;
   lastSerial = -1;
   if (!next) hud.value.ready = false;
+  // Frischer Einsatz, frisches Log — Meldungen der letzten Partie wären Geister.
+  clearLog();
 }
 
 /** Läuft am Ende des Ticker-Callbacks — dieselbe Uhr wie das Rendering. */

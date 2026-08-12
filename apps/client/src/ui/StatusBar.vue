@@ -116,12 +116,15 @@ const weather = computed(() => {
 .status {
   display: flex;
   gap: 0.75rem;
-  align-items: baseline;
+  /* Vertikal MITTIG statt Baseline: seit das Logo die Zeilenhöhe vorgibt,
+     hingen die Textangaben (Kartenname, Wetter) sichtbar zu tief. */
+  align-items: center;
   /* Eigener Innenabstand: `.hud-root` hat keinen mehr, damit der Hintergrund
      bis an die Fensterkanten reicht.
-     Unten deutlich knapper als oben: darunter folgt die Zierleiste, und der
-     symmetrische Abstand ließ dazwischen einen leeren grauen Streifen stehen. */
-  padding: 0.4rem 16px 0.15rem;
+     Wieder symmetrisch: die überarbeitete Zierleisten-Grafik schließt die
+     Lücke jetzt selbst, und ungleiche Polster schöben die zentrierten
+     Inhalte aus der optischen Mitte. */
+  padding: 0.3rem 16px;
   background: #363738;
   font-size: calc(0.8125rem * var(--ui-scale));
   letter-spacing: 0.04em;

@@ -1,6 +1,6 @@
 import { Application } from 'pixi.js';
 import { DEMO_TRAFFIC, DEMO_VESSEL, PEEK, RENDERER, SIM, VESSEL_DEMO, VISION } from '../config';
-import { setSunkNotice, writeHud } from '../state/hud';
+import { pushLogEntry, setSunkNotice, writeHud } from '../state/hud';
 import { CameraController } from './CameraController';
 import { DemoTraffic } from './DemoTraffic';
 import type {
@@ -556,6 +556,7 @@ export class Game {
         setSunkNotice(Date.now() + payload.respawnSeconds * 1000);
       },
       onExtracted: (payload) => session.onExtracted(payload.coins),
+      onLog: (payload) => pushLogEntry(payload.kind, payload.text),
       onEnded: (message) => session.onEnded(message),
     });
 
@@ -1351,5 +1352,13 @@ function lerpProjectile(a: ProjectileState, b: ProjectileState, t: number): Proj
     x: a.x + (b.x - a.x) * t,
     y: a.y + (b.y - a.y) * t,
     rotation: norm360(a.rotation + angleDelta(a.rotation, b.rotation) * t),
+    // ⚠️ sink MUSS mitlaufen: dieses Objekt ERSETZT den Serverzustand in der
+    // Ansicht. Ohne das Feld zeigte die Wasserbombe bis zur Detonation die
+    // Flug-Optik — der ganze Sink-Look (Tönung, Schrumpfen, Blasenring) hing
+    // an einem Feld, das die Interpolation hier verschluckte.
+    sink:
+      a.sink !== undefined || b.sink !== undefined
+        ? (a.sink ?? 0) + ((b.sink ?? 0) - (a.sink ?? 0)) * t
+        : undefined,
   };
 }

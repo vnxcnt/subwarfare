@@ -84,10 +84,13 @@ export class ProjectileView {
     if (this.surfaceLook !== look && this.sprite instanceof Sprite) {
       this.surfaceLook = look;
       if (charge) {
-        // Absinken: von der Oberfläche in die Tiefe tönen und dabei verblassen.
-        const depth = sink * 0.95;
+        // Absinken: zügig in die Tiefen-Tönung und fast ganz ausblenden — bei
+        // den alten 45 % Restdeckkraft las sich das Fass als „liegt oben".
+        // Am Ende bleibt ein dunkler Schemen unter dem Blasenring, dann die
+        // Detonation.
+        const depth = Math.min(sink * 1.4, 1);
         this.sprite.tint = tintForDepth(depth);
-        this.sprite.alpha = 1 - sink * 0.55;
+        this.sprite.alpha = 1 - sink * 0.88;
       } else {
         this.sprite.tint = surface ? 0xffffff : tintForDepth(RUN_DEPTH);
         this.sprite.alpha = surface ? 1 : RUN_ALPHA;
@@ -123,8 +126,10 @@ export class ProjectileView {
     const lengthMetres = state.model === GUN.model ? 4 : charge ? 6 : 10;
     const screenLength = lengthMetres * getTilt() * zoom;
     const boost = MIN_SCREEN_PX / screenLength;
-    // Sinkende Bombe schrumpft leicht — sie entfernt sich nach unten.
-    this.root.scale.set(Math.min(Math.max(boost, 1), MAX_BOOST) * (1 - sink * 0.35));
+    // Sinkende Bombe schrumpft deutlich — sie entfernt sich nach UNTEN, und
+    // in der Draufsicht ist Schrumpfen das einzige Tiefensignal neben Tönung
+    // und Deckkraft.
+    this.root.scale.set(Math.min(Math.max(boost, 1), MAX_BOOST) * (1 - sink * 0.55));
 
     this.trail.clear();
 
@@ -132,10 +137,16 @@ export class ProjectileView {
     // aufsteigenden Blasenring an der Oberfläche — die Warnung für alles,
     // was darunter fährt.
     if (charge && sink > 0) {
-      const ring = 6 + sink * DEPTH_CHARGE.blastRadius * 0.35;
+      // Zwei Ringe: ein wachsender äußerer (die aufsteigenden Blasen) und ein
+      // kleiner heller an der Einschlagstelle. Kräftiger als die erste
+      // Fassung — mit alpha 0,24 und 2 px ging der Ring im Wellenmuster unter,
+      // und ohne sichtbaren Ring las sich das Fass als „liegt oben".
+      const ring = 6 + sink * DEPTH_CHARGE.blastRadius * 0.45;
       this.trail
         .circle(state.x, state.y, ring)
-        .stroke({ color: 0xdff0f7, alpha: 0.35 * (1 - sink * 0.6), width: 2 });
+        .stroke({ color: 0xdff0f7, alpha: 0.55 * (1 - sink * 0.35), width: 3 })
+        .circle(state.x, state.y, 4)
+        .fill({ color: 0xe8f4fa, alpha: 0.4 * (1 - sink * 0.5) });
       return;
     }
 

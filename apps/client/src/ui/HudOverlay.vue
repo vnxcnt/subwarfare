@@ -4,6 +4,7 @@ import AmmoBar from './AmmoBar.vue';
 import DeathNotice from './DeathNotice.vue';
 import DevMenu from './DevMenu.vue';
 import DivePanel from './DivePanel.vue';
+import EventLog from './EventLog.vue';
 import ExtractionPanel from './ExtractionPanel.vue';
 import PeriscopePanel from './PeriscopePanel.vue';
 import QuestLog from './QuestLog.vue';
@@ -63,7 +64,12 @@ function suppressContextMenu(event: MouseEvent): void {
     </div>
 
     <div class="hud-root__bottom">
-      <SonarPanel />
+      <!-- Sonar und Ereignislog teilen sich die linke Ecke; das Log steht
+           RECHTS daneben und wächst von unten nach oben. -->
+      <div class="hud-root__left">
+        <SonarPanel />
+        <EventLog />
+      </div>
       <AmmoBar />
       <div class="hud-root__right">
         <PeriscopePanel />
@@ -101,12 +107,12 @@ function suppressContextMenu(event: MouseEvent): void {
 
 .hud-root__strip {
   /*
-   * Feste 16 px, bewusst NICHT über `--ui-scale`: die Struktur der Grafik liegt
-   * in ihrer senkrechten Schichtung und ist bei 16 px Höhe pixelgenau. Eine
-   * Stauchung auf 14,7 px würde sie verwaschen, ohne dass irgendetwas gewonnen
-   * wäre — die Leiste trägt keine Schrift.
+   * Feste 13 px (native Höhe der überarbeiteten Grafik vom 2026-08-12 — die
+   * Lücke zur Topbar ist jetzt im Bild selbst geschlossen), bewusst NICHT über
+   * `--ui-scale`: die Struktur liegt in der senkrechten Schichtung und ist nur
+   * bei nativer Höhe pixelgenau. Die Leiste trägt keine Schrift.
    */
-  height: 16px;
+  height: 13px;
   /*
    * Waagerecht auf die volle Breite gezogen statt gekachelt: die Grafik ist
    * 1920 px breit und ihre Struktur so fein, dass die Streckung nicht auffällt,
@@ -160,6 +166,14 @@ function suppressContextMenu(event: MouseEvent): void {
   display: flex;
   align-items: flex-end;
   gap: var(--ui-gap);
+}
+
+/* Sonar + Ereignislog links — beide auf der Unterkante ausgerichtet. */
+.hud-root__left {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--ui-gap);
+  min-width: 0;
 }
 
 .hud-root__error {

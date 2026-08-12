@@ -880,6 +880,18 @@ export class GameServer {
 
       const vessel = this.world.get(wreck.id);
       const model = vessel?.model ?? 'fregatte01';
+
+      // Welt-Meldung an ALLE: wer wen versenkt hat. Namen VOR dem Entfernen
+      // greifen — danach ist das Wrack aus der Welt. Der Versenker kann selbst
+      // schon weg sein (getrennt, im selben Tick versenkt) — dann ohne Namen.
+      const opfer = vessel?.name ?? 'Unbekannt';
+      const jaeger = wreck.killerId ? this.world.get(wreck.killerId)?.name : null;
+      this.broadcastLog(
+        jaeger && wreck.killerId !== wreck.id
+          ? `${jaeger} versenkt ${opfer}`
+          : `${opfer} wurde versenkt`,
+      );
+
       this.world.remove(wreck.id);
 
       const socket = this.sockets.get(wreck.id);
@@ -932,6 +944,9 @@ export class GameServer {
       const eingesammelt = this.world.pickupCrates(vessel, LOOT_PICKUP_RADIUS);
       if (eingesammelt > 0) {
         this.loot.set(accountId, (this.loot.get(accountId) ?? 0) + eingesammelt);
+        // Lokal-Meldung NUR an den Finder — was einer birgt, geht die
+        // anderen nichts an (die sehen höchstens die Kiste verschwinden).
+        socket.emit('log', { kind: 'lokal', text: `${eingesammelt} Coins eingesammelt` });
         console.log(`[game-server] ${socket.data.name} birgt Loot: ${eingesammelt} Coins.`);
       }
 
@@ -994,6 +1009,15 @@ export class GameServer {
       this.resetTubes(accountId, pending.model);
       this.sendOwn(socket, vessel);
     }
+  }
+
+  /**
+   * Welt-Meldung an ALLE Verbundenen — bewusst ohne Sonar-Filter: das Log ist
+   * die Serverchronik (wer wen versenkt), keine Ortungsanzeige. Positionen
+   * stehen nicht drin, es leakt also keine Lage.
+   */
+  private broadcastLog(text: string): void {
+    for (const socket of this.sockets.values()) socket.emit('log', { kind: 'welt', text });
   }
 
   /**

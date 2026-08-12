@@ -77,5 +77,7 @@ export * from './sim/Vessel.js';
  * 14: Loot und Extraktion — `crates` im State-Broadcast, `loot` und
  *     `extractionSeconds` im `own`, `extracted`-Ereignis. Gutschrift und
  *     Munitionsrückgabe gibt es NUR noch über die Extraktion.
+ * 15: Ereignislog — `log`-Ereignis mit Kanälen welt (alle), lokal (nur der
+ *     Betroffene) und event (Platzhalter).
  */
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;

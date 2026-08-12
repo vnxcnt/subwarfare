@@ -192,6 +192,22 @@ export interface TelegraphOrder {
 }
 
 /**
+ * Ereignismeldung fürs Log unten links.
+ *
+ * Drei Kanäle mit unterschiedlicher Reichweite:
+ * - `welt`: geht an ALLE auf dem Server (Versenkungen).
+ * - `lokal`: geht nur an den Betroffenen (geborgener Loot).
+ * - `event`: Platzhalter für spätere Server-Ereignisse.
+ *
+ * Bewusst zuverlässig (nicht volatile): eine verpasste Meldung sieht aus wie
+ * ein Fehler, und der Kanal ist mit wenigen Ereignissen pro Minute billig.
+ */
+export interface LogPayload {
+  kind: 'welt' | 'lokal' | 'event';
+  text: string;
+}
+
+/**
  * Nur an den Betroffenen: erfolgreich extrahiert. Loot ist gutgeschrieben,
  * Restmunition zurückgebucht — die Verbindung endet unmittelbar danach.
  */
@@ -208,6 +224,7 @@ export interface ServerToClientEvents {
   fx: (payload: FxPayload) => void;
   destroyed: (payload: DestroyedPayload) => void;
   extracted: (payload: ExtractedPayload) => void;
+  log: (payload: LogPayload) => void;
   kicked: (payload: KickedPayload) => void;
   /**
    * Wetterwechsel während der Partie. Kommt heute nur vom Entwicklermenü —

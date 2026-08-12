@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import logoUrl from '../assets/ui/logo_main_white_login.png';
 
 /**
  * Vollbild-Ladeschirm über der Karte.
@@ -28,7 +29,7 @@ const prozent = computed(() => Math.round(Math.min(Math.max(props.progress, 0), 
 <template>
   <div class="laden" :class="{ 'laden--fertig': done }" aria-live="polite">
     <div class="laden__mitte">
-      <p class="laden__marke">Sub Warfare</p>
+      <img class="laden__logo" :src="logoUrl" alt="Sub Warfare" />
       <h1 class="laden__karte">{{ mapName }}</h1>
 
       <div class="laden__balken">
@@ -91,17 +92,13 @@ const prozent = computed(() => Math.round(Math.min(Math.max(props.progress, 0), 
   width: min(30rem, 78vw);
 }
 
-.laden__marke {
-  margin: 0;
-  font-size: calc(0.6875rem * var(--ui-scale));
-  font-weight: 600;
-  letter-spacing: 0.42em;
-  text-transform: uppercase;
-  /* Der Sperrsatz schiebt das letzte Zeichen nach rechts aus der Mitte —
-     der halbe Wert holt die Zeile optisch zurück. */
-  text-indent: 0.42em;
-  color: #e6cf78;
-  opacity: 0.7;
+/* Logo statt Schriftzug — dieselbe 600-px-Fassung wie am Login (2× der
+   Anzeige, im Cache sobald man je am Login war). */
+.laden__logo {
+  display: block;
+  width: min(11rem, 45vw);
+  height: auto;
+  filter: drop-shadow(0 2px 8px rgb(0 0 0 / 60%));
 }
 
 .laden__karte {
