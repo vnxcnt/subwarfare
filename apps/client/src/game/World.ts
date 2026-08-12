@@ -441,7 +441,10 @@ export class World {
     // Ebenen, und `screenToWorld` (dieselbe Matrix) rechnet ihn automatisch
     // wieder heraus — Zielen und Zoomen bleiben dadurch punktgenau.
     const tx = viewportWidth / 2 - centre.x * zoom - this.peek.x;
-    const ty = viewportHeight / 2 - centre.y * zoom - this.peek.y;
+    // `shipLift` hebt den Ruhepunkt über die Fenstermitte: die Anzeige ist
+    // unten schwerer, und ohne den Ausgleich rutscht das eigene Boot beim
+    // vollen Blick nach vorn hinter die Waffenleiste.
+    const ty = viewportHeight / 2 - centre.y * zoom - this.peek.y - VIEW.shipLift;
 
     this.groundMatrix.copyFrom(PROJECTION).scale(zoom, zoom).translate(tx, ty);
     this.groundLayer.setFromMatrix(this.groundMatrix);

@@ -855,10 +855,23 @@ export class Game {
     // Totzonengrenze wäre genau das Ruckeln, das sie verhindern soll.
     const gekappt = Math.min(laenge, 1);
     const anteil = (gekappt - PEEK.deadzone) / (1 - PEEK.deadzone) / laenge;
-    world.setPeekTarget(
-      nx * anteil * halbeBreite * PEEK.strength,
-      ny * anteil * halbeHoehe * PEEK.strength,
-    );
+
+    /*
+     * EIN Bezugsmaß für beide Achsen — die halbe längere Fensterkante.
+     *
+     * Genommen wird die Zeigerauslenkung weiter je Achse (oben am Rand heißt
+     * voll ausgelenkt, egal wie flach das Fenster ist), aber das Ergebnis
+     * skaliert für x und y gleich. Mit der jeweils eigenen Kante reichte der
+     * Blick nach oben und unten bei 16:9 nur gut halb so weit wie zur Seite,
+     * obwohl die Fahrtrichtung genauso oft nach Norden zeigt.
+     */
+    const bezug = Math.max(halbeBreite, halbeHoehe) * PEEK.strength;
+    // Senkrecht gedeckelt: auf sehr breiten Fenstern überstiege das Bezugsmaß
+    // die kurze Höhe, und das Boot rutschte unter die Gefechtsleiste. Auf 16:9
+    // greift der Deckel nicht — dort bleibt der Blick in alle Richtungen gleich
+    // weit.
+    const bezugY = Math.min(bezug, halbeHoehe * PEEK.verticalCap);
+    world.setPeekTarget(nx * anteil * bezug, ny * anteil * bezugY);
   }
 
   /**

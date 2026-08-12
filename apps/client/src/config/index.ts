@@ -59,12 +59,25 @@ export const VIEW = {
    * nicht. Der alte Wert 0,03 fuhr die ganze 10.000er-Karte ins Bild und machte
    * jedes Schiff zu einem Punkt von zwei Pixeln.
    *
-   * OBEN (1,2): 750 m Bildhöhe, die Fregatte misst darin 140 px. Darüber
+   * OBEN (1,1): rund 820 m Bildhöhe, die Fregatte misst darin 154 px. Darüber
    * verlässt man den Maßstab, in dem die Atlanten gerendert sind — die Frames
    * werden weich, und vom Gefecht sieht man nichts mehr.
    */
   minZoom: 0.25,
-  maxZoom: 1.2,
+  maxZoom: 1.1,
+  /**
+   * Wie weit über der Fenstermitte das eigene Boot ruht, in Bildschirmpixeln.
+   *
+   * Die Anzeige ist unten schwerer als oben: Gefechtsleiste, Sonar und Telegraf
+   * belegen rund 165 px, die Kopfleiste nur etwa 45. Die Mitte der FREIEN
+   * Fläche liegt damit rund 60 px höher als die Mitte des Fensters — und dort
+   * gehört das Boot hin.
+   *
+   * Ohne diesen Ausgleich verschwand es beim vollen Blick nach vorn hinter der
+   * Waffenleiste (gemessen: Boot bei y = 678, Leistenoberkante 642). Mit ihm
+   * bleibt es in JEDER Blickrichtung frei stehen.
+   */
+  shipLift: 60,
   /** Multiplikator pro Mausrad-Raste. */
   zoomStep: 1.15,
   /** Anteil des Viewports, den die Karte beim Start ausfüllt. */
@@ -371,12 +384,30 @@ export const FOLLOW = {
  */
 export const PEEK = {
   /**
-   * Wie weit die Kamera dem Zeiger folgt, als Anteil der halben Fensterkante.
-   * 0,35 heißt: Zeiger ganz am Rand → gut ein Drittel Bildhälfte Vorlauf. Genug,
-   * um in Fahrtrichtung vorauszuschauen, zu wenig, um das eigene Boot aus dem
-   * Bild zu schieben.
+   * Wie weit die Kamera dem Zeiger folgt, als Anteil der halben LÄNGEREN
+   * Fensterkante — bei einem üblichen Breitbild also der Hälfte der Breite.
+   *
+   * Bewusst EIN Bezugsmaß für beide Achsen und nicht je Achse die eigene Kante:
+   * sonst reicht der Blick nach oben und unten nur so weit, wie das Fenster
+   * hoch ist. Bei 16:9 wären das kaum halb so viele Meter wie zur Seite — man
+   * schaut in Fahrtrichtung voraus, und die zeigt genauso oft nach Norden wie
+   * nach Osten. Mit dem gemeinsamen Bezug ist der Vorlauf in JEDE Richtung
+   * gleich weit; die Zeigerstrecke dorthin ist kürzer, das Ziel dasselbe.
+   *
+   * Die Kappung wirkt radial: der Versatz erreicht in jeder Richtung höchstens
+   * `strength · halbe lange Kante`, auch diagonal.
    */
   strength: 0.35,
+  /**
+   * Deckel für den SENKRECHTEN Versatz, als Anteil der halben Fensterhöhe.
+   *
+   * Das gemeinsame Bezugsmaß ist die halbe BREITE — auf einem sehr breiten
+   * Fenster (21:9) überstiege der Versatz damit die kurze Höhe, und das Boot
+   * verschwände unten hinter der Gefechtsleiste. 0,68 ist der Rest, der über
+   * dem unteren Anzeigeblock (rund 165 px) und unter der Kopfleiste (45 px)
+   * bleibt, samt `shipLift`. Auf 16:9 greift der Deckel nicht.
+   */
+  verticalCap: 0.68,
   /**
    * Totzone um die Bildmitte (Anteil der halben Kante). Ohne sie wackelt das
    * Bild bei jeder kleinen Handbewegung; der Rest wird nachskaliert, damit der
