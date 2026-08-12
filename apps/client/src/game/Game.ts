@@ -36,10 +36,11 @@ import {
 } from '@subwarfare/shared';
 import { GameSocket } from '../network/GameSocket';
 import { keys, settingsModalOpen } from '../state/settings';
-import { loadFxTextures } from './fx-textures';
+import { fxTextureCount, loadFxTextures } from './fx-textures';
+import { preloadUiImages, uiImageCount } from './preload';
 import { getTilt, setTilt } from './Projection';
 import { GameAudio } from './sound';
-import { loadVesselTextures } from './textures';
+import { loadVesselTextures, vesselAtlasCount } from './textures';
 import { World } from './World';
 import { isTextEntry } from '../ui/dom';
 
@@ -50,6 +51,39 @@ export interface OnlineSession {
   /** Wird gerufen, wenn die Partie endet — Rauswurf oder Verbindungsabriss. */
   onEnded: (message: string) => void;
 }
+
+/** Stand des Ladevorgangs für den Ladebildschirm. */
+export interface LoadProgress {
+  /** Was gerade läuft — kurze Beschriftung. */
+  label: string;
+  /** Fortschritt über den GESAMTEN Beitritt, 0..1. */
+  value: number;
+}
+
+/**
+ * Rückmeldungen an die Ansicht während des Beitritts.
+ *
+ * Getrennt von `OnlineSession`, weil sie NICHTS mit der Verbindung zu tun
+ * haben: auch der Offline-Betrieb lädt Grafiken und wird irgendwann fertig.
+ */
+export interface InitHooks {
+  onProgress?: (progress: LoadProgress) => void;
+  /**
+   * Feuert, sobald das erste Bild MIT Inhalt gezeichnet ist — eigenes Boot in
+   * der Welt, Ozean-Shader übersetzt. Erst dann darf der Ladebildschirm weg.
+   */
+  onReady?: () => void;
+}
+
+/**
+ * Gewichte der Ladeabschnitte im Balken.
+ *
+ * Die Grafiken bekommen den Löwenanteil, weil sie die Zeit auch wirklich
+ * verbrauchen (~7 MB). Renderer-Start und Verbindungsaufbau sind kurz, sollen
+ * aber sichtbar etwas bewegen — ein Balken, der bei 0 klebt, sieht kaputt aus.
+ */
+const LADEN_RENDERER = 0.06;
+const LADEN_GRAFIK = 0.82;
 
 /**
  * Bindeglied zwischen Vue und PixiJS: initialisiert den Renderer, hängt das
@@ -137,6 +171,15 @@ export class Game {
    * Vessel, weil sie kein Fahrzustand sind: das Fahrzeug kann tot (entfernt)
    * sein, während das HUD noch den letzten Stand zeigt.
    */
+  /**
+   * Fertigmeldung an den Ladebildschirm — siehe `readySeen`/`readyFired` am
+   * Ende von `step`.
+   */
+  private readyHook: (() => void) | null = null;
+  private readySeen = false;
+  private readyFired = false;
+  /** Fortschrittsmeldung — auch nach `init` noch gebraucht (welcome). */
+  private progressHook: ((progress: LoadProgress) => void) | null = null;
   private ownHp: number | null = null;
   /** Panzerung laut Server; null heißt ungepanzert ODER noch kein `own`. */
   private ownArmor: ArmorState | null = null;
@@ -253,9 +296,17 @@ export class Game {
     setTilt(value);
   }
 
-  async init(host: HTMLElement, session: OnlineSession | null = null): Promise<void> {
+  async init(
+    host: HTMLElement,
+    session: OnlineSession | null = null,
+    hooks: InitHooks = {},
+  ): Promise<void> {
     if (this.app) return;
     this.disposed = false;
+    this.readyHook = hooks.onReady ?? null;
+    this.progressHook = hooks.onProgress ?? null;
+    const melden = hooks.onProgress ?? ((): void => {});
+    melden({ label: 'Renderer wird gestartet', value: 0 });
 
     const app = new Application();
     await app.init({
@@ -291,11 +342,38 @@ export class Game {
     // Textur zu und fiele sonst auf das Vektorpolygon zurück. Die Effekt-
     // Grafiken hängen mit dran: Kielwasser und Rauch fragen sie jeden Frame
     // synchron ab und zeichnen ohne sie schlicht nichts.
-    await Promise.all([loadVesselTextures(), loadFxTextures()]);
+    melden({ label: 'Grafiken werden geladen', value: LADEN_RENDERER });
+
+    /*
+     * Ein gemeinsamer Zähler über ALLE drei Quellen: Schiffsatlanten,
+     * Effektgrafiken und die Rahmen des HUD. Getrennte Balken wären ehrlicher
+     * zur Technik, aber der Spieler will einen Balken sehen, der einmal von
+     * links nach rechts läuft.
+     */
+    const gesamt = vesselAtlasCount() + fxTextureCount() + uiImageCount();
+    const stand = new Map<string, number>();
+    const schritt = (quelle: string) => (fertig: number): void => {
+      stand.set(quelle, fertig);
+      let summe = 0;
+      for (const wert of stand.values()) summe += wert;
+      melden({
+        label: 'Grafiken werden geladen',
+        value: LADEN_RENDERER + (summe / gesamt) * LADEN_GRAFIK,
+      });
+    };
+
+    await Promise.all([
+      loadVesselTextures(schritt('schiffe')),
+      loadFxTextures(schritt('effekte')),
+      // Die HUD-Rahmen liefen früher gar nicht über das Laden, sondern
+      // trudelten während der ersten Sekunden im Gefecht ein.
+      preloadUiImages(schritt('anzeige')),
+    ]);
 
     // Lief destroy() während des Texturladens, hat es `this.app` (oben schon
     // gesetzt) bereits abgeräumt — hier nur noch aussteigen.
     if (this.disposed) return;
+    melden({ label: 'Verbindung zum Gefecht', value: LADEN_RENDERER + LADEN_GRAFIK });
 
     // Klang lädt nebenher — bis die Puffer da sind, schweigt er einfach.
     // Ohne Klang bleibt das Spiel voll spielbar, deshalb nur eine Warnung.
@@ -383,6 +461,8 @@ export class Game {
 
     socket.connect(session.gameUrl, session.ticket, {
       onWelcome: (payload) => {
+        // Angemeldet — es fehlt nur noch der erste Lagebericht.
+        this.progressHook?.({ label: 'Lage wird übernommen', value: 0.96 });
         this.selfId = payload.selfId;
         world.entities.setOwnId(payload.selfId);
         for (const ship of payload.ships) this.shipCatalog.set(ship.model, ship);
@@ -1058,6 +1138,24 @@ export class Game {
 
     // Ganz am Ende: die GUI liest denselben Zustand, der gerade gerendert wurde.
     writeHud(frameSeconds);
+
+    /*
+     * Fertigmeldung an den Ladebildschirm — bewusst EIN Bild verzögert.
+     *
+     * Wenn das eigene Boot auftaucht, ist dieser Frame noch gar nicht
+     * gezeichnet: Pixi rendert erst NACH dem Ticker-Rückruf. Würde hier sofort
+     * gemeldet, verschwände der Ladebildschirm über einem leeren Bild, und der
+     * erste Ozean-Frame (Shader-Übersetzung) ruckelte offen sichtbar. Eine
+     * Runde später ist genau dieses Bild auf dem Schirm.
+     */
+    if (!this.readyFired) {
+      if (this.readySeen) {
+        this.readyFired = true;
+        this.readyHook?.();
+      } else if (this.ownVessel) {
+        this.readySeen = true;
+      }
+    }
   }
 
   destroy(): void {
@@ -1068,6 +1166,10 @@ export class Game {
     this.previousProjectileIds.clear();
     this.audio?.destroy();
     this.audio = null;
+    this.readyHook = null;
+    this.progressHook = null;
+    this.readySeen = false;
+    this.readyFired = false;
     this.ownHp = null;
     this.ownArmor = null;
     this.ownAmmo = {};

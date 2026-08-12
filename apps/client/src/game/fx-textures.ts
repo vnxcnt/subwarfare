@@ -1,4 +1,5 @@
 import { Assets, Rectangle, Texture } from 'pixi.js';
+import type { LoadStep } from './preload';
 
 import explosionUrl from '../assets/fx/explosion_sheet.webp';
 import foamUrl from '../assets/fx/foam_puff.webp';
@@ -48,14 +49,32 @@ async function zerlegen(url: string): Promise<Texture[]> {
   return frames;
 }
 
-export async function loadFxTextures(): Promise<void> {
-  if (foam) return;
+/** Wie viele Effekt-Grafiken geladen werden — für die Fortschrittsrechnung. */
+export function fxTextureCount(): number {
+  return 5;
+}
+
+export async function loadFxTextures(onStep?: LoadStep): Promise<void> {
+  const gesamt = fxTextureCount();
+  if (foam) {
+    onStep?.(gesamt, gesamt);
+    return;
+  }
+
+  let geladen = 0;
+  const melden = <T,>(versprechen: Promise<T>): Promise<T> =>
+    versprechen.then((wert) => {
+      geladen += 1;
+      onStep?.(geladen, gesamt);
+      return wert;
+    });
+
   const [f, s, ozean, sp, ex] = await Promise.all([
-    Assets.load<Texture>({ src: foamUrl, data: { autoGenerateMipmaps: true } }),
-    Assets.load<Texture>({ src: smokeUrl, data: { autoGenerateMipmaps: true } }),
-    Assets.load<Texture>({ src: oceanWaterUrl, data: { autoGenerateMipmaps: true } }),
-    zerlegen(splashUrl),
-    zerlegen(explosionUrl),
+    melden(Assets.load<Texture>({ src: foamUrl, data: { autoGenerateMipmaps: true } })),
+    melden(Assets.load<Texture>({ src: smokeUrl, data: { autoGenerateMipmaps: true } })),
+    melden(Assets.load<Texture>({ src: oceanWaterUrl, data: { autoGenerateMipmaps: true } })),
+    melden(zerlegen(splashUrl)),
+    melden(zerlegen(explosionUrl)),
   ]);
   // Die Ozean-Kachel wird über die ganze Karte WIEDERHOLT — ohne diesen Modus
   // klemmt Pixi die Koordinate am Rand fest und die Fläche wäre außerhalb der

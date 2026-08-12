@@ -1,5 +1,6 @@
 import { DEFAULT_VESSEL_MODEL, HULL_DIMENSIONS } from '@subwarfare/shared';
 import { Assets, Spritesheet, Texture, type SpritesheetData } from 'pixi.js';
+import type { LoadStep } from './preload';
 
 import destroyerData from '../assets/vessels/destroyer01/atlas.json';
 import destroyerUrl from '../assets/vessels/destroyer01/atlas.webp';
@@ -177,53 +178,76 @@ let periscopeModel: LoadedModel | null = null;
  * durchgelaufen sein — `VesselView` greift synchron darauf zu und fällt sonst
  * auf das Vektorpolygon zurück.
  */
-export async function loadVesselTextures(): Promise<void> {
-  if (loaded.size > 0) return;
-
-  for (const [model, def] of Object.entries(DEFINITIONS)) {
-    const base = await Assets.load<Texture>({
-      src: def.url,
-      data: {
-        // In Pixi 8 per Default AUS. Ohne Mipmaps flimmern die Frames bei
-        // Übersichtszoom sichtbar.
-        autoGenerateMipmaps: true,
-      },
-    });
-
-    const sheet = new Spritesheet(base, def.data);
-    await sheet.parse();
-
-    const names = Object.keys(def.data.frames);
-    const count = names.length;
-    const degreesPerFrame = 360 / count;
-
-    const directions: DirectionEntry[] = [];
-    let complete = true;
-    for (let i = 0; i < count; i += 1) {
-      const name = `dir-${String(i).padStart(2, '0')}`;
-      const texture = sheet.textures[name];
-      const anchor = def.data.frames[name]?.anchor;
-      if (!texture || !anchor) {
-        console.warn(`[client] Frame fehlt im Atlas ${model}: ${name} — Vektor-Fallback.`);
-        complete = false;
-        break;
-      }
-      directions.push({ texture, angleDegrees: i * degreesPerFrame, anchor });
-    }
-    if (!complete) continue;
-
-    loaded.set(model, {
-      directions,
-      degreesPerFrame,
-      metresPerPx: def.lengthMetres / def.sideProfilePx,
-    });
+export async function loadVesselTextures(onStep?: LoadStep): Promise<void> {
+  const gesamt = vesselAtlasCount();
+  if (loaded.size > 0) {
+    onStep?.(gesamt, gesamt);
+    return;
   }
+
+  let geladen = 0;
+  const melden = (): void => {
+    geladen += 1;
+    onStep?.(geladen, gesamt);
+  };
+
+  /*
+   * Alle Atlanten NEBENLÄUFIG. Vorher lief die Schleife streng nacheinander:
+   * bei vierzehn Bildern und ~6 MB wartete der Beitritt damit auf die Summe
+   * aller Rundreisen statt auf die längste. Die Reihenfolge spielt keine Rolle —
+   * `loaded` ist nach Modell verschlüsselt, nicht nach Position.
+   */
+  await Promise.all(
+    Object.entries(DEFINITIONS).map(async ([model, def]) => {
+      const base = await Assets.load<Texture>({
+        src: def.url,
+        data: {
+          // In Pixi 8 per Default AUS. Ohne Mipmaps flimmern die Frames bei
+          // Übersichtszoom sichtbar.
+          autoGenerateMipmaps: true,
+        },
+      });
+
+      const sheet = new Spritesheet(base, def.data);
+      await sheet.parse();
+
+      const names = Object.keys(def.data.frames);
+      const count = names.length;
+      const degreesPerFrame = 360 / count;
+
+      const directions: DirectionEntry[] = [];
+      for (let i = 0; i < count; i += 1) {
+        const name = `dir-${String(i).padStart(2, '0')}`;
+        const texture = sheet.textures[name];
+        const anchor = def.data.frames[name]?.anchor;
+        if (!texture || !anchor) {
+          console.warn(`[client] Frame fehlt im Atlas ${model}: ${name} — Vektor-Fallback.`);
+          melden();
+          return;
+        }
+        directions.push({ texture, angleDegrees: i * degreesPerFrame, anchor });
+      }
+
+      loaded.set(model, {
+        directions,
+        degreesPerFrame,
+        metresPerPx: def.lengthMetres / def.sideProfilePx,
+      });
+      melden();
+    }),
+  );
 
   periscopeModel = await loadExtra(
     periscopeUrl,
     periscopeData as unknown as SpritesheetData,
     PERISCOPE_HEIGHT_METRES,
   );
+  melden();
+}
+
+/** Wie viele Atlanten insgesamt geladen werden — Periskop eingerechnet. */
+export function vesselAtlasCount(): number {
+  return Object.keys(DEFINITIONS).length + 1;
 }
 
 /** Lädt einen Anbauteil-Atlas (z. B. Periskop) mit Höhen-Maßstab. */
