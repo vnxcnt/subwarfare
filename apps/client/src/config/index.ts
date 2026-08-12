@@ -215,20 +215,9 @@ export const WAKE = {
   puffEnd: 5.4,
   /** Deckkraft des Füllbatzens in der Spurmitte, relativ zu den Randbahnen. */
   centreAlpha: 0.6,
-  /** Halber Öffnungswinkel des Bugwellen-V. Kelvin-Winkel ≈ 19,47°. */
-  bowAngleDeg: 19,
-  /** Länge der V-Schenkel bei voller Fahrt, in Schiffslängen. */
-  bowLengthFactor: 1.8,
-  /**
-   * Zahl der Schaumbatzen je V-Schenkel — und ihre Deckkraft.
-   *
-   * Bewusst schwächer als die Hecksee: die Bugwelle STÜTZT das Bild, die Spur
-   * hinter dem Heck ist das, was ein Schiff auf See kenntlich macht. In der
-   * ersten Fassung war es umgekehrt, und das Ergebnis sah aus wie zwei
-   * gezogene Striche.
-   */
-  bowPuffs: 7,
-  bowAlpha: 0.34,
+  // Das Bugwellen-V (Kelvin-Schenkel) ist bewusst raus: es las sich wie ein
+  // Anbau am Rumpf statt wie Wasser. Vom Bug bleibt ein einzelner kleiner
+  // Gischt-Tupfer (fest in drawFoam) — Fahrt erzählt die Heckspur.
   /** Deckkraft des Schattens, den der Rumpf aufs Wasser wirft. */
   shadowAlpha: 0.34,
 } as const;

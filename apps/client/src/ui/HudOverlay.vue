@@ -4,6 +4,7 @@ import AmmoBar from './AmmoBar.vue';
 import DeathNotice from './DeathNotice.vue';
 import DevMenu from './DevMenu.vue';
 import DivePanel from './DivePanel.vue';
+import ExtractionPanel from './ExtractionPanel.vue';
 import PeriscopePanel from './PeriscopePanel.vue';
 import QuestLog from './QuestLog.vue';
 import SettingsPanel from './SettingsPanel.vue';
@@ -72,6 +73,7 @@ function suppressContextMenu(event: MouseEvent): void {
     </div>
 
     <DeathNotice />
+    <ExtractionPanel />
   </div>
 </template>
 

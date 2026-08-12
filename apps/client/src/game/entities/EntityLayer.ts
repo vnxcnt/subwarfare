@@ -1,8 +1,9 @@
 import type { Container } from 'pixi.js';
-import type { ProjectileState, Vessel } from '@subwarfare/shared';
-import { angleDelta, norm360 } from '@subwarfare/shared';
+import type { CrateState, ProjectileState, Vessel } from '@subwarfare/shared';
+import { EXTRACTION_BUOYS, LOOT_CRATE_MODEL, angleDelta, norm360 } from '@subwarfare/shared';
 import { VISION } from '../../config';
 import { ProjectileView } from './ProjectileView';
+import { PropView } from './PropView';
 import { VesselView } from './VesselView';
 
 /** Sichtlage des eigenen Boots — von Game je Frame gesetzt. */
@@ -35,6 +36,10 @@ export class EntityLayer {
   private readonly entries = new Map<string, Entry>();
   /** Projektile: interpolierter Serverzustand + Ansicht, per id. */
   private readonly projectiles = new Map<string, { state: ProjectileState; view: ProjectileView }>();
+  /** Lootkisten aus dem Broadcast, per id. */
+  private readonly crates = new Map<string, { state: CrateState; view: PropView }>();
+  /** Bojen der Extraktionszonen — statisch, einmal beim Kartenempfang gesetzt. */
+  private buoys: Array<{ x: number; y: number; view: PropView }> = [];
   private ownId: string | null = null;
   private vision: VisionState | null = null;
 
@@ -101,6 +106,47 @@ export class EntityLayer {
     }
   }
 
+  /** Lootkisten des Frames — dasselbe Muster wie die Projektile. */
+  applyCrates(states: CrateState[]): void {
+    const seen = new Set<string>();
+    for (const state of states) {
+      seen.add(state.id);
+      const existing = this.crates.get(state.id);
+      if (existing) {
+        existing.state = state;
+      } else {
+        const view = new PropView(LOOT_CRATE_MODEL, state.id);
+        view.attach(this.billboardLayer);
+        this.crates.set(state.id, { state, view });
+      }
+    }
+    for (const [id, entry] of this.crates) {
+      if (!seen.has(id)) {
+        entry.view.destroy();
+        this.crates.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Bojen der Extraktionszonen: je Zone ein Ring aus EXTRACTION_BUOYS Stück
+   * auf dem Kreisrand. Statisch — sie kommen mit der Karte und gehen mit ihr.
+   */
+  setBuoys(zones: ReadonlyArray<{ id: string; x: number; y: number; radius: number }>): void {
+    for (const buoy of this.buoys) buoy.view.destroy();
+    this.buoys = [];
+    for (const zone of zones) {
+      for (let i = 0; i < EXTRACTION_BUOYS; i += 1) {
+        const winkel = (i / EXTRACTION_BUOYS) * Math.PI * 2;
+        const x = zone.x + Math.sin(winkel) * zone.radius;
+        const y = zone.y - Math.cos(winkel) * zone.radius;
+        const view = new PropView('buoy01', `${zone.id}-${i}`);
+        view.attach(this.billboardLayer);
+        this.buoys.push({ x, y, view });
+      }
+    }
+  }
+
   /** Fester Zeitschritt. Läuft mehrfach pro Frame oder auch gar nicht. */
   simulate(dt: number): void {
     for (const entry of this.entries.values()) entry.model.simulate(dt);
@@ -157,6 +203,15 @@ export class EntityLayer {
       entry.view.setVisible(sichtbar);
       if (sichtbar) entry.view.sync(entry.state, zoom);
     }
+
+    // Kisten ebenso; Bojen dagegen IMMER — sie markieren die Extraktionszonen
+    // und sind Karteninventar wie der Kartenrand, keine Aufklärung.
+    for (const entry of this.crates.values()) {
+      const sichtbar = this.inVision(entry.state.x, entry.state.y);
+      entry.view.setVisible(sichtbar);
+      if (sichtbar) entry.view.sync(entry.state.x, entry.state.y, frameSeconds);
+    }
+    for (const buoy of this.buoys) buoy.view.sync(buoy.x, buoy.y, frameSeconds);
   }
 
   destroy(): void {
@@ -164,5 +219,9 @@ export class EntityLayer {
     this.entries.clear();
     for (const entry of this.projectiles.values()) entry.view.destroy();
     this.projectiles.clear();
+    for (const entry of this.crates.values()) entry.view.destroy();
+    this.crates.clear();
+    for (const buoy of this.buoys) buoy.view.destroy();
+    this.buoys = [];
   }
 }

@@ -77,6 +77,15 @@ onMounted(async () => {
           lastEndReason.value = message;
           void router.replace({ name: 'menu' });
         },
+        onExtracted: (coins) => {
+          // Dasselbe Ende, nur ein gutes: das Menü zeigt die Meldung einmal an,
+          // der frisch geladene Kontostand enthält die Coins bereits.
+          lastEndReason.value =
+            coins > 0
+              ? `Extraktion erfolgreich — ${coins} Coins gesichert.`
+              : 'Extraktion erfolgreich — Ausrüstung zurück im Lager.';
+          void router.replace({ name: 'menu' });
+        },
       },
       {
         onProgress: (fortschritt) => {

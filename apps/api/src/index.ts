@@ -1,4 +1,6 @@
+import type { WeaponId } from '@subwarfare/shared';
 import { DEFAULT_SHIP_STATS } from '@subwarfare/shared';
+import { loadAmmoStats } from './ammo/store.js';
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import { Server } from 'socket.io';
@@ -80,6 +82,59 @@ await app.register(
         return reply.code(403).send({ error: 'Kein Zugriff.' });
       }
       return { armor: await loadArmorStats() };
+    });
+
+    // Munitionswerte (Schaden je Sorte) — ebenfalls interner Kanal.
+    scope.get('/internal/weapons', async (request, reply) => {
+      if (request.headers['x-internal-key'] !== env.internalKey) {
+        return reply.code(403).send({ error: 'Kein Zugriff.' });
+      }
+      return { ammo: await loadAmmoStats() };
+    });
+
+    /*
+     * Einsatzende: der Spielserver meldet, was ein Konto NICHT verschossen hat,
+     * und bekommt es gutgeschrieben.
+     *
+     * Die Gegenrichtung des Lieferscheins im Ticket. Der Schlüssel ist die
+     * ganze Absicherung — ein Client könnte sich hierüber sonst Munition
+     * herbeischreiben. Deshalb steht die Route auch nicht in der öffentlichen
+     * Oberfläche: sie ist ausschließlich für den Spielserver da.
+     */
+    scope.post('/internal/sortie-end', async (request, reply) => {
+      if (request.headers['x-internal-key'] !== env.internalKey) {
+        return reply.code(403).send({ error: 'Kein Zugriff.' });
+      }
+      const body = (request.body ?? {}) as {
+        accountId?: unknown;
+        leftovers?: unknown;
+        coins?: unknown;
+      };
+      if (typeof body.accountId !== 'string' || !Array.isArray(body.leftovers)) {
+        return reply.code(400).send({ error: 'accountId und leftovers erwartet.' });
+      }
+      const leftovers = body.leftovers.filter(
+        (eintrag): eintrag is { weapon: WeaponId; itemId: string; count: number } =>
+          typeof eintrag === 'object' &&
+          eintrag !== null &&
+          typeof (eintrag as { itemId?: unknown }).itemId === 'string' &&
+          typeof (eintrag as { count?: unknown }).count === 'number' &&
+          (eintrag as { count: number }).count > 0,
+      );
+      lobby.returnAmmo(body.accountId, leftovers);
+
+      // Extrahierter Loot in Coins. Der Betrag kommt vom Spielserver und nur
+      // von dort — der interne Schlüssel ist die ganze Absicherung. Gedeckelt
+      // und gerundet, damit ein Rechenfehler drüben nie Unsinn verbucht.
+      const coins = typeof body.coins === 'number' && Number.isFinite(body.coins)
+        ? Math.min(Math.max(Math.floor(body.coins), 0), 1_000_000)
+        : 0;
+      if (coins > 0) {
+        await accounts.addCoins(body.accountId, coins).catch((error) => {
+          console.error(`[api] Loot-Gutschrift an ${body.accountId} fehlgeschlagen:`, error);
+        });
+      }
+      return { ok: true };
     });
 
     // Kartenauslastung fürs Hauptmenü. Kurz gecacht UND mit geteiltem

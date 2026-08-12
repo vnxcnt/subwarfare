@@ -192,4 +192,36 @@ export const MIGRATIONS: readonly Migration[] = [
        ON DUPLICATE KEY UPDATE item_id = item_id`,
     ],
   },
+  {
+    id: 10,
+    name: 'munition',
+    statements: [
+      // Kampfwerte der Munitionssorten. Gepflegt per Hand wie ships und armor;
+      // der Seed spiegelt DEFAULT_AMMO_STATS aus @subwarfare/shared.
+      //
+      // `weapon` sagt, welche Waffe das Item speist — der Slot `munition` heisst
+      // nach dem Kaliber, geschossen wird damit aus dem Geschuetz.
+      //
+      // Die STUECKZAHL steht bewusst NICHT hier: die kommt aus dem Inventar des
+      // Kontos (account_items.quantity). Diese Tabelle beantwortet nur, wie hart
+      // ein Treffer dieser Sorte zuschlaegt.
+      `CREATE TABLE IF NOT EXISTS weapon_items (
+         item_id VARCHAR(32) NOT NULL PRIMARY KEY,
+         weapon VARCHAR(16) NOT NULL,
+         damage SMALLINT UNSIGNED NOT NULL
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      `INSERT INTO weapon_items (item_id, weapon, damage) VALUES
+         ('torpedo_mk1', 'torpedo', 150),
+         ('torpedo_mk2', 'torpedo', 175),
+         ('torpedo_mk3', 'torpedo', 205),
+         ('torpedo_mk4', 'torpedo', 235),
+         ('torpedo_mk5', 'torpedo', 270),
+         ('wasserbombe', 'wasserbombe', 140),
+         ('taeuschkoerper', 'taeuschkoerper', 0),
+         ('munition_mk1', 'geschuetz', 40),
+         ('munition_mk2', 'geschuetz', 46),
+         ('munition_mk3', 'geschuetz', 53)
+       ON DUPLICATE KEY UPDATE item_id = item_id`,
+    ],
+  },
 ];

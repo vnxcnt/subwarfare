@@ -28,6 +28,10 @@ import waterbombData from '../assets/vessels/waterbomb01/atlas.json';
 import waterbombUrl from '../assets/vessels/waterbomb01/atlas.webp';
 import decoyData from '../assets/vessels/torpedo02/atlas.json';
 import decoyUrl from '../assets/vessels/torpedo02/atlas.webp';
+import lootData from '../assets/vessels/loot01/atlas.json';
+import lootUrl from '../assets/vessels/loot01/atlas.webp';
+import buoyData from '../assets/vessels/buoy01/atlas.json';
+import buoyUrl from '../assets/vessels/buoy01/atlas.webp';
 import yachtgunData from '../assets/vessels/yachtgun01/atlas.json';
 import yachtgunUrl from '../assets/vessels/yachtgun01/atlas.webp';
 
@@ -141,6 +145,20 @@ const DEFINITIONS: Record<string, ModelDefinition> = {
     url: shellUrl,
     lengthMetres: 4,
     sideProfilePx: 369,
+  },
+  // Requisiten: 8 Views statt 64 (drehen sich nicht), Größen auf
+  // Spielsichtbarkeit gezogen — eine reale 1-m-Kiste wäre unsichtbar.
+  loot01: {
+    data: lootData as unknown as SpritesheetData,
+    url: lootUrl,
+    lengthMetres: 22,
+    sideProfilePx: 257,
+  },
+  buoy01: {
+    data: buoyData as unknown as SpritesheetData,
+    url: buoyUrl,
+    lengthMetres: 18,
+    sideProfilePx: 206,
   },
 };
 

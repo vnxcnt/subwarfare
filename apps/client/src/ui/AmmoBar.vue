@@ -24,8 +24,15 @@ const slots = computed(() =>
       id,
       def: WEAPON_SLOTS[id],
       count: hud.value.ammo[id] ?? 0,
+      /*
+       * An Bord? Der Server schickt seit Protokoll 13 nur die Waffen, für die
+       * in der Werft etwas eingelegt wurde. Der Rumpf FÜHRT die Waffe zwar
+       * (das sagt `armament`), aber ohne Munition ist sie diesen Einsatz nicht
+       * dabei — und dann soll sie auch nicht als leerer Slot herumstehen.
+       */
+      dabei: hud.value.ammo[id] !== undefined,
     }))
-    .filter((eintrag) => eintrag.def !== undefined),
+    .filter((eintrag) => eintrag.def !== undefined && eintrag.dabei),
 );
 
 /** Gewählte Waffe. Null heißt: noch keine Wahl getroffen. */

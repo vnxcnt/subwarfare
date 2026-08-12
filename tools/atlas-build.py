@@ -66,8 +66,19 @@ def arbeitsliste(modell: str, quelle: str) -> list[dict]:
             eintrag["ankerY"] = anker_von_meta[datei]["y"]
         liste.append(eintrag)
 
+    # Nicht jedes Modell hat 64 Views: Requisiten (Boje, Kiste) kommen mit 8.
+    # Verlangt wird eine GLEICHMAESSIGE Teilmenge der 64er-Teilung — dann werden
+    # die Indizes dicht auf 0..n-1 umnummeriert. Der Client rechnet
+    # degreesPerFrame = 360/n selbst, ihn interessiert nur die dichte Reihe.
     indizes = sorted(e["index"] for e in liste)
-    assert indizes == list(range(64)), f"Indizes nicht eindeutig: {indizes}"
+    n = len(indizes)
+    assert n > 0 and 64 % n == 0, f"View-Zahl {n} teilt 64 nicht: {indizes}"
+    schritt = 64 // n
+    assert indizes == [i * schritt for i in range(n)], f"Indizes nicht gleichmaessig: {indizes}"
+    if schritt > 1:
+        for e in liste:
+            e["index"] = e["index"] // schritt
+        print(f"{n} Views — Indizes auf dir-00..{n - 1:02d} verdichtet (Schritt {schritt}).")
     return liste
 
 
@@ -117,7 +128,8 @@ def main() -> None:
                     os.path.join(ziel_dir, "atlas.webp")], check=True)
     os.remove(png)
 
-    seite = next(f for f in ergebnis["frames"] if f["index"] == 16)
+    # Seitenprofil = Ost-Frame. Bei 64 Views ist das dir-16, bei n Views n/4.
+    seite = next(f for f in ergebnis["frames"] if f["index"] == len(ergebnis["frames"]) // 4)
     print(f"FERTIG: {ziel_dir}")
     print(f"Seitenprofil (fuer DEFINITIONS.sideProfilePx): {seite['w']} px")
     print("Nicht vergessen: VESSEL_MODELS, DEFINITIONS, DEFAULT_SHIP_STATS, ships-Tabelle —")

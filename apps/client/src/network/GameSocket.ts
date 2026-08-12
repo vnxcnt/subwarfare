@@ -1,6 +1,7 @@
 import type {
   ClientToServerEvents,
   DestroyedPayload,
+  ExtractedPayload,
   FxPayload,
   OwnStatePayload,
   ServerToClientEvents,
@@ -21,6 +22,8 @@ export interface GameSocketHandlers {
   onFx: (payload: FxPayload) => void;
   /** Das EIGENE Boot wurde versenkt — Respawn folgt server-seitig. */
   onDestroyed: (payload: DestroyedPayload) => void;
+  /** Erfolgreich extrahiert — Loot ist gesichert, der Server trennt gleich. */
+  onExtracted: (payload: ExtractedPayload) => void;
   /** Wetterwechsel zur Laufzeit (heute: Entwicklermenü). */
   onWeather: (payload: WeatherState) => void;
   /** Sitzungsende — Rauswurf, Ablehnung des Tickets oder Verbindungsabriss. */
@@ -67,6 +70,14 @@ export class GameSocket {
     socket.on('player:left', (payload) => handlers.onPlayerLeft(payload.id));
     socket.on('fx', handlers.onFx);
     socket.on('destroyed', handlers.onDestroyed);
+    socket.on('extracted', (payload) => {
+      // Die Extraktion IST das Sitzungsende — nur ein gutes. Über dieselbe
+      // ended-Sperre, damit die gleich folgende Server-Trennung nicht noch
+      // eine „Verbindung verloren"-Meldung hinterherschiebt.
+      if (this.ended) return;
+      this.ended = true;
+      handlers.onExtracted(payload);
+    });
     socket.on('weather', handlers.onWeather);
     socket.on('kicked', (payload) => end(payload.message));
     socket.on('connect_error', (error) => end(error.message || 'Verbindung abgelehnt.'));
@@ -120,6 +131,11 @@ export class GameSocket {
   /** Entwickler: Wetterlage setzen. Rolle und Wertebereiche prüft der Server. */
   sendDevWeather(weather: WeatherState): void {
     this.socket?.emit('dev:weather', weather);
+  }
+
+  /** Entwickler: Testkiste mit Coins vor dem Bug absetzen. */
+  sendDevCrate(coins: number): void {
+    this.socket?.emit('dev:crate', { coins });
   }
 
   disconnect(): void {

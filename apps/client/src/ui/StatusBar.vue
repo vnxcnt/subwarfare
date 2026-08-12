@@ -4,6 +4,7 @@ import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import devIcon from '../assets/ui/ingame_dev.png';
 import exitIcon from '../assets/ui/ingame_exit.png';
+import exitConfirmIcon from '../assets/ui/ingame_exit_confirm.png';
 import settingsIcon from '../assets/ui/ingame_settings.png';
 import { mapLabel } from '../config';
 import { account } from '../state/auth';
@@ -88,14 +89,21 @@ const weather = computed(() => {
       >
         <img class="status__icon" :src="settingsIcon" alt="" />
       </button>
+      <!--
+        Ausstieg mit eigenem Zeiger-Zustand: BEIDE Grafiken liegen übereinander
+        und werden nur überblendet. Ein Quellenwechsel per :src würde die
+        zweite Grafik erst beim ersten Überfahren holen — der Knopf bliebe für
+        einen Wimpernschlag leer. So sind beide beim Ladeschirm schon dekodiert.
+      -->
       <button
-        class="status__knopf"
+        class="status__knopf status__exit"
         type="button"
-        title="Zurück zum Hauptmenü"
-        aria-label="Zurück zum Hauptmenü"
+        title="Karte verlassen — Loot und mitgebrachte Ausrüstung gehen verloren. Sichern: 8 s in einer Bojen-Zone extrahieren."
+        aria-label="Karte verlassen (ohne Extraktion gehen Loot und Ausrüstung verloren)"
         @click="leaveToMenu"
       >
         <img class="status__icon" :src="exitIcon" alt="" />
+        <img class="status__icon status__icon--hover" :src="exitConfirmIcon" alt="" />
       </button>
     </span>
   </header>
@@ -164,6 +172,32 @@ const weather = computed(() => {
   display: block;
   height: 26px;
   width: auto;
+}
+
+/*
+ * Ausstiegsknopf mit zwei Zuständen. Die zweite Grafik liegt DECKUNGSGLEICH
+ * über der ersten (`position: absolute` im relativ gesetzten Knopf) und wird
+ * eingeblendet, sobald der Zeiger darauf steht oder der Knopf per Tastatur
+ * angesteuert wird.
+ *
+ * Übereinanderlegen statt Quelle tauschen: die Maße bleiben dadurch fest (der
+ * Knopf zuckt nicht, falls die Grafiken minimal verschieden breit sind), und
+ * die Überblendung braucht beide Bilder gleichzeitig.
+ */
+.status__exit {
+  position: relative;
+}
+
+.status__icon--hover {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.status__exit:hover .status__icon--hover,
+.status__exit:focus-visible .status__icon--hover {
+  opacity: 1;
 }
 
 /* Sehr schmal: umbrechen statt abschneiden — die Knöpfe müssen klickbar

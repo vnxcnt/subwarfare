@@ -38,6 +38,10 @@ export interface HudState {
   maxHp: number;
   /** Panzerung dieses Einsatzes laut Server; `null` = ungepanzert (keine Leiste). */
   armor: ArmorState | null;
+  /** Getragener Loot in Coins — Fracht, gesichert erst nach der Extraktion. */
+  loot: number;
+  /** Sekunden ununterbrochen in der Extraktionszone; 0 außerhalb. */
+  extractionSeconds: number;
   /** Restmunition je Waffen-Kennung laut Server. Beim Torpedo der VORRAT. */
   ammo: Partial<Record<string, number>>;
   /** Torpedorohre laut Server; leer bei Schiffen ohne Rohre. */
@@ -94,6 +98,8 @@ export const hud = shallowRef<HudState>({
   hp: 1,
   maxHp: 1,
   armor: null,
+  loot: 0,
+  extractionSeconds: 0,
   ammo: {},
   tubes: [],
   weather: DEFAULT_WEATHER,
@@ -181,11 +187,17 @@ export function writeHud(frameSeconds: number): void {
   // Referenz durchreichen wie bei den Rohren — der Server ersetzt das Objekt
   // bei jedem `own`, hier wird nichts fortgeschrieben.
   state.armor = game?.armor ?? null;
-  // In place statt neues Objekt — das läuft jeden Frame (Muster dieser Datei).
-  state.ammo['torpedo'] = game?.ammoFor('torpedo') ?? 0;
-  state.ammo['taeuschkoerper'] = game?.ammoFor('taeuschkoerper') ?? 0;
-  state.ammo['geschuetz'] = game?.ammoFor('geschuetz') ?? 0;
-  state.ammo['wasserbombe'] = game?.ammoFor('wasserbombe') ?? 0;
+  state.loot = game?.loot ?? 0;
+  state.extractionSeconds = game?.extractionSeconds ?? 0;
+  /*
+   * Referenz durchreichen statt vier feste Schlüssel zu schreiben.
+   *
+   * Seit die Bewaffnung aus der Werft kommt, ist die MENGE der Schlüssel die
+   * Aussage: was fehlt, ist nicht an Bord. Vier feste Zuweisungen hätten daraus
+   * wieder „alles dabei, teils mit 0" gemacht. Der Server ersetzt das Objekt
+   * bei jedem `own`; hier wird nichts fortgeschrieben und nichts alloziert.
+   */
+  state.ammo = game?.ammoAboard() ?? {};
   // Rohre kommen als fertiges Array vom Server — die Referenz durchreichen
   // genügt, sie wird bei jedem `own` ohnehin ersetzt.
   state.tubes = game?.tubes() ?? [];
@@ -289,6 +301,11 @@ export function devSetModel(model: VesselModel): void {
 /** Entwickler: Wetterlage setzen (Server prüft Rolle und Wertebereiche). */
 export function devSetWeather(weather: WeatherState): void {
   game?.devSetWeather(weather);
+}
+
+/** Entwickler: Testkiste mit Coins vor dem Bug — zum Testen der Beuteschleife. */
+export function devSpawnCrate(coins: number): void {
+  game?.devSpawnCrate(coins);
 }
 
 /** Feuerbefehl — Bewaffnung, Munition und Rohr-Sperre prüft der Server. */

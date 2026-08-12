@@ -2,12 +2,14 @@ import type {
   ArmorHitKind,
   ArmorState,
   ArmorStats,
+  CrateState,
   ExitPoint,
   GameMap,
   PlayerId,
   ProjectileState,
   SpawnPoint,
   VesselModel,
+  WeaponId,
 } from '@subwarfare/shared';
 import {
   DAMAGE,
@@ -82,6 +84,14 @@ interface ArmorSlot {
   integrity: number;
 }
 
+/** Projektilart → Waffen-Kennung, für den Schaden aus der geladenen Sorte. */
+const WAFFE_ZU_KIND: Record<Projectile['kind'], WeaponId> = {
+  torpedo: 'torpedo',
+  decoy: 'taeuschkoerper',
+  shell: 'geschuetz',
+  depthcharge: 'wasserbombe',
+};
+
 /** Was ein Simulationsschritt an Kampfereignissen hervorgebracht hat. */
 export interface WorldEvents {
   /** Einschläge (Torpedo trifft Rumpf) an ihren Weltpunkten. */
@@ -112,9 +122,25 @@ export class World {
    * Platzhalter.
    */
   private readonly armor = new Map<PlayerId, ArmorSlot>();
+  /**
+   * Schaden je Fahrzeug und Waffe — er hängt an der geladenen MUNITIONSSORTE,
+   * nicht an der Waffe allein. Fehlt ein Eintrag, gilt der Grundwert aus
+   * `combat.ts` (Bots, Standardausstattung).
+   *
+   * Bewusst hier und nicht als Parameter an jeder `fire*`-Methode: die
+   * Abschüsse laufen ohnehin alle durch `launch`, und fünf Signaturen um
+   * denselben Wert zu erweitern hätte jede neue Waffe wieder mitgeschleppt.
+   */
+  private readonly weaponDamage = new Map<PlayerId, Partial<Record<WeaponId, number>>>();
   private readonly projectiles = new Map<string, Projectile>();
+  /**
+   * Lootkisten. Der Inhalt (Coins) lebt NUR hier — der Broadcast trägt bloß
+   * Kennung und Position, was drin ist, erfährt man beim Aufsammeln.
+   */
+  private readonly crates = new Map<string, { id: string; x: number; y: number; coins: number }>();
   private nextSpawnIndex = 0;
   private nextProjectileId = 1;
+  private nextCrateId = 1;
   /**
    * Seegang der Karte, 0..1. Wirkt auf die Schussstreuung; gesetzt wird er
    * vom GameServer aus dem Karten-Wetter.
@@ -181,6 +207,7 @@ export class World {
   remove(id: PlayerId): boolean {
     this.hitpoints.delete(id);
     this.armor.delete(id);
+    this.weaponDamage.delete(id);
     return this.vessels.delete(id);
   }
 
@@ -195,6 +222,17 @@ export class World {
   /** Restliche Lebenspunkte eines Fahrzeugs. */
   hp(id: PlayerId): number {
     return this.hitpoints.get(id) ?? 0;
+  }
+
+  /**
+   * Setzt den Schaden, den die Waffen dieses Fahrzeugs anrichten — abgeleitet
+   * aus der geladenen Munitionssorte. Ein fehlender Wert lässt den Grundwert
+   * der Waffe stehen.
+   */
+  setWeaponDamage(id: PlayerId, weapon: WeaponId, damage: number): void {
+    const eintrag = this.weaponDamage.get(id) ?? {};
+    eintrag[weapon] = damage;
+    this.weaponDamage.set(id, eintrag);
   }
 
   /**
@@ -224,6 +262,42 @@ export class World {
     // Frische HP = frisches Schiff: kein Rauch mehr. Das Fahrprofil setzt der
     // Aufrufer (dev:model) ohnehin neu — die Drossel fällt damit mit.
     vessel.smoke = 0;
+  }
+
+  /**
+   * Lässt eine Lootkiste zu Wasser. Wertlose Kisten entstehen erst gar nicht —
+   * eine leere Kiste anzusteuern wäre reine Enttäuschung.
+   */
+  spawnCrate(x: number, y: number, coins: number): void {
+    if (coins <= 0) return;
+    const id = `c-${this.nextCrateId++}`;
+    this.crates.set(id, { id, x, y, coins });
+  }
+
+  /**
+   * Sammelt alle Kisten im Aufsammelradius um das Fahrzeug ein und liefert die
+   * Summe. Synchron und damit atomar gegenüber allen anderen Aufrufen im
+   * selben Tick — zwei Schiffe können dieselbe Kiste nicht beide bekommen.
+   */
+  pickupCrates(vessel: Vessel, radius: number): number {
+    let summe = 0;
+    for (const crate of this.crates.values()) {
+      const dx = crate.x - vessel.x;
+      const dy = crate.y - vessel.y;
+      if (dx * dx + dy * dy > radius * radius) continue;
+      summe += crate.coins;
+      this.crates.delete(crate.id);
+    }
+    return summe;
+  }
+
+  /** Momentaufnahmen der Kisten für den Broadcast — ohne Inhalt. */
+  crateStates(): CrateState[] {
+    const states: CrateState[] = [];
+    for (const crate of this.crates.values()) {
+      states.push({ id: crate.id, x: crate.x, y: crate.y });
+    }
+    return states;
   }
 
   /**
@@ -287,6 +361,10 @@ export class World {
     const streuung = aimSpreadDeg(this.seaState, shooter.depth);
     const abweichung = streuung > 0 ? (Math.random() * 2 - 1) * streuung : 0;
     const bearing = norm360(bearingDegrees + abweichung);
+    // Schaden aus der geladenen Sorte, sonst der Grundwert der Waffe. Auch das
+    // läuft hier zusammen, damit keine Abschussstelle es vergessen kann.
+    const sorte = this.weaponDamage.get(shooter.id)?.[WAFFE_ZU_KIND[kind]];
+    const wirkung = sorte ?? damage;
     const heading = bearing * DEG;
     const projectile: Projectile = {
       id: `t-${this.nextProjectileId++}`,
@@ -297,7 +375,7 @@ export class World {
       y: shooter.y - Math.cos(heading) * offsetMetres,
       rotation: bearing,
       speed,
-      damage,
+      damage: wirkung,
       hitRadius,
       travelled: 0,
       rangeMetres,

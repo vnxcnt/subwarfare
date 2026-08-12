@@ -22,6 +22,12 @@ export * from './meta/economy.js';
 // Panzerung: Absorption je Stufe, Integritätsverlust je Waffe, Schadensteilung.
 export * from './meta/armor.js';
 
+// Munition: welches Item welche Waffe speist und wie hart sie zuschlägt.
+export * from './meta/ammo.js';
+
+// Loot und Extraktion: Kisten-Drops, NPC-Beute, Extraktionsregeln.
+export * from './meta/loot.js';
+
 // Torpedorohre: Bestückung je Schiff, Laden/Scharfschalten, Salven-Fächer.
 export * from './meta/tubes.js';
 
@@ -64,5 +70,12 @@ export * from './sim/Vessel.js';
  *     Lage, das `weather`-Ereignis verteilt sie an alle Verbundenen.
  * 12: Panzerung — `armor` im `own`-Ereignis (Stufe, Restintegrität in Prozent,
  *     Absorptionsanteil). Die getragene Stufe kommt signiert im Join-Ticket.
+ * 13: Munition aus der Werft — die Bewaffnung eines Einsatzes kommt aus dem
+ *     Ticket (Item und Stückzahl je Waffe). `ammo` im `own`-Ereignis führt nur
+ *     noch die Waffen, die WIRKLICH an Bord sind; fehlt der Eintrag, hat das
+ *     Schiff die Waffe nicht dabei.
+ * 14: Loot und Extraktion — `crates` im State-Broadcast, `loot` und
+ *     `extractionSeconds` im `own`, `extracted`-Ereignis. Gutschrift und
+ *     Munitionsrückgabe gibt es NUR noch über die Extraktion.
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 14;

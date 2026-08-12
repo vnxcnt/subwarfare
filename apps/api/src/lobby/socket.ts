@@ -1,10 +1,18 @@
 import type {
+  LoadoutEntryStack,
   LobbyClientToServerEvents,
   LobbyServerToClientEvents,
   LobbySocketData,
   PlayableModel,
 } from '@subwarfare/shared';
-import { SHIP_ACCESS, isPlayableModel, progressionFromXp } from '@subwarfare/shared';
+import {
+  AMMO_CATEGORIES,
+  SHIP_ACCESS,
+  WEAPON_FOR_CATEGORY,
+  isItemId,
+  isPlayableModel,
+  progressionFromXp,
+} from '@subwarfare/shared';
 import type { Server, Socket } from 'socket.io';
 import { signTicket, verifySession } from '../auth/jwt.js';
 import { env } from '../env.js';
@@ -31,6 +39,12 @@ interface Reservation {
   expiresAt: number;
   /** Bezahlte Einsatzkosten — werden bei Verfall ohne Einlösung erstattet. */
   cost: number;
+  /**
+   * Abgebuchte Munition dieses Tickets. Verfällt es ungenutzt, geht sie
+   * zusammen mit den Coins zurück — sonst fräße ein Client-Absturz zwischen
+   * Ticketausgabe und Anmeldung den ganzen Vorrat.
+   */
+  loadout: LoadoutEntryStack[];
 }
 
 /** Ausgestelltes, noch nicht eingelöstes Ticket — für idempotente Zustellung. */
@@ -275,9 +289,31 @@ export class LobbyGateway {
             console.error(`[api] Erstattung an ${accountId} fehlgeschlagen:`, error);
           });
         }
+        // Die abgebuchte Munition genauso zurück — sie ist nie an Bord gegangen.
+        this.returnAmmo(accountId, reservation.loadout);
       }
     }
     return status.capacity - status.players - this.reservations.size;
+  }
+
+  /**
+   * Schreibt Munition zurück aufs Konto.
+   *
+   * Zwei Wege führen hierher: ein Ticket ist ungenutzt verfallen (dann kommt
+   * alles zurück), oder ein Einsatz ist zu Ende und der Spielserver meldet,
+   * was übrig ist. Fire-and-forget mit Protokoll im Fehlerfall — der Aufrufer
+   * (Sweep bzw. HTTP-Handler) soll daran nicht hängen.
+   */
+  returnAmmo(accountId: string, loadout: readonly LoadoutEntryStack[]): void {
+    for (const posten of loadout) {
+      if (posten.count <= 0 || !isItemId(posten.itemId)) continue;
+      this.inventory.credit(accountId, posten.itemId, posten.count).catch((error) => {
+        console.error(
+          `[api] Rückgabe von ${posten.count}× ${posten.itemId} an ${accountId} fehlgeschlagen:`,
+          error,
+        );
+      });
+    }
   }
 
   /**
@@ -298,7 +334,8 @@ export class LobbyGateway {
     // sähen zwei parallele Joins beide den letzten freien Platz.
     const cost = SHIP_ACCESS[shipModel].sortieCost;
     const expiresAt = Date.now() + env.ticketTtl * 1000;
-    this.reservations.set(accountId, { expiresAt, cost });
+    const reservation: Reservation = { expiresAt, cost, loadout: [] };
+    this.reservations.set(accountId, reservation);
     this.ensureSweeper();
 
     // Aus der Schlange — auch bei gescheiterter Zahlung. Bliebe der Eintrag
@@ -341,12 +378,43 @@ export class LobbyGateway {
      * ein Bonus, kein Zugangsrecht. Ohne Eintrag fährt man ungepanzert.
      */
     let armorItem: string | null = null;
+    const loadout: LoadoutEntryStack[] = [];
     try {
       const loadouts = await this.inventory.loadouts(accountId);
-      const eintrag = loadouts.find((l) => l.model === shipModel && l.slot === 'panzerung');
-      armorItem = eintrag?.itemId ?? null;
+      const belegt = (slot: string): string | null =>
+        loadouts.find((l) => l.model === shipModel && l.slot === slot)?.itemId ?? null;
+
+      armorItem = belegt('panzerung');
+
+      /*
+       * Munition an Bord nehmen. Für jeden belegten Waffen-Slot geht der GANZE
+       * Bestand des Items aus dem Inventar mit — und wird dabei abgebucht. Das
+       * Ticket ist damit zugleich der Lieferschein.
+       *
+       * Abgebucht wird VOR dem Einsatz, nicht danach: sonst könnte man alles
+       * verschießen und vor der Abrechnung die Verbindung kappen. So kostet
+       * genau dieser Griff den vollen Vorrat — der Anreiz zeigt in die richtige
+       * Richtung. Was übrig bleibt, meldet der Spielserver am Ende zurück.
+       */
+      for (const kategorie of AMMO_CATEGORIES) {
+        const itemId = belegt(kategorie);
+        if (!itemId || !isItemId(itemId)) continue;
+        const weapon = WEAPON_FOR_CATEGORY[kategorie];
+        if (!weapon) continue;
+        const count = await this.inventory.takeAll(accountId, itemId);
+        if (count <= 0) continue;
+        loadout.push({ weapon, itemId, count });
+        // Sofort in die Reservierung: verfällt das Ticket ungenutzt, weiß
+        // free() dadurch, was zurückzugeben ist — auch wenn die Schleife
+        // gleich darauf abbricht.
+        reservation.loadout.push({ weapon, itemId, count });
+      }
     } catch (error) {
-      console.warn('[api] Panzerung für das Ticket nicht lesbar — ungepanzert:', error);
+      // Ohne lesbares Inventar läuft der Einsatz unbewaffnet statt gar nicht:
+      // die Ausrüstung ist Ausstattung, kein Zugangsrecht. Verlorene Munition
+      // kann es dabei nicht geben — abgebucht wird erst beim erfolgreichen
+      // takeAll, und dessen Ergebnis steht dann auch im Ticket.
+      console.warn('[api] Ausrüstung für das Ticket nicht lesbar:', error);
     }
 
     const { ticket, jti } = await signTicket({
@@ -356,6 +424,7 @@ export class LobbyGateway {
       role: account.role,
       shipModel,
       armorItem,
+      loadout,
     });
 
     // Fürs idempotente Wieder-Zustellen aufheben (Doppelklick, Reconnect

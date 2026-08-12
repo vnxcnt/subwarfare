@@ -572,35 +572,18 @@ export class VesselView {
       kochen.alpha = WAKE.foamAlpha * intensity;
       kochen.rotation = this.sprayPhase * 1.4;
 
-      // Bugsee: ein Batzen direkt am Bug, leicht pulsierend, sonst klebte er
-      // starr am Rumpf.
+      // Bugsee: EIN kleiner Batzen direkt an der Bugspitze — mehr nicht.
+      // Die Kelvin-Schenkel (das große Schaum-V vor dem Bug) sind bewusst
+      // raus: sie lasen sich wie ein Anbau am Schiff statt wie Wasser. Was
+      // Fahrt erzählt, ist die Heckspur; der Bug bekommt nur einen Tupfer
+      // Gischt, wo der Rumpf einschneidet.
       const bug = this.foamAt(used, texture);
       used += 1;
       bug.position.set(bowX, bowY);
-      bug.width = dims.beam * 1.6 * puls;
+      bug.width = dims.beam * 0.8 * puls;
       bug.height = bug.width;
-      bug.alpha = 0.6 * intensity;
+      bug.alpha = 0.3 * intensity;
       bug.rotation = this.sprayPhase * 0.6;
-
-      // Kelvin-Schenkel: zwei Reihen Schaumbatzen schräg nach achtern. Als
-      // gezeichnete Linien sahen sie wie mit dem Lineal gezogen aus.
-      const laenge = dims.length * WAKE.bowLengthFactor * intensity;
-      const rueckwaerts = model.rotation + 180;
-      for (const side of [-1, 1]) {
-        const winkel = (rueckwaerts + side * WAKE.bowAngleDeg) * DEG;
-        const dx = Math.sin(winkel);
-        const dy = -Math.cos(winkel);
-        for (let i = 0; i < WAKE.bowPuffs; i += 1) {
-          const f = (i + 1) / WAKE.bowPuffs;
-          const sprite = this.foamAt(used, texture);
-          used += 1;
-          sprite.position.set(bowX + dx * laenge * f, bowY + dy * laenge * f);
-          sprite.width = dims.beam * (0.9 + f * 1.6);
-          sprite.height = sprite.width;
-          sprite.alpha = WAKE.bowAlpha * intensity * (1 - f * 0.8);
-          sprite.rotation = i * 1.3 + side;
-        }
-      }
     }
 
     // Übrige Sprites aus dem Vorrat bleiben liegen, aber unsichtbar — sie

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { isItemId, itemById } from '@subwarfare/shared';
 import { computed } from 'vue';
+import coinIcon from '../assets/ui/coin.png';
 import { hud } from '../state/hud';
 
 /**
@@ -92,6 +93,16 @@ const armorMark = computed(() => {
         </span>
       </span>
     </div>
+
+    <!--
+      Getragener Loot — FRACHT, kein Besitz: gesichert ist er erst nach der
+      Extraktion, beim Untergang geht er über Bord. Deshalb steht er hier bei
+      den Überlebenswerten und nicht beim Kontostand im Menü.
+    -->
+    <div v-if="hud.loot > 0" class="vitals__loot" title="Loot an Bord — gesichert erst nach der Extraktion">
+      <img class="vitals__coin" :src="coinIcon" alt="" />
+      <span class="hud__num">{{ hud.loot }}</span>
+    </div>
   </section>
 </template>
 
@@ -162,6 +173,24 @@ const armorMark = computed(() => {
 .vitals__mark {
   font-size: calc(0.5625rem * var(--ui-scale));
   letter-spacing: 0.1em;
+}
+
+/* Loot-Chip: rechtsbündig unter den Leisten, golden wie das Menü-Guthaben. */
+.vitals__loot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  padding: 0.15rem 0.4rem;
+  font-size: calc(0.8125rem * var(--ui-scale));
+  color: #e6cf78;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 85%);
+  pointer-events: auto;
+}
+
+.vitals__coin {
+  width: calc(15px * var(--ui-scale));
+  height: calc(15px * var(--ui-scale));
 }
 
 @media (max-width: 760px) {

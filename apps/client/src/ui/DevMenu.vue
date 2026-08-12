@@ -3,7 +3,7 @@ import type { WeatherPreset, WeatherState } from '@subwarfare/shared';
 import { ROLE_DEVELOPER, VESSEL_MODELS, WEATHER_PRESETS } from '@subwarfare/shared';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { account } from '../state/auth';
-import { devSetModel, devSetWeather, hud } from '../state/hud';
+import { devSetModel, devSetWeather, devSpawnCrate, hud } from '../state/hud';
 
 /**
  * Entwicklermenü — geöffnet über den Build-Circle-Knopf in der Topbar.
@@ -223,6 +223,18 @@ const uhrzeit = computed(() => {
         {{ weather.dayLengthMinutes > 0 ? `${Math.round(weather.dayLengthMinutes)} min` : 'aus' }}
       </span>
     </label>
+
+    <p class="devmenu__group devmenu__group--spaced">Beuteschleife</p>
+    <div class="devmenu__presets">
+      <!-- Testkiste 120 m voraus — zum Prüfen von Aufsammeln und Extraktion,
+           ohne erst einen Bot versenken zu müssen. -->
+      <button type="button" class="devmenu__preset" @click="devSpawnCrate(25)">
+        Testkiste (25)
+      </button>
+      <button type="button" class="devmenu__preset" @click="devSpawnCrate(100)">
+        Testkiste (100)
+      </button>
+    </div>
 
     <p class="devmenu__hint">
       Seegang streut Schüsse und kürzt das Sonar — getaucht wirkt beides kaum.

@@ -26,6 +26,19 @@ export interface InventoryStore {
   /** Kauf: Coins abziehen + 1 Stück gutschreiben. 'poor' = Guthaben reicht nicht. */
   purchase(accountId: string, itemId: ItemId, price: number): Promise<'ok' | 'poor'>;
   /**
+   * Nimmt den GANZEN Bestand eines Items aus dem Inventar und liefert, wie viel
+   * es war. Damit geht die Munition eines Einsatzes an Bord: das Ticket ist
+   * zugleich der Lieferschein, und was der Einsatz nicht verbraucht, kommt über
+   * `credit` zurück.
+   *
+   * Bewusst „alles oder nichts" statt einer Wunschmenge: die Werft kennt keine
+   * Stückzahl, sie kennt nur den Slot. Wer weniger mitnehmen will, kauft
+   * weniger.
+   */
+  takeAll(accountId: string, itemId: ItemId): Promise<number>;
+  /** Schreibt Stücke gut — Rückgabe unverbrauchter Munition nach dem Einsatz. */
+  credit(accountId: string, itemId: ItemId, amount: number): Promise<void>;
+  /**
    * Räumt Besitz und Zuordnungen eines Kontos — Teil der Konto-Löschung.
    * In MariaDB erledigt das der CASCADE-Fremdschlüssel, dort ist es ein No-op;
    * der Speicher-Betrieb hat keine Fremdschlüssel und muss selbst aufräumen.
@@ -49,7 +62,12 @@ export class MemoryInventoryStore implements InventoryStore {
   async items(accountId: string): Promise<InventoryItem[]> {
     const map = this.owned.get(accountId);
     if (!map) return [];
-    return [...map.entries()].map(([itemId, quantity]) => ({ itemId, quantity }));
+    // Nullposten fallen raus — die MariaDB-Variante filtert genauso
+    // (`quantity > 0`). Seit die Munition an Bord geht, entstehen sie
+    // regelmäßig, und ohne den Filter böte die Werft „Torpedo MK I ×0" an.
+    return [...map.entries()]
+      .filter(([, quantity]) => quantity > 0)
+      .map(([itemId, quantity]) => ({ itemId, quantity }));
   }
 
   async loadouts(accountId: string): Promise<LoadoutEntry[]> {
@@ -86,6 +104,23 @@ export class MemoryInventoryStore implements InventoryStore {
     }
     map.set(itemId, (map.get(itemId) ?? 0) + 1);
     return 'ok';
+  }
+
+  async takeAll(accountId: string, itemId: ItemId): Promise<number> {
+    const map = this.owned.get(accountId);
+    const menge = map?.get(itemId) ?? 0;
+    if (menge > 0) map?.set(itemId, 0);
+    return menge;
+  }
+
+  async credit(accountId: string, itemId: ItemId, amount: number): Promise<void> {
+    if (amount <= 0) return;
+    let map = this.owned.get(accountId);
+    if (!map) {
+      map = new Map();
+      this.owned.set(accountId, map);
+    }
+    map.set(itemId, (map.get(itemId) ?? 0) + amount);
   }
 
   async purge(accountId: string): Promise<void> {

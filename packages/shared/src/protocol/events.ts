@@ -1,4 +1,5 @@
 import type { GameMap } from '../types/Map.js';
+import type { LoadoutEntryStack } from '../meta/ammo.js';
 import type { ArmorState } from '../meta/armor.js';
 import type { ShipStats, WeaponId } from '../meta/ships.js';
 import type { TubeState } from '../meta/tubes.js';
@@ -66,10 +67,23 @@ export interface ProjectileState {
  * Broadcast in einem U-Boot-Spiel ein Aufklärungs-Wallhack. `projectiles`
  * läuft durch denselben Filter.
  */
+/**
+ * Eine Lootkiste im Broadcast — bewusst OHNE Inhalt: was drin ist, erfährt
+ * man beim Aufsammeln. Der Wert im Netzverkehr wäre Aufklärung darüber, wie
+ * fett die Beute eines Gefechts war, an dem man nicht beteiligt ist.
+ */
+export interface CrateState {
+  id: string;
+  x: number;
+  y: number;
+}
+
 export interface StatePayload {
   tick: number;
   players: PlayerState[];
   projectiles: ProjectileState[];
+  /** Lootkisten in Sonar-Reichweite — gefiltert wie Fahrzeuge und Projektile. */
+  crates: CrateState[];
 }
 
 /**
@@ -99,6 +113,11 @@ export interface OwnStatePayload {
   /**
    * Restmunition je Waffen-Kennung. Beim Torpedo ist das der VORRAT, nicht die
    * Schussbereitschaft — die steckt in den Rohren.
+   *
+   * ⚠️ Enthält seit Protokoll 13 NUR die Waffen, die an Bord sind. Ein
+   * fehlender Schlüssel heißt „nicht dabei" und ist etwas anderes als 0
+   * („dabei, aber verschossen") — die Gefechtsleiste blendet den Slot im
+   * ersten Fall ganz aus.
    */
   ammo: Partial<Record<WeaponId, number>>;
   /**
@@ -106,6 +125,16 @@ export interface OwnStatePayload {
    * Nur im Besitzer-Ereignis: fremde Ladezustände wären Aufklärung.
    */
   tubes: TubeState[];
+  /**
+   * Getragener Loot in Coins. Gehört einem erst nach der Extraktion — bis
+   * dahin ist es Fracht, die beim Untergang wieder über Bord geht.
+   */
+  loot: number;
+  /**
+   * Sekunden ununterbrochen in einer Extraktionszone; 0 außerhalb. Die
+   * Schwelle (EXTRACTION_SECONDS) kennt der Client aus shared.
+   */
+  extractionSeconds: number;
   /** Zählt bei jedem neuen Befehl hoch — die Anzeige erkennt daran den Wechsel. */
   serial: number;
 }
@@ -162,6 +191,15 @@ export interface TelegraphOrder {
   step: number;
 }
 
+/**
+ * Nur an den Betroffenen: erfolgreich extrahiert. Loot ist gutgeschrieben,
+ * Restmunition zurückgebucht — die Verbindung endet unmittelbar danach.
+ */
+export interface ExtractedPayload {
+  /** Gesicherte Coins dieses Einsatzes. */
+  coins: number;
+}
+
 export interface ServerToClientEvents {
   welcome: (payload: WelcomePayload) => void;
   state: (payload: StatePayload) => void;
@@ -169,6 +207,7 @@ export interface ServerToClientEvents {
   'player:left': (payload: PlayerLeftPayload) => void;
   fx: (payload: FxPayload) => void;
   destroyed: (payload: DestroyedPayload) => void;
+  extracted: (payload: ExtractedPayload) => void;
   kicked: (payload: KickedPayload) => void;
   /**
    * Wetterwechsel während der Partie. Kommt heute nur vom Entwicklermenü —
@@ -215,6 +254,14 @@ export interface FireOrder {
   bearingDegrees?: number;
 }
 
+/**
+ * Entwickler: Testkiste mit `coins` Coins kurz vor dem eigenen Bug absetzen.
+ * Zum Testen der Beuteschleife ohne Bot-Jagd — Rolle prüft der Server.
+ */
+export interface DevCrateOrder {
+  coins: number;
+}
+
 export interface ClientToServerEvents {
   'order:steer': (payload: SteerOrder) => void;
   'order:telegraph': (payload: TelegraphOrder) => void;
@@ -229,6 +276,7 @@ export interface ClientToServerEvents {
    * (Streuung, Sonar) zu zweit testen lässt.
    */
   'dev:weather': (payload: WeatherState) => void;
+  'dev:crate': (payload: DevCrateOrder) => void;
   'order:tube': (payload: TubeOrder) => void;
 }
 
@@ -251,6 +299,8 @@ export interface GameSocketData {
   shipModel: string;
   /** Getragene Panzerung aus dem Ticket, `null` = ungepanzert. */
   armorItem: string | null;
+  /** Munition aus dem Ticket: je Waffe Sorte und mitgenommene Stückzahl. */
+  loadout: LoadoutEntryStack[];
 }
 
 /** Inhalt eines Join-Tickets. Vom Backend signiert, vom Spielserver geprüft. */
@@ -275,6 +325,15 @@ export interface TicketClaims {
    * mit — der Client kann sie damit nicht fälschen.
    */
   armorItem: string | null;
+  /**
+   * Munition dieses Einsatzes: je Waffe das Item und die Stückzahl, die aus
+   * dem Inventar an Bord gegangen ist. Waffen ohne Eintrag sind NICHT dabei.
+   *
+   * Die Stückzahl ist bei der Ticketausgabe bereits vom Konto abgebucht — das
+   * Ticket ist damit auch der Lieferschein. Was der Einsatz nicht verbraucht,
+   * meldet der Spielserver am Ende zurück und die api schreibt es gut.
+   */
+  loadout: LoadoutEntryStack[];
   /** Einmalkennung — der Spielserver merkt sich verbrauchte Tickets. */
   jti: string;
 }

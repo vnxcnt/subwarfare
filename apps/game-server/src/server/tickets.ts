@@ -1,4 +1,4 @@
-import type { TicketClaims } from '@subwarfare/shared';
+import type { LoadoutEntryStack, TicketClaims } from '@subwarfare/shared';
 import { TICKET_AUDIENCE } from '@subwarfare/shared';
 import { jwtVerify } from 'jose';
 import { env } from '../env.js';
@@ -20,6 +20,19 @@ function sweep(now: number): void {
   for (const [jti, expiresAt] of used) {
     if (expiresAt <= now) used.delete(jti);
   }
+}
+
+/** Formprüfung eines Munitionspostens aus dem Ticket. */
+function istPosten(wert: unknown): wert is LoadoutEntryStack {
+  if (typeof wert !== 'object' || wert === null) return false;
+  const posten = wert as { weapon?: unknown; itemId?: unknown; count?: unknown };
+  return (
+    typeof posten.weapon === 'string' &&
+    typeof posten.itemId === 'string' &&
+    typeof posten.count === 'number' &&
+    Number.isFinite(posten.count) &&
+    posten.count > 0
+  );
 }
 
 export type TicketResult =
@@ -56,7 +69,7 @@ export async function verifyTicket(raw: unknown): Promise<TicketResult> {
     return { ok: false, reason: 'Ticket ungültig oder abgelaufen.' };
   }
 
-  const { sub, name, mapId, jti, exp, role, shipModel, armorItem } = payload as Record<
+  const { sub, name, mapId, jti, exp, role, shipModel, armorItem, loadout } = payload as Record<
     string,
     unknown
   >;
@@ -85,6 +98,10 @@ export async function verifyTicket(raw: unknown): Promise<TicketResult> {
       // beim Spawn, ob die Kennung Absorption trägt — eine erfundene Kennung
       // findet dort nichts und wirkt damit wie keine.
       armorItem: typeof armorItem === 'string' ? armorItem : null,
+      // Munition dieses Einsatzes. Die api hat sie bereits abgebucht; hier
+      // wird nur noch geprüft, dass die Form stimmt — eine kaputte Zeile
+      // bedeutet „diese Waffe nicht dabei", nicht „Ticket ungültig".
+      loadout: Array.isArray(loadout) ? loadout.filter(istPosten) : [],
       jti,
     },
   };

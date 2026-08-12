@@ -91,6 +91,47 @@ export class MySqlInventoryStore implements InventoryStore {
     }
   }
 
+  async takeAll(accountId: string, itemId: ItemId): Promise<number> {
+    // Lesen und Leeren in EINER Transaktion, mit `FOR UPDATE` auf der Zeile:
+    // ohne die Sperre könnte zwischen Lesen und Schreiben ein Kauf laufen, und
+    // der würde beim Nullsetzen mit verschwinden. Der Rückgabewert ist die
+    // Stückzahl, die tatsächlich an Bord geht — der Lieferschein fürs Ticket.
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<ItemRow[]>(
+        'SELECT quantity FROM account_items WHERE account_id = ? AND item_id = ? FOR UPDATE',
+        [accountId, itemId],
+      );
+      const menge = Number(rows[0]?.quantity ?? 0);
+      if (menge <= 0) {
+        await connection.rollback();
+        return 0;
+      }
+      await connection.execute(
+        'UPDATE account_items SET quantity = 0 WHERE account_id = ? AND item_id = ?',
+        [accountId, itemId],
+      );
+      await connection.commit();
+      return menge;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async credit(accountId: string, itemId: ItemId, amount: number): Promise<void> {
+    if (amount <= 0) return;
+    await this.pool.execute(
+      `INSERT INTO account_items (account_id, item_id, quantity)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
+      [accountId, itemId, amount],
+    );
+  }
+
   async purge(): Promise<void> {
     // Nichts zu tun: account_items und ship_loadouts hängen mit ON DELETE
     // CASCADE am Konto — die Löschung der accounts-Zeile räumt beide mit.

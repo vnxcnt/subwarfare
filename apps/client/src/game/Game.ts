@@ -5,6 +5,7 @@ import { CameraController } from './CameraController';
 import { DemoTraffic } from './DemoTraffic';
 import type {
   ArmorState,
+  CrateState,
   OwnStatePayload,
   PlayerState,
   ProjectileState,
@@ -50,6 +51,8 @@ export interface OnlineSession {
   ticket: string;
   /** Wird gerufen, wenn die Partie endet — Rauswurf oder Verbindungsabriss. */
   onEnded: (message: string) => void;
+  /** Erfolgreich extrahiert: `coins` sind gesichert, zurück ins Menü. */
+  onExtracted: (coins: number) => void;
 }
 
 /** Stand des Ladevorgangs für den Ladebildschirm. */
@@ -142,6 +145,12 @@ export class Game {
   private mouseScreen: { x: number; y: number } | null = null;
   private mouseMoveListener: ((event: PointerEvent) => void) | null = null;
   private mouseLeaveListener: (() => void) | null = null;
+  /** Rechte Maustaste gehalten? Nur dann folgt der Blick dem Zeiger. */
+  private peekHeld = false;
+  private peekButtonListeners: {
+    down: (event: PointerEvent) => void;
+    up: (event: PointerEvent) => void;
+  } | null = null;
   /** Pro Frame berechnete Zielpeilung in Kursgrad — null, wenn nicht zielbar. */
   private aimBearing: number | null = null;
 
@@ -184,6 +193,10 @@ export class Game {
   private ownHp: number | null = null;
   /** Panzerung laut Server; null heißt ungepanzert ODER noch kein `own`. */
   private ownArmor: ArmorState | null = null;
+  /** Getragener Loot in Coins — Fracht, gesichert erst nach der Extraktion. */
+  private ownLoot = 0;
+  /** Sekunden in der Extraktionszone laut Server; 0 außerhalb. */
+  private ownExtractionSeconds = 0;
   private ownAmmo: Partial<Record<WeaponId, number>> = {};
   /** Rohr-Zustände laut Server — Quelle der Rohr-Anzeige. */
   private ownTubes: TubeState[] = [];
@@ -213,6 +226,8 @@ export class Game {
     tick: number;
     byId: Map<string, PlayerState>;
     projectiles: Map<string, ProjectileState>;
+    /** Kisten liegen still — der jüngste Stand reicht, nichts zu interpolieren. */
+    crates: CrateState[];
   }> = [];
   /** Darstellungszeit in Server-Ticks (20/s), läuft dem Netz hinterher. */
   private renderTick = -1;
@@ -412,8 +427,23 @@ export class Game {
     // verlassen hat — das Bild hinge dann schief, ohne dass etwas passiert.
     this.mouseLeaveListener = () => {
       this.mouseScreen = null;
+      this.peekHeld = false;
     };
     app.canvas.addEventListener('pointerleave', this.mouseLeaveListener);
+
+    // Umschau-Taste: rechte Maustaste halten. `pointerup` hängt am FENSTER,
+    // nicht am Canvas — wer über einem Anzeigefeld loslässt, soll trotzdem
+    // zurückfokussieren. Das Kontextmenü ist oben ohnehin unterdrückt.
+    this.peekButtonListeners = {
+      down: (event: PointerEvent) => {
+        if (event.button === 2) this.peekHeld = true;
+      },
+      up: (event: PointerEvent) => {
+        if (event.button === 2) this.peekHeld = false;
+      },
+    };
+    app.canvas.addEventListener('pointerdown', this.peekButtonListeners.down);
+    window.addEventListener('pointerup', this.peekButtonListeners.up);
 
     this.attachSteering();
 
@@ -476,6 +506,8 @@ export class Game {
         world.entities.setOwnId(payload.selfId);
         for (const ship of payload.ships) this.shipCatalog.set(ship.model, ship);
         world.setMap(payload.map);
+        // Extraktionszonen sichtbar machen: je Kreis ein Ring aus Bojen.
+        world.entities.setBuoys(payload.map.exitPoints);
         // Wetter kommt vom Server. Die Uhr läuft ab hier client-seitig weiter
         // (siehe `weatherSeconds`) — dafür muss nichts nachgeschickt werden.
         this.weather = payload.weather ?? DEFAULT_WEATHER;
@@ -496,6 +528,8 @@ export class Game {
         this.ownArmor = payload.armor ?? null;
         this.ownAmmo = payload.ammo;
         this.ownTubes = payload.tubes ?? [];
+        this.ownLoot = payload.loot ?? 0;
+        this.ownExtractionSeconds = payload.extractionSeconds ?? 0;
         // Bestätigter Stand übernimmt — die optimistische Stufe hat gedient.
         this.pendingTelegraphStep = null;
         this.ownVessel?.applyOwnState(payload);
@@ -521,6 +555,7 @@ export class Game {
         // aus dem Bestand — hier bleibt nur die Meldung an den Spieler.
         setSunkNotice(Date.now() + payload.respawnSeconds * 1000);
       },
+      onExtracted: (payload) => session.onExtracted(payload.coins),
       onEnded: (message) => session.onEnded(message),
     });
 
@@ -548,6 +583,7 @@ export class Game {
       byId: new Map(payload.players.map((player) => [player.id, player])),
       // Ältere Server (Protokoll < 4) schicken das Feld nicht — leer statt Crash.
       projectiles: new Map((payload.projectiles ?? []).map((p) => [p.id, p])),
+      crates: payload.crates ?? [],
     });
     // Deckel: getrimmt wird sonst nur im Ticker (`applyInterpolated`), und der
     // steht bei verborgenem Tab still — die 20 Hz kämen trotzdem weiter an.
@@ -740,6 +776,10 @@ export class Game {
       projectiles.push(a ? lerpProjectile(a, b, t) : b);
     }
     world.entities.applyProjectiles(projectiles);
+
+    // Kisten aus dem NEUEREN Snapshot: sie bewegen sich nicht, und wer fehlt,
+    // ist eingesammelt — die Ansicht soll das sofort zeigen.
+    world.entities.applyCrates(newer.crates);
   }
 
   /* --- Befehle -------------------------------------------------------- */
@@ -832,7 +872,10 @@ export class Game {
     const world = this.world;
     if (!world) return;
 
-    const maus = this.mouseScreen;
+    // Umgeschaut wird NUR mit gehaltener rechter Maustaste — loslassen holt
+    // den Blick zurück aufs Boot. Ohne das Gate wanderte das Bild bei jeder
+    // Mausbewegung mit, auch wenn man nur zielen oder klicken wollte.
+    const maus = this.peekHeld ? this.mouseScreen : null;
     if (!maus) {
       world.setPeekTarget(0, 0);
       return;
@@ -1024,11 +1067,26 @@ export class Game {
     return this.ownArmor;
   }
 
-  /** Restmunition einer Waffe laut Server; Kapazität als Startwert vor dem `own`. */
-  ammoFor(weapon: WeaponId): number {
-    const fallback =
-      weapon === 'torpedo' ? TORPEDO.capacity : weapon === 'taeuschkoerper' ? DECOY.capacity : 0;
-    return this.ownAmmo[weapon] ?? fallback;
+  /**
+   * Munition an Bord laut Server, je Waffe.
+   *
+   * Enthält NUR die Waffen, die dieser Einsatz wirklich dabei hat — ein
+   * fehlender Schlüssel heißt „nicht an Bord" und ist etwas anderes als 0.
+   * Vor dem ersten `own` ist die Sammlung leer; die Gefechtsleiste zeigt dann
+   * kurz keine Waffe, was ehrlicher ist als eine geratene Kapazität.
+   */
+  ammoAboard(): Partial<Record<WeaponId, number>> {
+    return this.ownAmmo;
+  }
+
+  /** Getragener Loot in Coins laut Server. */
+  get loot(): number {
+    return this.ownLoot;
+  }
+
+  /** Sekunden ununterbrochen in der Extraktionszone; 0 außerhalb. */
+  get extractionSeconds(): number {
+    return this.ownExtractionSeconds;
   }
 
   /** Rohr-Zustände laut Server. Leer bei Schiffen ohne Torpedorohre. */
@@ -1049,6 +1107,11 @@ export class Game {
    */
   devSetWeather(weather: WeatherState): void {
     this.socket?.sendDevWeather(weather);
+  }
+
+  /** Entwickler: Testkiste vor dem Bug — Rolle und Klemmen prüft der Server. */
+  devSpawnCrate(coins: number): void {
+    this.socket?.sendDevCrate(coins);
   }
 
   /**
@@ -1212,6 +1275,8 @@ export class Game {
     this.readyFired = false;
     this.ownHp = null;
     this.ownArmor = null;
+    this.ownLoot = 0;
+    this.ownExtractionSeconds = 0;
     this.ownAmmo = {};
     this.ownTubes = [];
     this.pendingTelegraphStep = null;
@@ -1236,6 +1301,12 @@ export class Game {
       this.app.canvas.removeEventListener('pointerleave', this.mouseLeaveListener);
     }
     this.mouseLeaveListener = null;
+    if (this.peekButtonListeners) {
+      this.app?.canvas.removeEventListener('pointerdown', this.peekButtonListeners.down);
+      window.removeEventListener('pointerup', this.peekButtonListeners.up);
+      this.peekButtonListeners = null;
+    }
+    this.peekHeld = false;
     this.aiming = false;
     this.aimBearing = null;
     this.mouseScreen = null;

@@ -10,11 +10,15 @@ import {
   DAMAGE,
   DECOY,
   DEPTH_CHARGE,
+  EXTRACTION_SECONDS,
   GUN,
+  LOOT_PICKUP_RADIUS,
+  NPC_LOOT,
   PROTOCOL_VERSION,
   RESPAWN_SECONDS,
   ROLE_DEVELOPER,
   SECTOR_TOLERANCE_DEG,
+  SHIP_ACCESS,
   SHIP_TYPE_SUBMARINE,
   SIDE_LAUNCH_HALF_ANGLE_DEG,
   SIM_STEP_SECONDS,
@@ -23,10 +27,17 @@ import {
   clampStep,
   currentHour,
   effectiveSensorRange,
+  isPlayableModel,
   isVesselModel,
   sanitizeWeather,
 } from '@subwarfare/shared';
-import type { TubePosition, TubeState, WeatherState } from '@subwarfare/shared';
+import type {
+  LoadoutEntryStack,
+  TubePosition,
+  TubeState,
+  WeaponId,
+  WeatherState,
+} from '@subwarfare/shared';
 import { TUBE, tubeBearing, tubeLayoutFor } from '@subwarfare/shared';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 
@@ -41,6 +52,7 @@ interface Tube {
 import { Server, type Socket } from 'socket.io';
 import { env } from '../env.js';
 import { ocean01, ocean01Weather } from '../maps/ocean01.js';
+import { AmmoCatalog } from '../sim/AmmoCatalog.js';
 import { ArmorCatalog } from '../sim/ArmorCatalog.js';
 import { Bots } from '../sim/Bots.js';
 import { ShipCatalog } from '../sim/ShipCatalog.js';
@@ -71,6 +83,7 @@ const ORTUNG_HYSTERESE = 1.05;
 export class GameServer {
   private readonly ships = new ShipCatalog();
   private readonly armor = new ArmorCatalog();
+  private readonly ammoCatalog = new AmmoCatalog();
   private readonly world = new World(ocean01, this.ships);
   /**
    * Wetterlage dieser Karte — Quelle für Seegang-Wirkung und Client-Optik.
@@ -103,11 +116,14 @@ export class GameServer {
    */
   private readonly detected = new Map<string, Set<string>>();
 
-  /** Restmunition je Account und Waffe. Angelegt beim Spawn, aufgefüllt beim Respawn. */
-  private readonly ammo = new Map<
-    string,
-    { torpedo: number; taeuschkoerper: number; geschuetz: number; wasserbombe: number }
-  >();
+  /**
+   * Restmunition je Account und Waffe — angelegt beim Beitritt aus dem Ticket.
+   *
+   * `Partial`, und das ist der Kern der neuen Regel: ein FEHLENDER Schlüssel
+   * heißt „diese Waffe ist nicht an Bord". Das ist etwas anderes als 0
+   * („dabei, aber verschossen") und geht genau so an den Client.
+   */
+  private readonly ammo = new Map<string, Partial<Record<WeaponId, number>>>();
   /** Rohr-Sperren je Waffe: frühester Tick, ab dem wieder gefeuert werden darf. */
   private readonly nextFireTick = new Map<
     string,
@@ -121,6 +137,22 @@ export class GameServer {
   private readonly tubes = new Map<string, Tube[]>();
   /** Versenkte Spieler, die auf ihren Wiedereinstieg warten. */
   private readonly pendingRespawns = new Map<string, { seconds: number; model: VesselModel }>();
+  /**
+   * Getragener Loot je Account in Coins. FRACHT, kein Besitz: gutgeschrieben
+   * wird erst bei der Extraktion, beim Untergang geht alles wieder über Bord.
+   */
+  private readonly loot = new Map<string, number>();
+  /**
+   * Wessen Einsatzgebühr schon als Kiste gefallen ist. Die Gebühr wurde EINMAL
+   * bezahlt und fällt deshalb nur beim ersten Untergang — sonst wäre ein
+   * absichtlich mehrfach versenktes Schiff eine Coin-Druckmaschine für den
+   * Gegner (bezahlt 375, gedroppt 3 × 375).
+   */
+  private readonly feeDropped = new Set<string>();
+  /** Sekunden ununterbrochen in einer Extraktionszone, je Account. */
+  private readonly extractionSeconds = new Map<string, number>();
+  /** Accounts, deren Extraktion gerade abgeschlossen wird (Trennung läuft). */
+  private readonly extracting = new Set<string>();
 
   private tickTimer: NodeJS.Timeout | null = null;
   private accumulator = 0;
@@ -134,7 +166,7 @@ export class GameServer {
     // Kataloge VOR dem ersten Spawn — die Bots fahren bereits damit.
     // Nebenläufig: beide warten im schlechtesten Fall ~10 s auf die api,
     // nacheinander wäre das die doppelte Startverzögerung für dieselbe Ursache.
-    await Promise.all([this.ships.load(), this.armor.load()]);
+    await Promise.all([this.ships.load(), this.armor.load(), this.ammoCatalog.load()]);
     // Seegang in die Welt: er streut jeden Schuss von rollendem Deck.
     this.world.setSeaState(this.weather.seaState);
     this.bots = new Bots(this.world, env.bots);
@@ -169,6 +201,15 @@ export class GameServer {
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
+    }
+
+    // Ein Neustart beendet alle laufenden Einsätze — das ist NICHT die Schuld
+    // der Spieler, also volle Abrechnung wie bei einer Extraktion: Munition
+    // zurück und getragenen Loot gutschreiben. Fire-and-forget; die Meldungen
+    // laufen los, bevor die Verbindungen fallen.
+    for (const [accountId, socket] of this.sockets) {
+      if (this.extracting.has(accountId)) continue;
+      this.reportSortieEnd(accountId, socket.data.loadout, this.loot.get(accountId) ?? 0);
     }
 
     this.io?.emit('kicked', { code: 'shutdown', message: 'Server fährt herunter.' });
@@ -233,6 +274,7 @@ export class GameServer {
     socket.data.role = result.claims.role;
     socket.data.shipModel = result.claims.shipModel;
     socket.data.armorItem = result.claims.armorItem;
+    socket.data.loadout = result.claims.loadout;
     next();
   }
 
@@ -243,11 +285,19 @@ export class GameServer {
     // Karteileichen stehen und würden den Platz blockieren.
     const previous = this.sockets.get(accountId);
     if (previous) {
+      // Der alte Einsatz endet ohne Extraktion — sein Loot und seine
+      // Restmunition verfallen, wie bei jedem anderen Abgang auch. Das neue
+      // Ticket bringt seine eigene Ausrüstung mit.
       previous.emit('kicked', { code: 'duplicate_session', message: 'An anderer Stelle verbunden.' });
       previous.disconnect(true);
       this.world.remove(accountId);
-      // Die neue Sitzung beginnt am Spawnpunkt — mit leerer Ortungslage.
+      // Die neue Sitzung beginnt am Spawnpunkt — mit leerer Ortungslage und
+      // frischer Einsatzbuchhaltung.
       this.detected.delete(accountId);
+      this.loot.delete(accountId);
+      this.feeDropped.delete(accountId);
+      this.extractionSeconds.delete(accountId);
+      this.extracting.delete(accountId);
     }
 
     // Auch eine noch laufende Respawn-Wartezeit verfällt — die neue Sitzung
@@ -267,7 +317,7 @@ export class GameServer {
       // löst der Katalog zu null auf — dann fährt das Boot ungepanzert.
       this.armor.get(socket.data.armorItem),
     );
-    this.refillAmmo(accountId);
+    this.loadAmmoFromTicket(socket);
     this.resetTubes(accountId, vessel.model);
     console.log(`[game-server] ${name} (${accountId}) verbunden — ${this.sockets.size} Spieler.`);
 
@@ -353,7 +403,10 @@ export class GameServer {
       }
 
       const ammo = this.ammo.get(accountId);
-      if (!ammo || ammo[weapon] <= 0) return;
+      // Fehlender Schlüssel = Waffe nicht an Bord, 0 = verschossen. Beides
+      // führt hier zum selben Ergebnis: es fällt kein Schuss.
+      const vorrat = ammo?.[weapon] ?? 0;
+      if (!ammo || vorrat <= 0) return;
       // Rohr-Sperre je Waffe in Server-Ticks — der Knopf im Client ist Höflichkeit.
       const gates =
         this.nextFireTick.get(accountId) ??
@@ -404,7 +457,7 @@ export class GameServer {
           : weapon === 'wasserbombe'
             ? DEPTH_CHARGE
             : GUN;
-      ammo[weapon] -= 1;
+      ammo[weapon] = vorrat - 1;
       gates[weapon] = this.tick + Math.round(spec.cooldownSeconds / SIM_STEP_SECONDS);
       this.nextFireTick.set(accountId, gates);
       // Munitionsstand sofort bestätigen, nicht erst mit dem nächsten Tick.
@@ -435,6 +488,23 @@ export class GameServer {
       );
     });
 
+    socket.on('dev:crate', (payload) => {
+      // Testkiste für die Beuteschleife — Rolle aus dem TICKET, Werte geklemmt.
+      if (socket.data.role < ROLE_DEVELOPER) return;
+      const own = this.world.get(accountId);
+      if (!own || !isFiniteNumber(payload?.coins)) return;
+      const coins = Math.min(Math.max(Math.floor(payload.coins), 1), 10_000);
+      // 120 m voraus: außerhalb des Aufsammelradius, damit man das Überfahren
+      // wirklich sieht, statt die Kiste im Entstehen zu schlucken.
+      const heading = own.rotation * (Math.PI / 180);
+      this.world.spawnCrate(
+        own.x + Math.sin(heading) * 120,
+        own.y - Math.cos(heading) * 120,
+        coins,
+      );
+      console.log(`[game-server] ${name} setzt Testkiste (${coins} Coins).`);
+    });
+
     socket.on('dev:model', (payload) => {
       // Rolle UND Modell prüfen — der Knopf im Client ist Höflichkeit, die
       // Wahrheit sitzt hier. Ein gebasteltes Ereignis ohne Entwicklerrolle
@@ -448,9 +518,11 @@ export class GameServer {
       // ships-Tabelle) — ab dem naechsten Simulationsschritt.
       own.applyProfile(this.ships.profile(payload.model));
       // Ein Modellwechsel ist ein frisches Schiff: volle Lebenspunkte des
-      // neuen Modells, volle Munition. Reines Entwickler-Werkzeug.
+      // neuen Modells, Munition wieder auf den Stand des Tickets. Reines
+      // Entwickler-Werkzeug — und keine Item-Quelle: die Rückgabe am Ende
+      // deckelt auf die mitgenommene Stückzahl, mehr kann nicht zurückfließen.
       this.world.resetHp(accountId);
-      this.refillAmmo(accountId);
+      this.loadAmmoFromTicket(socket);
       // Anderes Modell heißt andere Rohrbestückung.
       this.resetTubes(accountId, payload.model);
       // Wer vom U-Boot auf ein Überwasserschiff wechselt, taucht zwangsläufig
@@ -467,7 +539,14 @@ export class GameServer {
       // Nur aufräumen, wenn diese Verbindung noch die aktuelle ist — bei einer
       // Verdrängung hat der Nachfolger den Platz bereits übernommen.
       if (this.sockets.get(accountId) !== socket) return;
+      // BEWUSST keine Abrechnung: wer ohne Extraktion geht — Knopf, Absturz,
+      // Kabel — verliert Loot und mitgebrachte Ausrüstung. Die Extraktion hat
+      // ihre Abrechnung schon selbst gemacht, bevor sie hier ankommt.
       this.sockets.delete(accountId);
+      this.loot.delete(accountId);
+      this.feeDropped.delete(accountId);
+      this.extractionSeconds.delete(accountId);
+      this.extracting.delete(accountId);
       this.detected.delete(accountId);
       this.pendingRespawns.delete(accountId);
       this.ammo.delete(accountId);
@@ -502,8 +581,9 @@ export class GameServer {
         if (tube.status !== 'leer') continue;
         // Der Vorrat wird beim LADEN verbraucht, nicht beim Schuss: ein
         // geladenes Rohr ist bereits bezahlt.
-        if (!ammo || ammo.torpedo <= 0) break;
-        ammo.torpedo -= 1;
+        const vorrat = ammo?.torpedo ?? 0;
+        if (!ammo || vorrat <= 0) break;
+        ammo.torpedo = vorrat - 1;
         tube.status = 'laedt';
         tube.remaining = TUBE.reloadSeconds;
         geaendert = true;
@@ -615,26 +695,113 @@ export class GameServer {
   }
 
   /**
-   * Rohre neu bestücken. Ein Boot läuft mit vollen Rohren aus — der Vorrat
-   * bleibt davon unberührt, das ist die Grundausstattung.
+   * Rohre bestücken — AUS DEM VORRAT.
+   *
+   * Früher lief jedes Boot mit vollen Rohren aus, ohne dass das etwas kostete.
+   * Seit die Munition aus dem Inventar kommt, wäre das eine Torpedo-Quelle aus
+   * dem Nichts: wer keine Torpedos gekauft hat, hätte trotzdem so viele
+   * geladen, wie das Schiff Rohre besitzt. Jetzt wird beim Bestücken abgebucht
+   * wie beim Nachladen von Hand — reicht der Vorrat nicht, bleibt das Rohr leer.
    */
   private resetTubes(accountId: string, model: VesselModel): void {
     const layout = tubeLayoutFor(model);
+    const vorrat = this.ammo.get(accountId);
     this.tubes.set(
       accountId,
-      layout.map((position) => ({ position, status: 'geladen', remaining: 0, armed: false })),
+      layout.map((position) => {
+        const vorhanden = (vorrat?.torpedo ?? 0) > 0;
+        if (vorhanden && vorrat) vorrat.torpedo = (vorrat.torpedo ?? 0) - 1;
+        return {
+          position,
+          status: vorhanden ? ('geladen' as const) : ('leer' as const),
+          remaining: 0,
+          armed: false,
+        };
+      }),
     );
   }
 
-  /** Volle Munition und offene Rohre — Spawn, Respawn, Modellwechsel. */
-  private refillAmmo(accountId: string): void {
-    this.ammo.set(accountId, {
-      torpedo: TORPEDO.capacity,
-      taeuschkoerper: DECOY.capacity,
-      geschuetz: GUN.capacity,
-      wasserbombe: DEPTH_CHARGE.capacity,
-    });
+  /**
+   * Munition aus dem TICKET an Bord nehmen — einmal je Einsatz, beim Beitritt.
+   *
+   * Was hier nicht steht, ist nicht dabei: ein leerer Werft-Slot heißt, dass
+   * die Waffe im Gefecht gar nicht auftaucht. Und es gibt bewusst KEIN
+   * Nachladen beim Respawn — der Vorrat gilt für den ganzen Einsatz, er kommt
+   * aus dem Inventar des Kontos und ist dort bereits abgebucht.
+   */
+  private loadAmmoFromTicket(socket: GameSocket): void {
+    const accountId = socket.data.accountId;
+    const vorrat: Partial<Record<WeaponId, number>> = {};
+    for (const posten of socket.data.loadout) {
+      vorrat[posten.weapon] = (vorrat[posten.weapon] ?? 0) + Math.floor(posten.count);
+      // Schaden der Sorte in die Welt — ab hier schlägt MK III härter zu als
+      // MK I, ohne dass irgendeine Abschussstelle davon wissen muss.
+      const schaden = this.ammoCatalog.damage(posten.itemId);
+      if (schaden !== null) this.world.setWeaponDamage(accountId, posten.weapon, schaden);
+    }
+    this.ammo.set(accountId, vorrat);
     this.nextFireTick.delete(accountId);
+  }
+
+  /**
+   * Was von der Munition übrig ist — Grundlage der Rückgabe ans Backend.
+   *
+   * Gezählt wird je ITEM, nicht je Waffe: nur so weiß die api, was sie
+   * gutschreiben soll. Geladene Rohre zählen mit, sie sind ja noch da.
+   */
+  private leftovers(
+    accountId: string,
+    aboard: readonly LoadoutEntryStack[],
+  ): LoadoutEntryStack[] {
+    const vorrat = this.ammo.get(accountId);
+    if (!vorrat) return [];
+    const inRohren = (this.tubes.get(accountId) ?? []).filter(
+      (rohr) => rohr.status === 'geladen',
+    ).length;
+
+    const rest: LoadoutEntryStack[] = [];
+    for (const posten of aboard) {
+      let uebrig = vorrat[posten.weapon] ?? 0;
+      // Torpedos in geladenen Rohren sind aus dem Vorrat verschwunden, aber
+      // nicht verschossen — sonst verlöre jeder, der mit vollen Rohren
+      // aussteigt, genau diese Torpedos.
+      if (posten.weapon === 'torpedo') uebrig += inRohren;
+      const zurueck = Math.min(Math.max(Math.floor(uebrig), 0), posten.count);
+      if (zurueck > 0) rest.push({ weapon: posten.weapon, itemId: posten.itemId, count: zurueck });
+    }
+    return rest;
+  }
+
+  /**
+   * Meldet dem Backend das ERFOLGREICHE Einsatzende: unverbrauchte Munition
+   * zurück, gesicherten Loot gutschreiben.
+   *
+   * Seit Protokoll 14 gibt es genau zwei Aufrufer — die Extraktion und das
+   * Herunterfahren des Servers (das ist nicht die Schuld des Spielers). Wer
+   * die Karte über den Knopf verlässt oder die Verbindung verliert, landet
+   * hier NICHT: Loot und Ausrüstung sind dann weg. Das ist die Regel, die die
+   * Extraktion überhaupt zu einer Entscheidung macht — und nebenbei der
+   * Riegel gegen „Kabel ziehen rettet die Fracht".
+   *
+   * Fire-and-forget: ein hängendes Backend darf das Aufräumen nicht aufhalten.
+   * Kommt die Meldung nicht an, geht der Fehlerfall zulasten des Spielers,
+   * nie der Wirtschaft.
+   */
+  private reportSortieEnd(
+    accountId: string,
+    aboard: readonly LoadoutEntryStack[],
+    coins: number,
+  ): void {
+    const rest = this.leftovers(accountId, aboard);
+    if (rest.length === 0 && coins <= 0) return;
+    fetch(`${env.apiInternalUrl}/api/internal/sortie-end`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-internal-key': env.internalKey },
+      body: JSON.stringify({ accountId, leftovers: rest, coins }),
+      signal: AbortSignal.timeout(3000),
+    }).catch((error) => {
+      console.warn(`[game-server] Abrechnung für ${accountId} fehlgeschlagen:`, error);
+    });
   }
 
   private sendOwn(socket: GameSocket, vessel: Vessel): void {
@@ -647,13 +814,13 @@ export class GameServer {
       periscopeTarget: vessel.periscopeTarget,
       hp: this.world.hp(accountId),
       armor: this.world.armorState(accountId),
-      ammo: {
-        torpedo: ammo?.torpedo ?? 0,
-        taeuschkoerper: ammo?.taeuschkoerper ?? 0,
-        geschuetz: ammo?.geschuetz ?? 0,
-        wasserbombe: ammo?.wasserbombe ?? 0,
-      },
+      // NUR die Waffen an Bord. Ein fehlender Schlüssel heißt „nicht dabei" —
+      // die Gefechtsleiste blendet den Slot dann ganz aus, statt eine Waffe mit
+      // 0 Schuss anzubieten, die es auf diesem Einsatz gar nicht gibt.
+      ammo: { ...(ammo ?? {}) },
       tubes: this.tubeStates(accountId),
+      loot: this.loot.get(accountId) ?? 0,
+      extractionSeconds: this.extractionSeconds.get(accountId) ?? 0,
       serial: vessel.serial,
     });
   }
@@ -678,6 +845,7 @@ export class GameServer {
       this.bots?.update(SIM_STEP_SECONDS);
       const events = this.world.update(SIM_STEP_SECONDS);
       this.handleCombatEvents(events);
+      this.updateLootAndExtraction(SIM_STEP_SECONDS);
       this.updateRespawns(SIM_STEP_SECONDS);
       this.updateTubes(SIM_STEP_SECONDS);
       this.accumulator -= SIM_STEP_SECONDS;
@@ -716,14 +884,83 @@ export class GameServer {
 
       const socket = this.sockets.get(wreck.id);
       if (socket) {
+        /*
+         * Spieler-Drop: Einsatzgebühr des TICKET-Schiffs (nur beim ersten
+         * Untergang — sie wurde einmal bezahlt) plus alles, was er trug.
+         * Der Getragene Loot geht damit über Bord, nicht unter: wer das Wrack
+         * plündert, übernimmt die Fracht.
+         */
+        const ticketModel = socket.data.shipModel;
+        const gebuehr =
+          !this.feeDropped.has(wreck.id) && isPlayableModel(ticketModel)
+            ? SHIP_ACCESS[ticketModel].sortieCost
+            : 0;
+        this.feeDropped.add(wreck.id);
+        const fracht = this.loot.get(wreck.id) ?? 0;
+        this.loot.set(wreck.id, 0);
+        this.world.spawnCrate(wreck.x, wreck.y, gebuehr + fracht);
+
         this.pendingRespawns.set(wreck.id, { seconds: RESPAWN_SECONDS, model });
         socket.emit('destroyed', { respawnSeconds: RESPAWN_SECONDS });
         console.log(`[game-server] ${socket.data.name} versenkt — Respawn in ${RESPAWN_SECONDS} s.`);
       } else {
+        // NPC-Drop nach Beutetabelle; Modelle ohne Eintrag lassen nichts fallen.
+        this.world.spawnCrate(wreck.x, wreck.y, NPC_LOOT[model] ?? 0);
         this.bots?.notifyDestroyed(wreck.id);
       }
       this.notifyLeft(wreck.id);
     }
+  }
+
+  /**
+   * Aufsammeln und Extraktion — läuft mit dem Simulationstakt.
+   *
+   * Aufsammeln: Kisten im Radius gehen als FRACHT an Bord. Extraktion: wer
+   * sich ununterbrochen in einer Zone hält, bekommt nach EXTRACTION_SECONDS
+   * Loot gutgeschrieben und Restmunition zurück — das ist seit Protokoll 14
+   * der EINZIGE Weg, beides zu behalten.
+   */
+  private updateLootAndExtraction(deltaSeconds: number): void {
+    for (const [accountId, socket] of this.sockets) {
+      if (this.extracting.has(accountId)) continue;
+      const vessel = this.world.get(accountId);
+      if (!vessel) {
+        this.extractionSeconds.delete(accountId);
+        continue;
+      }
+
+      const eingesammelt = this.world.pickupCrates(vessel, LOOT_PICKUP_RADIUS);
+      if (eingesammelt > 0) {
+        this.loot.set(accountId, (this.loot.get(accountId) ?? 0) + eingesammelt);
+        console.log(`[game-server] ${socket.data.name} birgt Loot: ${eingesammelt} Coins.`);
+      }
+
+      // Zonenzeit: drinnen läuft sie auf, draußen fällt sie sofort auf null —
+      // Extraktion ist eine ununterbrochene Acht-Sekunden-Entscheidung, kein
+      // Sparbuch über mehrere Vorbeifahrten.
+      const zone = this.world.findExitPointAt(vessel.x, vessel.y);
+      if (!zone) {
+        this.extractionSeconds.delete(accountId);
+        continue;
+      }
+      const stand = (this.extractionSeconds.get(accountId) ?? 0) + deltaSeconds;
+      this.extractionSeconds.set(accountId, stand);
+      if (stand >= EXTRACTION_SECONDS) this.extract(accountId, socket);
+    }
+  }
+
+  /** Erfolgreiche Extraktion: gutschreiben, melden, Verbindung beenden. */
+  private extract(accountId: string, socket: GameSocket): void {
+    this.extracting.add(accountId);
+    const coins = this.loot.get(accountId) ?? 0;
+    // Abrechnung JETZT, solange Vorrat und Rohre noch stehen — der
+    // Disconnect-Handler räumt sie gleich weg.
+    this.reportSortieEnd(accountId, socket.data.loadout, coins);
+    socket.emit('extracted', { coins });
+    console.log(`[game-server] ${socket.data.name} extrahiert — ${coins} Coins gesichert.`);
+    // Trennung leicht verzögert, damit das extracted-Paket sicher rausgeht —
+    // ein disconnect im selben Zug kann es sonst verschlucken.
+    setTimeout(() => socket.disconnect(true), 150);
   }
 
   /** Setzt versenkte Spieler nach Ablauf ihrer Wartezeit wieder ein. */
@@ -745,7 +982,15 @@ export class GameServer {
         pending.model,
         this.armor.get(socket.data.armorItem),
       );
-      this.refillAmmo(accountId);
+      // KEIN Auffüllen der Munition: der Vorrat gilt für den ganzen Einsatz.
+      // Er kommt aus dem Inventar und ist dort schon abgebucht — ein Respawn
+      // wäre sonst der bequemste Weg, Torpedos aus dem Nichts zu bekommen.
+      // Der Schaden je Sorte muss dagegen neu gesetzt werden: `world.remove`
+      // beim Untergang hat ihn mitgenommen.
+      for (const posten of socket.data.loadout) {
+        const schaden = this.ammoCatalog.damage(posten.itemId);
+        if (schaden !== null) this.world.setWeaponDamage(accountId, posten.weapon, schaden);
+      }
       this.resetTubes(accountId, pending.model);
       this.sendOwn(socket, vessel);
     }
@@ -789,6 +1034,7 @@ export class GameServer {
     const states = new Map<string, PlayerState>();
     for (const vessel of this.world.all()) states.set(vessel.id, vessel.toState());
     const projectiles = this.world.projectileStates();
+    const crates = this.world.crateStates();
 
     for (const [accountId, socket] of this.sockets) {
       const observer = this.world.get(accountId);
@@ -797,7 +1043,7 @@ export class GameServer {
         // Funkstille. Ohne ihn behielte der Client seinen letzten Stand samt
         // eigenem Wrack — und der Respawn käme dort nie als frischer Spawn an
         // (Versenkt-Meldung bliebe hängen, Kamera am verwaisten Objekt).
-        socket.volatile.emit('state', { tick: this.tick, players: [], projectiles: [] });
+        socket.volatile.emit('state', { tick: this.tick, players: [], projectiles: [], crates: [] });
         continue;
       }
 
@@ -816,7 +1062,20 @@ export class GameServer {
         return dx * dx + dy * dy <= range * range;
       });
 
-      socket.volatile.emit('state', { tick: this.tick, players, projectiles: visible });
+      // Kisten ebenso: eine Kiste außerhalb der Sonar-Reichweite wäre die
+      // Information, dass dort irgendwo ein Gefecht endete — Aufklärung.
+      const sichtbareKisten = crates.filter((c) => {
+        const dx = c.x - observer.x;
+        const dy = c.y - observer.y;
+        return dx * dx + dy * dy <= range * range;
+      });
+
+      socket.volatile.emit('state', {
+        tick: this.tick,
+        players,
+        projectiles: visible,
+        crates: sichtbareKisten,
+      });
     }
   }
 
@@ -912,6 +1171,11 @@ export class GameServer {
       `${this.world.hp(accountId)}:${this.world.armorState(accountId)?.percent ?? -1}:` +
       `${ammo?.torpedo ?? 0}:${ammo?.taeuschkoerper ?? 0}:` +
       `${ammo?.geschuetz ?? 0}:${ammo?.wasserbombe ?? 0}:` +
+      // Loot und Zonenzeit: das Aufsammeln muss sofort sichtbar werden, und
+      // der Extraktionsbalken läuft — viertelsekundengenau quantisiert, damit
+      // das own-Ereignis in der Zone mit 4 Hz statt 20 Hz feuert.
+      `${this.loot.get(accountId) ?? 0}:` +
+      `${Math.floor((this.extractionSeconds.get(accountId) ?? 0) * 4)}:` +
       // Rohre mit: der Ladebalken läuft, und ohne ihn in der Signatur bliebe
       // die Anzeige beim Ladevorgang stehen.
       (this.tubes.get(accountId) ?? [])

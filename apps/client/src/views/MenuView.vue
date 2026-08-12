@@ -159,6 +159,21 @@ function equippedName(slot: ItemCategory): string | null {
   return id !== null && isItemId(id) ? itemById(id).name : null;
 }
 
+/**
+ * Stückzahl, die dieser Slot in den Einsatz mitnimmt.
+ *
+ * Seit die Munition aus dem Inventar kommt, ist das die entscheidende Zahl:
+ * was hier steht, geht an Bord und wird beim Auslaufen abgebucht. `null` bei
+ * leerem Slot oder bei der Panzerung — die ist ein Stück und wird nicht
+ * verbraucht.
+ */
+function aboardCount(slot: ItemCategory): number | null {
+  if (slot === 'panzerung') return null;
+  const id = equippedItem(effectiveShip.value, slot);
+  if (id === null || !isItemId(id)) return null;
+  return ownedQuantity(id);
+}
+
 /** Besitz einer Kategorie in Katalog-Reihenfolge (aufsteigend nach Stärke). */
 function ownedInCategory(category: ItemCategory): Array<ItemDefinition & { quantity: number }> {
   return ITEMS.filter((item) => item.category === category)
@@ -481,6 +496,15 @@ onBeforeUnmount(() => {
                 :class="{ 'menu__slot-item--empty': !equippedName(slot) }"
               >
                 {{ equippedName(slot) ?? '— leer —' }}
+                <!-- Was wirklich mitfährt. Ohne Bestand nützt der belegte Slot
+                     nichts — dann fährt die Waffe nicht mit. -->
+                <span
+                  v-if="aboardCount(slot) !== null"
+                  class="menu__slot-aboard hud__num"
+                  :class="{ 'menu__slot-aboard--none': aboardCount(slot) === 0 }"
+                >
+                  {{ aboardCount(slot) === 0 ? 'kein Vorrat' : `${aboardCount(slot)} an Bord` }}
+                </span>
               </span>
             </button>
             <div v-if="activeSlot === slot" class="menu__slot-options">
@@ -1047,6 +1071,22 @@ onBeforeUnmount(() => {
   font-weight: 400;
   color: inherit;
   opacity: 0.45;
+}
+
+/* Die Stückzahl steht kleiner hinter dem Namen: der Name sagt WAS, diese Zahl
+   sagt WIE VIEL davon in den Einsatz geht. */
+.menu__slot-aboard {
+  margin-left: 0.5rem;
+  font-weight: 400;
+  font-size: 0.8em;
+  opacity: 0.65;
+}
+
+/* Belegt, aber nichts da: das muss auffallen — der Slot sieht sonst voll aus,
+   und man läuft ohne die Waffe aus. */
+.menu__slot-aboard--none {
+  color: #f4b3b5;
+  opacity: 0.9;
 }
 
 .menu__slot-options {
