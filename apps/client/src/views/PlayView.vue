@@ -29,21 +29,36 @@ const kartenName = ref('');
  * Ladeschirm ist schlimmer als ein leeres Meer mit Anzeige.
  */
 const LADE_NOTBREMSE_MS = 25_000;
+/**
+ * Mindestanzeige des Ladeschirms. Auf schnellen Leitungen ist alles in unter
+ * einer Sekunde da — der Schirm blitzte dann nur auf, und das wirkt kaputter
+ * als eine kurze, ruhige Einblende. Zwei Sekunden geben dem Bild einen Moment;
+ * der Balken steht währenddessen bereits auf 100 %.
+ */
+const LADE_MINDESTDAUER_MS = 2_000;
 let notbremse: number | null = null;
 let ausblendUhr: number | null = null;
+let mindestUhr: number | null = null;
+let ladeBeginn = 0;
 
 let game: Game | null = null;
 
 function ladenBeenden(): void {
-  if (ladenFertig.value) return;
+  if (ladenFertig.value || mindestUhr !== null) return;
+  // Fertig ist fertig — aber ausgeblendet wird erst, wenn die Mindestdauer
+  // steht. Der Balken zeigt solange volle 100 %.
   ladeStand.value = 1;
-  ladenFertig.value = true;
-  if (notbremse !== null) window.clearTimeout(notbremse);
-  notbremse = null;
-  // Etwas länger als die CSS-Überblendung (0,45 s), damit sie sicher durch ist.
-  ausblendUhr = window.setTimeout(() => {
-    ladenSichtbar.value = false;
-  }, 550);
+  const rest = Math.max(0, ladeBeginn + LADE_MINDESTDAUER_MS - Date.now());
+  mindestUhr = window.setTimeout(() => {
+    mindestUhr = null;
+    ladenFertig.value = true;
+    if (notbremse !== null) window.clearTimeout(notbremse);
+    notbremse = null;
+    // Etwas länger als die CSS-Überblendung (0,45 s), damit sie sicher durch ist.
+    ausblendUhr = window.setTimeout(() => {
+      ladenSichtbar.value = false;
+    }, 550);
+  }, rest);
 }
 
 onMounted(async () => {
@@ -58,6 +73,7 @@ onMounted(async () => {
     return;
   }
   kartenName.value = mapLabel(session.mapId);
+  ladeBeginn = Date.now();
 
   notbremse = window.setTimeout(() => {
     console.warn('[client] Beitritt hat nicht fertig gemeldet — Ladeschirm wird geräumt.');
@@ -110,6 +126,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (notbremse !== null) window.clearTimeout(notbremse);
   if (ausblendUhr !== null) window.clearTimeout(ausblendUhr);
+  if (mindestUhr !== null) window.clearTimeout(mindestUhr);
   bindGame(null);
   game?.destroy();
   game = null;

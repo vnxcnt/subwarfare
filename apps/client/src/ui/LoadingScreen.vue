@@ -27,12 +27,6 @@ const prozent = computed(() => Math.round(Math.min(Math.max(props.progress, 0), 
 
 <template>
   <div class="laden" :class="{ 'laden--fertig': done }" aria-live="polite">
-    <!-- Sonarscheibe: reine CSS-Geometrie, keine Grafik. Sie dreht langsam
-         weiter und macht den Bildschirm lebendig, ohne etwas nachzuladen. -->
-    <div class="laden__sonar" aria-hidden="true">
-      <span class="laden__strahl"></span>
-    </div>
-
     <div class="laden__mitte">
       <p class="laden__marke">Sub Warfare</p>
       <h1 class="laden__karte">{{ mapName }}</h1>
@@ -67,15 +61,15 @@ const prozent = computed(() => Math.round(Math.min(Math.max(props.progress, 0), 
    * Deckend: hier darf NICHTS durchscheinen, sonst sieht man doch wieder das
    * halb aufgebaute Gefecht.
    *
-   * Das Hafenbild des Menüs liegt zu diesem Zeitpunkt IMMER schon im Cache —
-   * auf die Karte kommt man nur über das Menü (ohne Ticket im Speicher schickt
-   * die Ansicht zurück). Es kostet hier also nichts und macht aus dem schwarzen
-   * Warteschirm einen Teil der Menüwelt. Der dunkle Schleier davor hält den
-   * Text lesbar, der Verlauf darunter trägt den Bildschirm auch ohne Bild.
+   * Das eigene Ladebild (U-Boot im Abendlicht, 128 kB WebP) lädt parallel zu
+   * den Spielgrafiken; bis es da ist, trägt der dunkle Verlauf darunter den
+   * Bildschirm. Der Schleier davor ist bewusst MILD — das Bild soll wirken,
+   * der Text bleibt lesbar, weil die Bildmitte ohnehin dunkel ist. Nach dem
+   * ersten Einsatz kommt das Bild aus dem Cache.
    */
   background:
-    linear-gradient(rgb(2 10 16 / 82%), rgb(2 10 16 / 92%)),
-    url('../assets/ui/menu-bg.webp') center / cover no-repeat,
+    linear-gradient(rgb(2 10 16 / 22%), rgb(2 10 16 / 45%)),
+    url('../assets/ui/loading-bg.webp') center / cover no-repeat,
     radial-gradient(ellipse at center, #0a2233 0%, #04141f 70%, #020a10 100%);
   color: #e9e2cd;
   /* Nach dem Ausblenden dürfen Klicks wieder ans Spiel. */
@@ -87,52 +81,8 @@ const prozent = computed(() => Math.round(Math.min(Math.max(props.progress, 0), 
   pointer-events: none;
 }
 
-/*
- * Sonarscheibe hinter der Mitte. Sie liegt in der Schichtung UNTER dem Text
- * (kein z-index nötig: sie steht im Fluss davor und ist absolut positioniert)
- * und ist bewusst schwach — sie soll Stimmung machen, nicht ablenken.
- */
-.laden__sonar {
-  position: absolute;
-  width: min(30rem, 62vh);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  border: 1px solid rgb(111 208 189 / 10%);
-  background:
-    radial-gradient(circle, transparent 0 34%, rgb(111 208 189 / 6%) 34% calc(34% + 1px), transparent calc(34% + 1px)),
-    radial-gradient(circle, transparent 0 67%, rgb(111 208 189 / 6%) 67% calc(67% + 1px), transparent calc(67% + 1px));
-  overflow: hidden;
-}
-
-.laden__strahl {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  /* Keilförmiger Nachlauf wie auf der Sonaranzeige. */
-  background: conic-gradient(from 0deg, rgb(111 208 189 / 13%) 0deg, transparent 42deg);
-  /* Zur Mitte hin ausgeblendet: ungemasked lief der helle Keil quer durch den
-     Kartennamen und nahm der Schrift den Kontrast. Außen bleibt er kräftig.
-     Mit Präfix für ältere WebKit-Fassungen — fehlt die Maske dort, ist der
-     Keil eben durchgehend, kaputt ist nichts. */
-  -webkit-mask-image: radial-gradient(circle, transparent 0 32%, #000 62%);
-  mask-image: radial-gradient(circle, transparent 0 32%, #000 62%);
-  animation: laden-sweep 4.5s linear infinite;
-}
-
-@keyframes laden-sweep {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Wer Bewegung nicht verträgt, bekommt den Strahl still — der Bildschirm
-   funktioniert ohne ihn genauso. */
-@media (prefers-reduced-motion: reduce) {
-  .laden__strahl {
-    animation: none;
-  }
-}
-
+/* Die frühere CSS-Sonarscheibe ist raus: über dem Ladebild las sie sich als
+   Schlieren-Artefakt. Das Artwork trägt den Bildschirm jetzt allein. */
 .laden__mitte {
   position: relative;
   display: flex;

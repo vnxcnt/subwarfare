@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router';
 import devIcon from '../assets/ui/ingame_dev.png';
 import exitIcon from '../assets/ui/ingame_exit.png';
 import exitConfirmIcon from '../assets/ui/ingame_exit_confirm.png';
+import logoUrl from '../assets/ui/logo_main_white.png';
 import settingsIcon from '../assets/ui/ingame_settings.png';
 import { mapLabel } from '../config';
 import { account } from '../state/auth';
@@ -58,7 +59,9 @@ const weather = computed(() => {
 
 <template>
   <header class="status">
-    <span class="status__title">Sub Warfare</span>
+    <!-- Offizielles Logo statt Schriftzug — als img mit alt, damit Screenreader
+         und ein fehlgeschlagener Bildlauf weiter „Sub Warfare" sagen. -->
+    <img class="status__logo" :src="logoUrl" alt="Sub Warfare" />
     <span class="status__item">{{ mapName }}</span>
     <span class="status__item">{{ weather }}</span>
     <!-- Kein Folgen-Schalter mehr: die Kamera hängt fest am eigenen Boot, und
@@ -125,9 +128,19 @@ const weather = computed(() => {
   text-shadow: 0 1px 3px rgb(0 0 0 / 60%);
 }
 
-.status__title {
-  font-weight: 600;
-  text-transform: uppercase;
+/*
+ * Logo in Leistenhöhe. Die Leiste ist mit ihren 26-px-Knöpfen ~34 px hoch —
+ * 30 px Logo füllen sie, ohne sie zu sprengen. Die Quelle liegt beschnitten
+ * und auf 84 px vorverkleinert (3×) im Repo, nicht als 380-kB-Original.
+ * `align-self: center` statt Baseline: Bilder haben keine.
+ */
+.status__logo {
+  display: block;
+  height: 30px;
+  width: auto;
+  align-self: center;
+  /* Feiner Schatten löst das weiße Logo von der grauen Leiste. */
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 55%));
 }
 
 .status__item {

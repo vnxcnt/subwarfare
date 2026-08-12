@@ -26,8 +26,13 @@ const QUELLEN = import.meta.glob('../assets/{ui,icons}/*.{png,webp}', {
   import: 'default',
 }) as Record<string, string>;
 
-/** Nur im Menü sichtbar — der Menü-Bildschirm lädt sie ohnehin selbst. */
-const NUR_MENUE = ['login-bg', 'menu-bg'];
+/**
+ * Nicht fürs Gefecht: die Menü-Hintergründe lädt der jeweilige Bildschirm
+ * selbst, und das Ladebild zeigt der Ladeschirm gerade JETZT — es hier
+ * mitzuzählen hieße, den Balken auf sein eigenes Hintergrundbild warten zu
+ * lassen.
+ */
+const NUR_MENUE = ['login-bg', 'menu-bg', 'loading-bg'];
 
 const BILDER = Object.entries(QUELLEN)
   .filter(([pfad]) => !NUR_MENUE.some((name) => pfad.includes(name)))

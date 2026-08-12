@@ -12,6 +12,7 @@ import {
   restoreSession,
 } from '../state/auth';
 import { ensureGis } from '../ui/gis';
+import logoUrl from '../assets/ui/logo_main_white_login.png';
 
 const router = useRouter();
 const name = ref('');
@@ -133,7 +134,11 @@ onMounted(() => {
 <template>
   <div class="login game-cursor">
     <section class="gold-panel login__panel">
-      <h1 class="login__title">Sub Warfare</h1>
+      <!-- Offizielles Logo statt Schriftzug; das alt hält den Namen für
+           Screenreader und den Fall, dass das Bild nicht lädt. -->
+      <h1 class="login__title">
+        <img class="login__logo" :src="logoUrl" alt="Sub Warfare" />
+      </h1>
       <p class="login__subtitle">Anmeldung</p>
 
       <a
@@ -223,14 +228,26 @@ onMounted(() => {
 
 .login__title {
   margin: 0;
-  font-size: 1.5rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--gold-bright);
+  display: flex;
+  justify-content: center;
+}
+
+/*
+ * Logo im Panel: knapp schmaler als die Innenbreite, damit es atmet. Die
+ * Quelle liegt auf 600 px vorverkleinert (2× der Anzeige) — scharf auf HiDPI,
+ * ohne das 380-kB-Original zu schleppen. Der Schatten löst das Weiß vom
+ * dunklen Panelgrund.
+ */
+.login__logo {
+  display: block;
+  width: min(15rem, 80%);
+  height: auto;
+  filter: drop-shadow(0 2px 6px rgb(0 0 0 / 55%));
 }
 
 .login__subtitle {
   margin: 0.2rem 0 1.2rem;
+  text-align: center;
   opacity: 0.55;
   text-transform: uppercase;
   letter-spacing: 0.12em;
