@@ -48,9 +48,14 @@ async function mountGoogleButton(): Promise<void> {
   if (!id || !slot || googleReady) return;
   googleReady = true;
   id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential });
-  // Breite passend zum Discord-Knopf; Theme hell, damit er auf dem dunklen
-  // Panel als Fremd-Login heraussticht (wie Discords Blurple).
-  id.renderButton(slot, { theme: 'outline', size: 'large', text: 'signin_with', width: 320 });
+  /*
+   * Breite GEMESSEN statt geraten: der Slot spannt exakt die Innenbreite des
+   * Panels auf — dieselbe, die der Discord-Knopf füllt. Die festen 320 px von
+   * früher waren durch den 26-px-Goldrahmen breiter als der Discord-Knopf
+   * (Innenbreite ~306 px) und standen sichtbar über. GIS deckelt bei 400.
+   */
+  const breite = Math.min(Math.max(Math.round(slot.clientWidth), 200), 400) || 320;
+  id.renderButton(slot, { theme: 'outline', size: 'large', text: 'signin_with', width: breite });
 }
 
 /** Rücklauf des GIS-Buttons: das ID-Token geht zur Prüfung an unseren Server. */
