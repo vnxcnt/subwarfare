@@ -41,6 +41,7 @@ interface Tube {
 import { Server, type Socket } from 'socket.io';
 import { env } from '../env.js';
 import { ocean01, ocean01Weather } from '../maps/ocean01.js';
+import { ArmorCatalog } from '../sim/ArmorCatalog.js';
 import { Bots } from '../sim/Bots.js';
 import { ShipCatalog } from '../sim/ShipCatalog.js';
 import { World, type WorldEvents } from '../world/World.js';
@@ -69,6 +70,7 @@ const ORTUNG_HYSTERESE = 1.05;
  */
 export class GameServer {
   private readonly ships = new ShipCatalog();
+  private readonly armor = new ArmorCatalog();
   private readonly world = new World(ocean01, this.ships);
   /**
    * Wetterlage dieser Karte — Quelle für Seegang-Wirkung und Client-Optik.
@@ -129,8 +131,10 @@ export class GameServer {
   async start(): Promise<void> {
     if (this.http) throw new Error('GameServer läuft bereits.');
 
-    // Katalog VOR dem ersten Spawn — die Bots fahren bereits damit.
-    await this.ships.load();
+    // Kataloge VOR dem ersten Spawn — die Bots fahren bereits damit.
+    // Nebenläufig: beide warten im schlechtesten Fall ~10 s auf die api,
+    // nacheinander wäre das die doppelte Startverzögerung für dieselbe Ursache.
+    await Promise.all([this.ships.load(), this.armor.load()]);
     // Seegang in die Welt: er streut jeden Schuss von rollendem Deck.
     this.world.setSeaState(this.weather.seaState);
     this.bots = new Bots(this.world, env.bots);
@@ -225,6 +229,7 @@ export class GameServer {
     socket.data.name = result.claims.name;
     socket.data.role = result.claims.role;
     socket.data.shipModel = result.claims.shipModel;
+    socket.data.armorItem = result.claims.armorItem;
     next();
   }
 
@@ -255,6 +260,9 @@ export class GameServer {
       accountId,
       name,
       isVesselModel(ticketModel) ? ticketModel : undefined,
+      // Panzerung ebenfalls aus dem signierten Ticket. Eine unbekannte Kennung
+      // löst der Katalog zu null auf — dann fährt das Boot ungepanzert.
+      this.armor.get(socket.data.armorItem),
     );
     this.refillAmmo(accountId);
     this.resetTubes(accountId, vessel.model);
@@ -635,6 +643,7 @@ export class GameServer {
       diveTarget: vessel.diveTarget,
       periscopeTarget: vessel.periscopeTarget,
       hp: this.world.hp(accountId),
+      armor: this.world.armorState(accountId),
       ammo: {
         torpedo: ammo?.torpedo ?? 0,
         taeuschkoerper: ammo?.taeuschkoerper ?? 0,
@@ -725,7 +734,14 @@ export class GameServer {
       // Inzwischen getrennt — der Disconnect-Handler hat schon aufgeräumt.
       if (!socket) continue;
 
-      const vessel = this.world.spawn(accountId, socket.data.name, pending.model);
+      // Wiedereinstieg heißt frisches Boot: die Panzerung des Einsatzes steht
+      // wieder ganz. Sie ist mit dem Ticket bezahlt, nicht mit dem Leben.
+      const vessel = this.world.spawn(
+        accountId,
+        socket.data.name,
+        pending.model,
+        this.armor.get(socket.data.armorItem),
+      );
       this.refillAmmo(accountId);
       this.resetTubes(accountId, pending.model);
       this.sendOwn(socket, vessel);
@@ -888,7 +904,10 @@ export class GameServer {
     return (
       `${vessel.serial}:${vessel.telegraphStep}:${vessel.waypoint ? 'z' : '-'}:` +
       `${vessel.diveTarget ? 't' : 'o'}:${vessel.periscopeTarget ? 'p' : '-'}:` +
-      `${this.world.hp(accountId)}:${ammo?.torpedo ?? 0}:${ammo?.taeuschkoerper ?? 0}:` +
+      // Panzerung mit: ein Treffer, den sie ganz schluckt, ändert die HP nicht —
+      // ohne sie hier bliebe die Leiste bis zum nächsten Befehl stehen.
+      `${this.world.hp(accountId)}:${this.world.armorState(accountId)?.percent ?? -1}:` +
+      `${ammo?.torpedo ?? 0}:${ammo?.taeuschkoerper ?? 0}:` +
       `${ammo?.geschuetz ?? 0}:${ammo?.wasserbombe ?? 0}:` +
       // Rohre mit: der Ladebalken läuft, und ohne ihn in der Signatur bliebe
       // die Anzeige beim Ladevorgang stehen.

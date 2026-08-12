@@ -4,6 +4,7 @@ import { setSunkNotice, writeHud } from '../state/hud';
 import { CameraController } from './CameraController';
 import { DemoTraffic } from './DemoTraffic';
 import type {
+  ArmorState,
   OwnStatePayload,
   PlayerState,
   ProjectileState,
@@ -137,6 +138,8 @@ export class Game {
    * sein, während das HUD noch den letzten Stand zeigt.
    */
   private ownHp: number | null = null;
+  /** Panzerung laut Server; null heißt ungepanzert ODER noch kein `own`. */
+  private ownArmor: ArmorState | null = null;
   private ownAmmo: Partial<Record<WeaponId, number>> = {};
   /** Rohr-Zustände laut Server — Quelle der Rohr-Anzeige. */
   private ownTubes: TubeState[] = [];
@@ -401,6 +404,7 @@ export class Game {
       onOwn: (payload) => {
         this.pendingOwn = payload;
         this.ownHp = payload.hp;
+        this.ownArmor = payload.armor ?? null;
         this.ownAmmo = payload.ammo;
         this.ownTubes = payload.tubes ?? [];
         // Bestätigter Stand übernimmt — die optimistische Stufe hat gedient.
@@ -896,6 +900,14 @@ export class Game {
     return this.ownHp;
   }
 
+  /**
+   * Panzerung dieses Einsatzes laut Server. `null` heißt ungepanzert — die
+   * Anzeige blendet ihre Leiste dann aus, statt 0 % zu behaupten.
+   */
+  get armor(): ArmorState | null {
+    return this.ownArmor;
+  }
+
   /** Restmunition einer Waffe laut Server; Kapazität als Startwert vor dem `own`. */
   ammoFor(weapon: WeaponId): number {
     const fallback =
@@ -1057,6 +1069,7 @@ export class Game {
     this.audio?.destroy();
     this.audio = null;
     this.ownHp = null;
+    this.ownArmor = null;
     this.ownAmmo = {};
     this.ownTubes = [];
     this.pendingTelegraphStep = null;

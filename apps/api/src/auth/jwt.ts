@@ -46,6 +46,7 @@ export async function signTicket(claims: Omit<TicketClaims, 'jti'>): Promise<str
     mapId: claims.mapId,
     role: claims.role,
     shipModel: claims.shipModel,
+    armorItem: claims.armorItem,
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.sub)

@@ -56,7 +56,10 @@ export async function verifyTicket(raw: unknown): Promise<TicketResult> {
     return { ok: false, reason: 'Ticket ungültig oder abgelaufen.' };
   }
 
-  const { sub, name, mapId, jti, exp, role, shipModel } = payload as Record<string, unknown>;
+  const { sub, name, mapId, jti, exp, role, shipModel, armorItem } = payload as Record<
+    string,
+    unknown
+  >;
   if (typeof sub !== 'string' || typeof jti !== 'string' || typeof mapId !== 'string') {
     return { ok: false, reason: 'Ticket unvollständig.' };
   }
@@ -78,6 +81,10 @@ export async function verifyTicket(raw: unknown): Promise<TicketResult> {
       // Fehlt im Ticket (altes Backend): kostenloser Standard. Ob die Kennung
       // ein FAHRBARES Modell ist, prüft der GameServer beim Spawn.
       shipModel: typeof shipModel === 'string' ? shipModel : 'fregatte01',
+      // Fehlt oder unbekannt: ungepanzert. Der Panzerungskatalog entscheidet
+      // beim Spawn, ob die Kennung Absorption trägt — eine erfundene Kennung
+      // findet dort nichts und wirkt damit wie keine.
+      armorItem: typeof armorItem === 'string' ? armorItem : null,
       jti,
     },
   };

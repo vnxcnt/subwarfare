@@ -10,6 +10,7 @@ import SettingsPanel from './SettingsPanel.vue';
 import SonarPanel from './SonarPanel.vue';
 import StatusBar from './StatusBar.vue';
 import TelegraphPanel from './TelegraphPanel.vue';
+import VitalsPanel from './VitalsPanel.vue';
 import { isTextEntry } from './dom';
 
 defineProps<{ error?: string | null }>();
@@ -52,9 +53,12 @@ function suppressContextMenu(event: MouseEvent): void {
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
 
     <div class="hud-root__middle">
-      <QuestLog />
-      <DevMenu ref="devMenu" />
-      <p v-if="error" class="hud__panel hud-root__error">Renderer-Fehler: {{ error }}</p>
+      <div class="hud-root__middle-left">
+        <QuestLog />
+        <DevMenu ref="devMenu" />
+        <p v-if="error" class="hud__panel hud-root__error">Renderer-Fehler: {{ error }}</p>
+      </div>
+      <VitalsPanel />
     </div>
 
     <div class="hud-root__bottom">
@@ -109,13 +113,26 @@ function suppressContextMenu(event: MouseEvent): void {
   background: url('../assets/ui/menu-strip.png') center / 100% 100% no-repeat;
 }
 
+/*
+ * Zwei Spalten: links der Stapel aus Auftragsbuch und Entwicklermenü, rechts
+ * Rumpf und Panzerung. `1fr auto` statt `auto auto` — sonst rückte die rechte
+ * Ecke mit, sobald links etwas Breites auftaucht.
+ */
 .hud-root__middle {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: var(--ui-gap);
+  min-height: 0;
+  padding: var(--ui-gap) 16px 0;
+}
+
+.hud-root__middle-left {
   display: flex;
   flex-direction: column;
   gap: var(--ui-gap);
   align-items: start;
-  min-height: 0;
-  padding: var(--ui-gap) 16px 0;
+  min-width: 0;
 }
 
 .hud-root__bottom {

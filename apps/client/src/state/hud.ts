@@ -1,4 +1,4 @@
-import type { TubeState, VesselModel, WeaponId, WeatherState } from '@subwarfare/shared';
+import type { ArmorState, TubeState, VesselModel, WeaponId, WeatherState } from '@subwarfare/shared';
 import { DEFAULT_WEATHER, SHIP_TYPE_SUBMARINE } from '@subwarfare/shared';
 import { shallowRef, triggerRef } from 'vue';
 import { SONAR } from '../config';
@@ -36,6 +36,8 @@ export interface HudState {
   hp: number;
   /** Maximum des aktuellen Modells (ships-Tabelle) — Bezugsgröße der HP-Leiste. */
   maxHp: number;
+  /** Panzerung dieses Einsatzes laut Server; `null` = ungepanzert (keine Leiste). */
+  armor: ArmorState | null;
   /** Restmunition je Waffen-Kennung laut Server. Beim Torpedo der VORRAT. */
   ammo: Partial<Record<string, number>>;
   /** Torpedorohre laut Server; leer bei Schiffen ohne Rohre. */
@@ -92,6 +94,7 @@ export const hud = shallowRef<HudState>({
   armament: [],
   hp: 1,
   maxHp: 1,
+  armor: null,
   ammo: {},
   tubes: [],
   weather: DEFAULT_WEATHER,
@@ -177,6 +180,9 @@ export function writeHud(frameSeconds: number): void {
   state.armament = game?.shipStats(own.model).armament ?? [];
   state.maxHp = game?.shipStats(own.model).hp ?? 1;
   state.hp = game?.hp ?? state.maxHp;
+  // Referenz durchreichen wie bei den Rohren — der Server ersetzt das Objekt
+  // bei jedem `own`, hier wird nichts fortgeschrieben.
+  state.armor = game?.armor ?? null;
   // In place statt neues Objekt — das läuft jeden Frame (Muster dieser Datei).
   state.ammo['torpedo'] = game?.ammoFor('torpedo') ?? 0;
   state.ammo['taeuschkoerper'] = game?.ammoFor('taeuschkoerper') ?? 0;

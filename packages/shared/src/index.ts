@@ -19,6 +19,9 @@ export * from './meta/combat.js';
 // Ökonomie: Item-Katalog, Ausrüstungs-Slots, Schiffszugang (Level + Kosten).
 export * from './meta/economy.js';
 
+// Panzerung: Absorption je Stufe, Integritätsverlust je Waffe, Schadensteilung.
+export * from './meta/armor.js';
+
 // Torpedorohre: Bestückung je Schiff, Laden/Scharfschalten, Salven-Fächer.
 export * from './meta/tubes.js';
 
@@ -59,5 +62,7 @@ export * from './sim/Vessel.js';
  *     Server (je Karte), der Client leitet Sonne und Himmel daraus ab.
  * 11: Wetterwechsel zur Laufzeit — `dev:weather` (Entwicklerrolle) setzt die
  *     Lage, das `weather`-Ereignis verteilt sie an alle Verbundenen.
+ * 12: Panzerung — `armor` im `own`-Ereignis (Stufe, Restintegrität in Prozent,
+ *     Absorptionsanteil). Die getragene Stufe kommt signiert im Join-Ticket.
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;

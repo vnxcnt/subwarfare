@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import { Server } from 'socket.io';
 import { MemoryAccountStore } from './accounts/MemoryAccountStore.js';
+import { loadArmorStats } from './armor/store.js';
 import { MySqlAccountStore } from './accounts/MySqlAccountStore.js';
 import type { AccountStore } from './accounts/store.js';
 import { registerAuthRoutes } from './auth/routes.js';
@@ -73,6 +74,14 @@ await app.register(
       return { ships: await loadShipStats() };
     });
 
+    // Panzerungswerte, gleicher Kanal und gleiche Regeln wie der Schiffskatalog.
+    scope.get('/internal/armor', async (request, reply) => {
+      if (request.headers['x-internal-key'] !== env.internalKey) {
+        return reply.code(403).send({ error: 'Kein Zugriff.' });
+      }
+      return { armor: await loadArmorStats() };
+    });
+
     // Kartenauslastung fürs Hauptmenü. Kurz gecacht UND mit geteiltem
     // In-flight-Promise: läuft die Abfrage gerade (bis zu 2 s bei hängendem
     // Spielserver), hängen sich weitere Anfragen an dieselbe — sonst würde
@@ -117,7 +126,7 @@ const io = new Server(app.server, {
   cors: { origin: env.corsOrigin, credentials: true },
 });
 
-const lobby = new LobbyGateway(io, new MemoryQueue(), accounts);
+const lobby = new LobbyGateway(io, new MemoryQueue(), accounts, inventory);
 lobby.register();
 
 await app.listen({ port: env.port, host: env.host });

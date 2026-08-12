@@ -10,6 +10,7 @@ import { signTicket, verifySession } from '../auth/jwt.js';
 import { env } from '../env.js';
 import { fetchGameServerStatus, type GameServerStatus } from '../gameserver/status.js';
 import type { AccountStore } from '../accounts/store.js';
+import type { InventoryStore } from '../economy/store.js';
 import type { MatchQueue } from './queue.js';
 
 type LobbySocket = Socket<
@@ -73,6 +74,8 @@ export class LobbyGateway {
     private readonly io: Server,
     private readonly queue: MatchQueue,
     private readonly accounts: AccountStore,
+    /** Nur zum Nachschlagen der getragenen Panzerung bei der Ticketausgabe. */
+    private readonly inventory: InventoryStore,
   ) {}
 
   register(): void {
@@ -319,12 +322,30 @@ export class LobbyGateway {
         .emit('queue:error', { message: 'Konto nicht gefunden.' });
       return false;
     }
+    /*
+     * Getragene Panzerung nachschlagen und MITSIGNIEREN. Der Spielserver hat
+     * bewusst keine Datenbankverbindung, die Ausrüstung liegt aber in
+     * `ship_loadouts` — also reist sie im Ticket mit, genau wie das Schiff.
+     *
+     * Ein Fehlschlag hier darf den Einsatz NICHT verhindern: die Panzerung ist
+     * ein Bonus, kein Zugangsrecht. Ohne Eintrag fährt man ungepanzert.
+     */
+    let armorItem: string | null = null;
+    try {
+      const loadouts = await this.inventory.loadouts(accountId);
+      const eintrag = loadouts.find((l) => l.model === shipModel && l.slot === 'panzerung');
+      armorItem = eintrag?.itemId ?? null;
+    } catch (error) {
+      console.warn('[api] Panzerung für das Ticket nicht lesbar — ungepanzert:', error);
+    }
+
     const ticket = await signTicket({
       sub: accountId,
       name,
       mapId,
       role: account.role,
       shipModel,
+      armorItem,
     });
 
     // Fürs idempotente Wieder-Zustellen aufheben (Doppelklick, Reconnect

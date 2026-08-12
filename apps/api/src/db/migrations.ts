@@ -163,4 +163,33 @@ export const MIGRATIONS: readonly Migration[] = [
         WHERE model IN ('fregatte01', 'fregatte02')`,
     ],
   },
+  {
+    id: 9,
+    name: 'panzerung',
+    statements: [
+      // Panzerungswerte. Gepflegt per Hand (phpMyAdmin) wie die ships-Tabelle;
+      // der Seed spiegelt DEFAULT_ARMOR_STATS aus @subwarfare/shared — beide
+      // Quellen muessen beim Anlegen uebereinstimmen, danach fuehrt die DB.
+      //
+      // absorb ist der ANTEIL des Schadens, den die Panzerung schluckt (0..1),
+      // NICHT ihre Haltbarkeit. Die Haltbarkeit (Integritaet) laeuft je Einsatz
+      // im Spielserver und steht nicht in der Datenbank.
+      //
+      // level ist reine Dokumentation der Reihenfolge: gerechnet wird mit
+      // absorb. Wer eine Stufe anders auslegen will, aendert absorb direkt und
+      // ist nicht an die 25-%-plus-10-Regel gebunden.
+      `CREATE TABLE IF NOT EXISTS armor (
+         item_id VARCHAR(32) NOT NULL PRIMARY KEY,
+         level TINYINT UNSIGNED NOT NULL,
+         absorb DECIMAL(4,3) NOT NULL
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      `INSERT INTO armor (item_id, level, absorb) VALUES
+         ('panzerung_mk1', 1, 0.250),
+         ('panzerung_mk2', 2, 0.350),
+         ('panzerung_mk3', 3, 0.450),
+         ('panzerung_mk4', 4, 0.550),
+         ('panzerung_mk5', 5, 0.650)
+       ON DUPLICATE KEY UPDATE item_id = item_id`,
+    ],
+  },
 ];

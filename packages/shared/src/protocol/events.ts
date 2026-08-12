@@ -1,4 +1,5 @@
 import type { GameMap } from '../types/Map.js';
+import type { ArmorState } from '../meta/armor.js';
 import type { ShipStats, WeaponId } from '../meta/ships.js';
 import type { TubeState } from '../meta/tubes.js';
 import type { WeatherState } from '../meta/weather.js';
@@ -90,6 +91,11 @@ export interface OwnStatePayload {
    * angeschlagen ein Gegner ist, ist Aufklärung, keine Anzeige.
    */
   hp: number;
+  /**
+   * Panzerung dieses Einsatzes, oder `null` bei ungepanzerter Fahrt (dann
+   * zeigt der Client keine Leiste). Wie die HP nur an den Besitzer.
+   */
+  armor: ArmorState | null;
   /**
    * Restmunition je Waffen-Kennung. Beim Torpedo ist das der VORRAT, nicht die
    * Schussbereitschaft — die steckt in den Rohren.
@@ -243,6 +249,8 @@ export interface GameSocketData {
   role: number;
   /** Schiffsmodell aus dem Ticket — die api hat Level und Kosten geprüft. */
   shipModel: string;
+  /** Getragene Panzerung aus dem Ticket, `null` = ungepanzert. */
+  armorItem: string | null;
 }
 
 /** Inhalt eines Join-Tickets. Vom Backend signiert, vom Spielserver geprüft. */
@@ -258,6 +266,15 @@ export interface TicketClaims {
    * spawnt genau dieses Modell — die Prüfung (Level, Coins) lief in der api.
    */
   shipModel: string;
+  /**
+   * Getragene Panzerung für diesen Einsatz, oder `null` für ungepanzert.
+   *
+   * Steht aus demselben Grund im Ticket wie `shipModel`: der Spielserver hat
+   * bewusst keine Datenbankverbindung, die Ausrüstung liegt aber in
+   * `ship_loadouts`. Die api liest sie bei der Ticketausgabe und signiert sie
+   * mit — der Client kann sie damit nicht fälschen.
+   */
+  armorItem: string | null;
   /** Einmalkennung — der Spielserver merkt sich verbrauchte Tickets. */
   jti: string;
 }

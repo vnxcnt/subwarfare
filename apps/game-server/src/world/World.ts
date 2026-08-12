@@ -1,4 +1,7 @@
 import type {
+  ArmorHitKind,
+  ArmorState,
+  ArmorStats,
   ExitPoint,
   GameMap,
   PlayerId,
@@ -18,9 +21,11 @@ import {
   TORPEDO,
   Vessel,
   aimSpreadDeg,
+  armorHitCost,
   norm360,
   salvoSpread,
   smokeLevelForHp,
+  splitDamage,
 } from '@subwarfare/shared';
 import type { ShipCatalog } from '../sim/ShipCatalog.js';
 
@@ -67,6 +72,16 @@ interface Projectile {
  */
 const PROJECTILE_SAMPLE_SPACING = 3;
 
+/**
+ * Getragene Panzerung mit ihrer Resthaltbarkeit. Lebt NUR hier: sie gehört zum
+ * laufenden Einsatz, nicht zum Konto — ein Untergang setzt sie zurück.
+ */
+interface ArmorSlot {
+  stats: ArmorStats;
+  /** Restintegrität in Prozent, 0..100. */
+  integrity: number;
+}
+
 /** Was ein Simulationsschritt an Kampfereignissen hervorgebracht hat. */
 export interface WorldEvents {
   /** Einschläge (Torpedo trifft Rumpf) an ihren Weltpunkten. */
@@ -91,6 +106,12 @@ export class World {
   private readonly vessels = new Map<PlayerId, Vessel>();
   /** Lebenspunkte je Fahrzeug — Quelle: ships-Tabelle über den Katalog. */
   private readonly hitpoints = new Map<PlayerId, number>();
+  /**
+   * Panzerung je Fahrzeug. Fehlt der Eintrag, fährt es ungepanzert — das ist
+   * der Normalfall (Bots, leerer Ausrüstungs-Slot) und braucht keinen
+   * Platzhalter.
+   */
+  private readonly armor = new Map<PlayerId, ArmorSlot>();
   private readonly projectiles = new Map<string, Projectile>();
   private nextSpawnIndex = 0;
   private nextProjectileId = 1;
@@ -116,8 +137,20 @@ export class World {
     return this.vessels.size;
   }
 
-  /** Legt ein Fahrzeug auf dem nächsten freien Spawnpunkt an. */
-  spawn(id: PlayerId, name: string, model: VesselModel = DEFAULT_VESSEL_MODEL): Vessel {
+  /**
+   * Legt ein Fahrzeug auf dem nächsten freien Spawnpunkt an.
+   *
+   * `armor` ist die getragene Panzerung aus dem Ticket (vom Aufrufer über den
+   * Panzerungskatalog aufgelöst). Sie wird bei JEDEM Spawn frisch gesetzt —
+   * auch beim Wiedereinstieg nach einer Versenkung: das Boot ist neu, die
+   * Panzerung damit wieder ganz.
+   */
+  spawn(
+    id: PlayerId,
+    name: string,
+    model: VesselModel = DEFAULT_VESSEL_MODEL,
+    armor: ArmorStats | null = null,
+  ): Vessel {
     const point = this.pickSpawnPoint();
     const vessel = new Vessel(
       { id, name, model, x: point.x, y: point.y, rotation: point.rotation },
@@ -125,6 +158,8 @@ export class World {
     );
     this.vessels.set(id, vessel);
     this.hitpoints.set(id, this.ships.get(model).hp);
+    if (armor) this.armor.set(id, { stats: armor, integrity: 100 });
+    else this.armor.delete(id);
     return vessel;
   }
 
@@ -145,6 +180,7 @@ export class World {
 
   remove(id: PlayerId): boolean {
     this.hitpoints.delete(id);
+    this.armor.delete(id);
     return this.vessels.delete(id);
   }
 
@@ -161,11 +197,30 @@ export class World {
     return this.hitpoints.get(id) ?? 0;
   }
 
+  /**
+   * Panzerungszustand eines Fahrzeugs für dessen eigene Anzeige. `null`, wenn
+   * es ungepanzert fährt — der Client blendet die Leiste dann aus.
+   */
+  armorState(id: PlayerId): ArmorState | null {
+    const slot = this.armor.get(id);
+    if (!slot) return null;
+    return {
+      itemId: slot.stats.itemId,
+      level: slot.stats.level,
+      percent: slot.integrity,
+      absorb: slot.stats.absorb,
+    };
+  }
+
   /** Setzt die Lebenspunkte auf das Maximum des aktuellen Modells — Modellwechsel. */
   resetHp(id: PlayerId): void {
     const vessel = this.vessels.get(id);
     if (!vessel) return;
     this.hitpoints.set(id, this.ships.get(vessel.model).hp);
+    // Frisches Schiff heißt auch frische Panzerung — sonst führe der
+    // Entwickler-Modellwechsel ein neues Boot mit aufgerissener Panzerung.
+    const slot = this.armor.get(id);
+    if (slot) slot.integrity = 100;
     // Frische HP = frisches Schiff: kein Rauch mehr. Das Fahrprofil setzt der
     // Aufrufer (dev:model) ohnehin neu — die Drossel fällt damit mit.
     vessel.smoke = 0;
@@ -359,14 +414,52 @@ export class World {
       const schaden = Math.round(charge.damage * anteil);
       if (schaden <= 0) continue;
 
-      const remaining = (this.hitpoints.get(vessel.id) ?? 0) - schaden;
-      this.hitpoints.set(vessel.id, Math.max(remaining, 0));
-      if (remaining <= 0) {
-        sunkThisStep.add(vessel.id);
-        events.destroyed.push({ id: vessel.id, x: vessel.x, y: vessel.y });
-      } else {
-        this.applyDamageEffects(vessel, remaining);
-      }
+      this.applyHit(vessel, schaden, 'wasserbombe', events, sunkThisStep);
+    }
+  }
+
+  /**
+   * Ein Treffer: Panzerung schluckt ihren Anteil, der Rest geht an den Rumpf.
+   *
+   * Reihenfolge mit Absicht — erst absorbieren, DANN die Integrität abziehen:
+   * eine Panzerung mit 5 % Rest fängt diesen Treffer noch ab und ist danach
+   * durch. Andersherum verpuffte der letzte Rest wirkungslos, und die Anzeige
+   * „5 %" wäre eine Lüge.
+   *
+   * Bleibt nach der Absorption weniger als ein halber Trefferpunkt übrig,
+   * kommt am Rumpf nichts an — die Panzerung hat den Schlag ganz geschluckt.
+   * Ihre Integrität kostet es trotzdem.
+   */
+  private applyHit(
+    vessel: Vessel,
+    damage: number,
+    kind: ArmorHitKind,
+    events: WorldEvents,
+    sunkThisStep: Set<PlayerId>,
+  ): void {
+    const slot = this.armor.get(vessel.id);
+    const absorb = slot?.stats.absorb ?? 0;
+    const integrity = slot?.integrity ?? 0;
+    const { toHull } = splitDamage(damage, absorb, integrity);
+
+    if (slot && slot.integrity > 0) {
+      // Die Wasserbombe zählt nur gegen GETAUCHTE Boote — dieselbe Schwelle
+      // wie beim Geschütz-Durchflug in findHit, damit „getaucht" im ganzen
+      // Kampfsystem dasselbe heißt.
+      const kosten = armorHitCost(kind, vessel.depth > 0.5);
+      slot.integrity = Math.max(slot.integrity - kosten, 0);
+    }
+
+    const schaden = Math.round(toHull);
+    if (schaden <= 0) return;
+
+    const remaining = (this.hitpoints.get(vessel.id) ?? 0) - schaden;
+    this.hitpoints.set(vessel.id, Math.max(remaining, 0));
+    if (remaining <= 0) {
+      sunkThisStep.add(vessel.id);
+      events.destroyed.push({ id: vessel.id, x: vessel.x, y: vessel.y });
+    } else {
+      this.applyDamageEffects(vessel, remaining);
     }
   }
 
@@ -545,14 +638,13 @@ export class World {
       events.impacts.push({ x: hitX, y: hitY });
       this.projectiles.delete(projectile.id);
 
-      const remaining = (this.hitpoints.get(victim.id) ?? 0) - projectile.damage;
-      this.hitpoints.set(victim.id, Math.max(remaining, 0));
-      if (remaining <= 0) {
-        sunkThisStep.add(victim.id);
-        events.destroyed.push({ id: victim.id, x: victim.x, y: victim.y });
-      } else {
-        this.applyDamageEffects(victim, remaining);
-      }
+      this.applyHit(
+        victim,
+        projectile.damage,
+        projectile.kind === 'torpedo' ? 'torpedo' : 'geschuetz',
+        events,
+        sunkThisStep,
+      );
     }
 
     return events;

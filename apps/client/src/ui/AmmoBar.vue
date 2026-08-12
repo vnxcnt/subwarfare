@@ -47,20 +47,6 @@ const tubes = computed(() => hud.value.tubes);
 /** Nur beim Torpedo ist das Rohr-Rack relevant. */
 const showTubes = computed(() => tubes.value.length > 0 && active.value?.id === 'torpedo');
 
-/** Rumpfzustand für die schmale Leiste über den Slots. */
-const hull = computed(() => {
-  const anteil = hud.value.maxHp > 0 ? hud.value.hp / hud.value.maxHp : 1;
-  return Math.min(Math.max(anteil, 0), 1);
-});
-
-/** Von Grün über Gelb nach Rot, je angeschlagener der Rumpf. */
-const hullColor = computed(() => {
-  const anteil = hull.value;
-  if (anteil > 0.55) return '#6fd08c';
-  if (anteil > 0.25) return '#e2c25a';
-  return '#e2555a';
-});
-
 /**
  * Feuerbereit? Beim Torpedo zählt NICHT der Vorrat, sondern ob mindestens ein
  * Rohr scharf und geladen ist — genau das schießt.
@@ -141,17 +127,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 
 <template>
   <section class="ammo" aria-label="Bewaffnung">
-    <!-- Rumpfzustand — dieselbe Wahrheit, die der Server für Treffer führt. -->
-    <div v-if="hud.ready" class="ammo__hull" aria-label="Rumpf">
-      <span class="ammo__hull-track">
-        <span
-          class="ammo__hull-fill"
-          :style="{ width: `${hull * 100}%`, background: hullColor }"
-        ></span>
-        <span class="ammo__hull-num hud__num">{{ Math.round(hud.hp) }}</span>
-      </span>
-    </div>
-
+    <!-- Rumpf und Panzerung sitzen oben rechts (VitalsPanel), nicht mehr hier:
+         der Gefechtsblock trägt jetzt Waffenwahl, Rohre und Feuerknopf. -->
     <div class="ammo__block">
       <ul class="ammo__slots">
         <li
@@ -222,52 +199,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
   align-items: center;
   gap: 4px;
   pointer-events: none;
-}
-
-/*
- * Rumpfleiste im eigenen health.png-Rahmen (9-Slice): die Ecken bleiben
- * maßstäblich, nur die Bänder dehnen sich. `fill` zieht die (transparente)
- * Bildmitte als Hintergrund mit — darunter liegt unser eigener dunkler Track.
- */
-.ammo__hull {
-  width: min(300px, 100%);
-  padding: 4px 6px;
-  border: 14px solid transparent;
-  border-image: url('../assets/ui/health.png') 70 fill / 14px 20px;
-  /* VOLLE Füllung bis unter die Rahmenbänder (die sind halbtransparent).
-     Der Radius zieht die Ecken der Füllung ein, damit sie nicht hinter den
-     schrägen Eckbeschlägen des PNGs hervorblitzen — border-image selbst
-     bleibt von border-radius unberührt. */
-  background-color: #141310;
-  border-radius: 10px;
-  pointer-events: auto;
-}
-
-.ammo__hull-track {
-  position: relative;
-  display: block;
-  height: calc(16px * var(--ui-scale));
-  background: rgb(7 14 20 / 90%);
-  overflow: hidden;
-}
-
-.ammo__hull-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  transition: width 0.25s ease-out;
-}
-
-/* HP-Zahl zentriert IN der Leiste — mit Schattenkante, damit sie auf der
-   grünen Füllung wie auf dem dunklen Rest lesbar bleibt. */
-.ammo__hull-num {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(0.75rem * var(--ui-scale));
-  color: #eef4f8;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 85%);
 }
 
 /*
