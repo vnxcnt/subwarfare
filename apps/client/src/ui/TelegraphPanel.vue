@@ -127,6 +127,22 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 </template>
 
 <style scoped>
+/*
+ * Gleicher Rahmen wie das Auftragsbuch: 9-Slice über border-image, damit die
+ * Eckbeschläge maßstäblich bleiben und nur die Bänder gedehnt werden. Der
+ * dunkle Grund liegt unter dem Rahmenbild und füllt die Fläche zwischen Band
+ * und Inhalt — statt der halbtransparenten Standard-Panelfläche.
+ */
+.mt {
+  box-sizing: border-box;
+  padding: 4px 8px 2px;
+  border: 24px solid transparent;
+  border-image: url('../assets/ui/quest-frame.png') 50 / 24px stretch;
+  border-radius: 0;
+  background: #141310;
+  backdrop-filter: none;
+}
+
 .mt__instrumente {
   display: flex;
   gap: 12px;
