@@ -12,6 +12,7 @@ import type {
   WeaponId,
 } from '@subwarfare/shared';
 import {
+  COLLISION,
   DAMAGE,
   DECOY,
   DEFAULT_VESSEL_MODEL,
@@ -615,6 +616,9 @@ export class World {
     // Beide werden von `detonate` (Schritt 1) mitbefüllt — deshalb stehen sie
     // vor der Projektilschleife.
 
+    // 0b) Rammschaden: überlappende Rümpfe schleifen sich gegenseitig auf.
+    this.applyCollisions(deltaSeconds, events, sunkThisStep);
+
     // 1) Bewegen; Blindgänger (Laufstrecke erschöpft, weit hinterm Kartenrand)
     //    verschwinden lautlos. Die Wasserbombe ist die Ausnahme: bei
     //    erschöpfter Wurfweite bleibt sie liegen und zündet ihren Sinkzünder.
@@ -735,6 +739,109 @@ export class World {
   }
 
   /**
+   * Kollision Schiff ↔ Schiff: jedes überlappende Paar nimmt laufend Schaden.
+   *
+   * Regeln:
+   * - Zwei Bots zermahlen sich NICHT gegenseitig — sonst prägte die Welt ohne
+   *   Spielerzutun Lootkisten aus zufälligen NPC-Begegnungen.
+   * - Getaucht (> 0.5) und Überwasser sind getrennte Ebenen; ein U-Boot fährt
+   *   UNTER dem Tanker hindurch. Dieselbe Schwelle wie bei Geschütz und
+   *   Wasserbombe, damit „getaucht" überall dasselbe heißt.
+   * - Wer in diesem Schritt schon versenkt wurde, ist ein Wrack und reibt
+   *   nicht weiter — sein Rammpartner nimmt den Schaden dieses Ticks noch,
+   *   der Zusammenstoß war ja gleichzeitig.
+   */
+  private applyCollisions(
+    deltaSeconds: number,
+    events: WorldEvents,
+    sunkThisStep: Set<PlayerId>,
+  ): void {
+    const list = [...this.vessels.values()];
+    for (let i = 0; i < list.length; i += 1) {
+      const a = list[i] as Vessel;
+      for (let j = i + 1; j < list.length; j += 1) {
+        const b = list[j] as Vessel;
+        if (sunkThisStep.has(a.id) || sunkThisStep.has(b.id)) continue;
+        if (istBot(a.id) && istBot(b.id)) continue;
+        if (a.depth > 0.5 !== b.depth > 0.5) continue;
+        if (!this.hullsOverlap(a, b)) continue;
+
+        this.applyCollisionDamage(a, b.id, deltaSeconds, events, sunkThisStep);
+        this.applyCollisionDamage(b, a.id, deltaSeconds, events, sunkThisStep);
+      }
+    }
+  }
+
+  /**
+   * Berühren sich zwei Rümpfe? Beide sind KAPSELN (wie in `findHit`): Strecke
+   * der Länge (length − beam) längs des Kurses, verdickt um beam/2 — Kontakt
+   * heißt also Streckenabstand ≤ Summe der Halbbreiten.
+   */
+  private hullsOverlap(a: Vessel, b: Vessel): boolean {
+    const da = HULL_DIMENSIONS[a.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const db = HULL_DIMENSIONS[b.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+
+    // Billiger Vorfilter über die umschließenden Kreise.
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const outer = (da.length + db.length) / 2;
+    if (dx * dx + dy * dy > outer * outer) return false;
+
+    const ha = Math.max(da.length / 2 - da.beam / 2, 0);
+    const hb = Math.max(db.length / 2 - db.beam / 2, 0);
+    const wa = a.rotation * DEG;
+    const wb = b.rotation * DEG;
+    const reach = da.beam / 2 + db.beam / 2;
+
+    return (
+      segmentDistanceSquared(
+        a.x - Math.sin(wa) * ha, a.y + Math.cos(wa) * ha,
+        a.x + Math.sin(wa) * ha, a.y - Math.cos(wa) * ha,
+        b.x - Math.sin(wb) * hb, b.y + Math.cos(wb) * hb,
+        b.x + Math.sin(wb) * hb, b.y - Math.cos(wb) * hb,
+      ) <= reach * reach
+    );
+  }
+
+  /**
+   * Rammschaden für EINE Seite des Paars, mit dem Tick skaliert.
+   *
+   * Der Rumpf verliert COLLISION.hullFractionPerSecond seiner maximalen HP je
+   * Sekunde; getragene Panzerung schluckt davon ihren Prozentsatz (dieselbe
+   * `splitDamage`-Regel wie bei jedem Treffer), zahlt aber unabhängig davon
+   * immer COLLISION.armorCostPerSecond Integrität je Sekunde.
+   *
+   * Bewusst OHNE Rundung: bei 20 Ticks/s ist der Schaden eines Ticks kleiner
+   * als ein ganzer Punkt — gerundet käme entweder nichts oder das Doppelte an.
+   * Die Anzeige rundet erst der Client.
+   */
+  private applyCollisionDamage(
+    vessel: Vessel,
+    killerId: PlayerId,
+    deltaSeconds: number,
+    events: WorldEvents,
+    sunkThisStep: Set<PlayerId>,
+  ): void {
+    const stats = this.ships.get(vessel.model);
+    const roh = stats.hp * COLLISION.hullFractionPerSecond * deltaSeconds;
+
+    const slot = this.armor.get(vessel.id);
+    const { toHull } = splitDamage(roh, slot?.stats.absorb ?? 0, slot?.integrity ?? 0);
+    if (slot && slot.integrity > 0) {
+      slot.integrity = Math.max(slot.integrity - COLLISION.armorCostPerSecond * deltaSeconds, 0);
+    }
+
+    const remaining = (this.hitpoints.get(vessel.id) ?? 0) - toHull;
+    this.hitpoints.set(vessel.id, Math.max(remaining, 0));
+    if (remaining <= 0) {
+      sunkThisStep.add(vessel.id);
+      events.destroyed.push({ id: vessel.id, x: vessel.x, y: vessel.y, killerId });
+    } else {
+      this.applyDamageEffects(vessel, remaining);
+    }
+  }
+
+  /**
    * Schadensfolgen nach einem überlebten Treffer: Rauchstufe für alle
    * sichtbar in den Broadcast, unter der Drossel-Schwelle nur noch halbe
    * Fahrt, und ein schwer beschädigtes U-Boot wird zwangsaufgetaucht (den
@@ -808,4 +915,65 @@ export class World {
     }
     return null;
   }
+}
+
+/** Bot-Fahrzeuge tragen die `bot-`-Kennung aus Bots.ts — Spieler die Account-Id. */
+function istBot(id: PlayerId): boolean {
+  return id.startsWith('bot-');
+}
+
+/**
+ * Quadrat des kleinsten Abstands zweier Strecken (a1→a2, b1→b2).
+ * Standardverfahren nach Ericson, „Real-Time Collision Detection": beide
+ * Streckenparameter werden auf [0, 1] geklemmt, entartete Strecken (Punkt —
+ * bei Rümpfen mit length ≤ beam) fallen auf Punkt-Strecke-Abstand zurück.
+ */
+function segmentDistanceSquared(
+  ax1: number, ay1: number, ax2: number, ay2: number,
+  bx1: number, by1: number, bx2: number, by2: number,
+): number {
+  const d1x = ax2 - ax1;
+  const d1y = ay2 - ay1;
+  const d2x = bx2 - bx1;
+  const d2y = by2 - by1;
+  const rx = ax1 - bx1;
+  const ry = ay1 - by1;
+  const a = d1x * d1x + d1y * d1y;
+  const e = d2x * d2x + d2y * d2y;
+  const f = d2x * rx + d2y * ry;
+  const EPS = 1e-9;
+
+  let s = 0;
+  let t = 0;
+  if (a <= EPS && e <= EPS) {
+    // beide Punkte
+  } else if (a <= EPS) {
+    t = clamp01(f / e);
+  } else {
+    const c = d1x * rx + d1y * ry;
+    if (e <= EPS) {
+      s = clamp01(-c / a);
+    } else {
+      const b = d1x * d2x + d1y * d2y;
+      const denom = a * e - b * b;
+      // Parallele Strecken: s = 0 ist ein gültiger Startpunkt, t folgt unten.
+      s = denom > EPS ? clamp01((b * f - c * e) / denom) : 0;
+      t = (b * s + f) / e;
+      if (t < 0) {
+        t = 0;
+        s = clamp01(-c / a);
+      } else if (t > 1) {
+        t = 1;
+        s = clamp01((b - c) / a);
+      }
+    }
+  }
+
+  const px = ax1 + d1x * s - (bx1 + d2x * t);
+  const py = ay1 + d1y * s - (by1 + d2y * t);
+  return px * px + py * py;
+}
+
+function clamp01(value: number): number {
+  return Math.min(Math.max(value, 0), 1);
 }

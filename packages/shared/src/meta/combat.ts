@@ -156,6 +156,22 @@ export const DAMAGE = {
   surfaceHpRatio: 0.2,
 } as const;
 
+/**
+ * Rammschaden: solange sich zwei Rümpfe überlappen, verlieren BEIDE laufend
+ * Substanz. Beide Werte sind Raten je Sekunde und werden mit dem Tick
+ * skaliert — „10 % je Sekunde" gilt damit unabhängig von der Tickrate.
+ */
+export const COLLISION = {
+  /** Rumpfschaden je Sekunde Überlappung, als Anteil der maximalen HP. */
+  hullFractionPerSecond: 0.1,
+  /**
+   * Integritätsverlust der Panzerung je Sekunde Überlappung, in Punkten
+   * (0..100). Er fällt IMMER an — unabhängig davon, wie viel die Panzerung
+   * gerade vom Rumpfschaden schluckt.
+   */
+  armorCostPerSecond: 10,
+} as const;
+
 /** Rauchstufe (PlayerState.smoke) aus HP und Modellmaximum — beide Seiten dieselbe Formel. */
 export function smokeLevelForHp(hp: number, maxHp: number): number {
   if (maxHp <= 0 || hp <= 0) return 0;
