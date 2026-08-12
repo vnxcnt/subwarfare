@@ -1,25 +1,66 @@
 <script setup lang="ts">
 import { TELEGRAPH_STANDARD } from '@subwarfare/shared';
 import { computed, onBeforeUnmount, onMounted } from 'vue';
+import nadelUrl from '../assets/ui/ui_compass_needle.webp';
+import kompassUrl from '../assets/ui/ui_compass.webp';
+import hebelUrl from '../assets/ui/ui_mt_lever.webp';
+import blattUrl from '../assets/ui/ui_mt.webp';
 import { KNOTS } from '../config';
 import { hud, nudgeTelegraph, orderTelegraph } from '../state/hud';
 import { keys, settingsModalOpen } from '../state/settings';
 import { isTextEntry } from './dom';
 
-/** Von unten nach oben anzeigen: Volle Kraft oben, Zurück unten. */
-const rungs = computed(() =>
-  TELEGRAPH_STANDARD.map((step, index) => ({ ...step, index })).reverse(),
-);
+/**
+ * Maschinentelegraf als echtes Instrument: das Telegrafenblatt (ui_mt) mit
+ * einem Hebel (ui_mt_lever), der auf die befohlene Stufe schwenkt, daneben
+ * ein Kompass mit drehender Windrose.
+ *
+ * Die Hebelwinkel sind gegen die Grafik KALIBRIERT (Bildschirmprobe aller neun
+ * Stellungen), nicht errechnet — die Sektoren des Blatts sind ungleich breit.
+ * Index = Stufe in TELEGRAPH_STANDARD, 0° = Hebel senkrecht nach oben.
+ */
+const WINKEL = [-107, -68, -33, -6, 27, 57, 88, 120, 152] as const;
 
+/**
+ * Drehpunkt des Hebels, per Alpha-Schwerpunkt aus der Grafik gemessen
+ * (49.6/233.3 im 100×286-Original) und auf die Anzeigegröße gerechnet:
+ * Blatt 300→150 px (×0.5), Hebel ×0.62 relativ zum Blatt → ×0.31.
+ */
+const hebelWinkel = computed(() => WINKEL[hud.value.telegraphStep] ?? WINKEL[3]);
+
+const stufe = computed(() => TELEGRAPH_STANDARD[hud.value.telegraphStep]?.label ?? '');
 const orderedKnots = computed(() => (hud.value.orderedSpeed / KNOTS).toFixed(1));
 const actualKnots = computed(() => (hud.value.speed / KNOTS).toFixed(1));
 
 /**
- * Wie weit die Ist-Fahrt der befohlenen nachhängt, als Anteil der Höchstfahrt.
- * Die sichtbare Lücke zwischen beiden Marken IST die Trägheit des Schiffs.
+ * Kurs kommt in Grad (0 = Nord, rechtsdrehend). Das Kompassblatt steht fest
+ * (N oben, Gradskala aufgedruckt) — die NADEL dreht MIT dem Kurs, ihre rote
+ * Spitze zeigt den Kurs also direkt auf der Skala an.
  */
-const actualFraction = computed(() => hud.value.speed / hud.value.maxForward);
-const orderedFraction = computed(() => hud.value.orderedSpeed / hud.value.maxForward);
+const kurs = computed(() => hud.value.course);
+const kursText = computed(() => {
+  const grad = Math.round(((kurs.value % 360) + 360) % 360) % 360;
+  return `${String(grad).padStart(3, '0')}°`;
+});
+
+/**
+ * Klick aufs Blatt befiehlt die Stufe, deren Hebelstellung der Klickrichtung
+ * am nächsten liegt — dieselbe Geste wie am echten Telegrafen.
+ */
+function onDialClick(event: MouseEvent): void {
+  const ziel = event.currentTarget as HTMLElement;
+  const box = ziel.getBoundingClientRect();
+  // Nabe des Blatts: waagerecht mittig, senkrecht bei 148/297 der Grafik.
+  const dx = event.clientX - (box.left + box.width * 0.5);
+  const dy = event.clientY - (box.top + box.height * (148 / 297));
+  const richtung = (Math.atan2(dx, -dy) * 180) / Math.PI;
+
+  let bester = 0;
+  for (let i = 1; i < WINKEL.length; i += 1) {
+    if (Math.abs(richtung - WINKEL[i]!) < Math.abs(richtung - WINKEL[bester]!)) bester = i;
+  }
+  orderTelegraph(bester);
+}
 
 function onWheel(event: WheelEvent): void {
   // Über dem Panel verstellt das Rad die Stufe statt die Karte zu zoomen.
@@ -49,147 +90,137 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 </script>
 
 <template>
-  <section class="hud__panel telegraph" aria-label="Maschinentelegraf" @wheel="onWheel">
-    <h2 class="hud__panel-title">Maschinentelegraf</h2>
+  <section class="hud__panel mt" aria-label="Maschinentelegraf und Kompass" @wheel="onWheel">
+    <div class="mt__instrumente">
+      <div class="mt__instrument">
+        <button type="button" class="mt__telegraf" :aria-label="`Maschinentelegraf: ${stufe}`" :title="stufe" @click="onDialClick">
+          <img class="mt__blatt" :src="blattUrl" alt="" draggable="false" />
+          <img
+            class="mt__hebel"
+            :src="hebelUrl"
+            alt=""
+            draggable="false"
+            :style="{ transform: `rotate(${hebelWinkel}deg)` }"
+          />
+        </button>
+        <p class="mt__wert hud__num">
+          <span>befohlen {{ orderedKnots }} kn</span>
+          <span class="mt__ist">ist {{ actualKnots }} kn</span>
+        </p>
+      </div>
 
-    <div class="telegraph__body">
-      <ul class="telegraph__rungs">
-        <li v-for="rung in rungs" :key="rung.index">
-          <button
-            type="button"
-            class="telegraph__rung"
-            :class="{
-              'telegraph__rung--set': rung.index === hud.telegraphStep,
-              'telegraph__rung--stop': rung.fraction === 0,
-            }"
-            :aria-pressed="rung.index === hud.telegraphStep"
-            @click="orderTelegraph(rung.index)"
-          >
-            {{ rung.label }}
-          </button>
-        </li>
-      </ul>
-
-      <!-- Zwei Marken auf einer Achse: befohlen springt hart, ist läuft weich nach. -->
-      <div class="telegraph__gauge" aria-hidden="true">
-        <div class="telegraph__zero"></div>
-        <div
-          class="telegraph__lag"
-          :style="{
-            '--from': `${50 + Math.min(orderedFraction, actualFraction) * 50}%`,
-            '--to': `${50 + Math.max(orderedFraction, actualFraction) * 50}%`,
-          }"
-        ></div>
-        <div class="telegraph__ordered" :style="{ bottom: `${50 + orderedFraction * 50}%` }"></div>
-        <div class="telegraph__actual" :style="{ bottom: `${50 + actualFraction * 50}%` }"></div>
+      <div class="mt__instrument">
+        <div class="mt__kompass" role="img" :aria-label="`Kompass: Kurs ${kursText}`">
+          <img class="mt__kompass-blatt" :src="kompassUrl" alt="" draggable="false" />
+          <img
+            class="mt__kompass-nadel"
+            :src="nadelUrl"
+            alt=""
+            draggable="false"
+            :style="{ transform: `rotate(${kurs}deg)` }"
+          />
+        </div>
+        <p class="mt__wert hud__num">Kurs {{ kursText }}</p>
       </div>
     </div>
-
-    <p class="telegraph__readout hud__num">
-      <span>befohlen {{ orderedKnots }} kn</span>
-      <span class="telegraph__actual-text">ist {{ actualKnots }} kn</span>
-    </p>
   </section>
 </template>
 
 <style scoped>
-.telegraph {
-  width: 168px;
-}
-
-.telegraph__body {
+.mt__instrumente {
   display: flex;
-  gap: 6px;
+  gap: 12px;
+  /* Beide Zifferblätter auf einer Unterkante, die Wertzeilen darunter bündig. */
+  align-items: flex-end;
 }
 
-.telegraph__rungs {
-  flex: 1;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.mt__instrument {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
 }
 
-.telegraph__rung {
+/* Gleiche Anzeige-Skala wie das Telegrafenblatt (×0.5) — die Grafiken sind
+   als Paar gezeichnet, beide 300 px breit. */
+.mt__kompass {
+  position: relative;
+  width: 150px;
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 40%));
+}
+
+.mt__kompass-blatt {
   display: block;
   width: 100%;
-  padding: 2px 5px;
-  border: 0;
-  border-left: 2px solid transparent;
-  background: none;
-  color: inherit;
-  font: inherit;
-  font-size: calc(0.6875rem * var(--ui-scale));
-  text-align: left;
-  opacity: 0.45;
-  cursor: pointer;
+  height: auto;
+  -webkit-user-drag: none;
 }
 
-.telegraph__rung:hover {
-  opacity: 0.75;
-  background: rgb(111 208 189 / 8%);
+/*
+ * Die Nadel sitzt mit dem Zentrum ihres Nabenlochs (99.5/178.5 im Original,
+ * per Alpha-Profil gemessen) auf der Messing-Kappe des Blatts (149.1/140.8).
+ * Nadel ×0.62 relativ zum Blatt (kalibrierte Bildprobe) → ×0.31 der Anzeige.
+ * KEINE Transition: der Kurs läuft im Frame-Takt herein, die Nadel folgt
+ * direkt — eine Transition würde nur nachziehen und beim 360°-Umbruch lügen.
+ */
+.mt__kompass-nadel {
+  position: absolute;
+  top: 15.1px;
+  left: 43.8px;
+  width: 62px;
+  height: auto;
+  transform-origin: 30.8px 55.3px;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 45%));
 }
 
-.telegraph__rung--stop {
-  border-top: 1px solid var(--ui-border);
-  border-bottom: 1px solid var(--ui-border);
-}
-
-.telegraph__rung--set {
-  border-left-color: var(--ui-accent);
-  background: rgb(111 208 189 / 14%);
-  color: var(--ui-accent);
-  opacity: 1;
-}
-
-.telegraph__gauge {
+.mt__telegraf {
   position: relative;
-  width: 10px;
-  border: 1px solid var(--ui-border);
-  border-radius: 1px;
+  display: block;
+  width: 150px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 40%));
 }
 
-.telegraph__zero {
+.mt__blatt {
+  display: block;
+  width: 100%;
+  height: auto;
+  -webkit-user-drag: none;
+}
+
+/*
+ * Der Hebel sitzt mit seinem gemessenen Drehpunkt exakt auf der Nabe des
+ * Blatts (75/74 bei 150 px Anzeigebreite). Die Werte sind Pixel, weil die
+ * Grafiken Raster sind — skaliert das Blatt, müssen sie mitziehen.
+ */
+.mt__hebel {
   position: absolute;
-  inset: auto 0 50% 0;
-  border-bottom: 1px dashed var(--ui-border);
+  top: 1.7px;
+  left: 59.6px;
+  width: 31px;
+  height: auto;
+  transform-origin: 15.4px 72.3px;
+  /* Leichtes Überschwingen: der Hebel wird geworfen, nicht geschoben. */
+  transition: transform 0.35s cubic-bezier(0.3, 1.35, 0.55, 1);
+  pointer-events: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 45%));
 }
 
-.telegraph__lag {
-  position: absolute;
-  left: 1px;
-  right: 1px;
-  bottom: var(--from);
-  height: calc(var(--to) - var(--from));
-  background: rgb(226 180 90 / 35%);
-}
-
-.telegraph__ordered,
-.telegraph__actual {
-  position: absolute;
-  left: -2px;
-  right: -2px;
-  height: 2px;
-}
-
-.telegraph__ordered {
-  background: var(--ui-accent);
-}
-
-.telegraph__actual {
-  height: 1px;
-  background: #e2b45a;
-}
-
-.telegraph__readout {
+.mt__wert {
   display: flex;
-  justify-content: space-between;
   gap: 0.5rem;
-  margin: 0.4rem 0 0;
+  margin: 0;
   font-size: calc(0.6875rem * var(--ui-scale));
   opacity: 0.6;
 }
 
-.telegraph__actual-text {
+.mt__ist {
   color: #e2b45a;
 }
 </style>
