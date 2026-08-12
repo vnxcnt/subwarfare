@@ -59,7 +59,6 @@ export interface HudState {
   telegraphStep: number;
   zoom: number;
   tilt: number;
-  following: boolean;
   /** Restdistanz zum Wegpunkt in Metern, oder null. */
   waypointDistance: number | null;
   /** Gesamtstrecke beim Erteilen des Befehls — Bezugsgröße für den Fortschritt. */
@@ -108,7 +107,6 @@ export const hud = shallowRef<HudState>({
   telegraphStep: 0,
   zoom: 1,
   tilt: 0.42,
-  following: false,
   waypointDistance: null,
   waypointTotal: null,
   contacts: [],
@@ -200,7 +198,6 @@ export function writeHud(frameSeconds: number): void {
   state.telegraphStep = own.telegraphStep;
   state.zoom = scene.camera.zoom;
   state.tilt = getTilt();
-  state.following = scene.isFollowing;
 
   const remaining = own.distanceToWaypoint;
   state.waypointDistance = remaining;
@@ -282,14 +279,6 @@ export function orderDive(submerged: boolean): void {
 /** Periskop aus-/einfahren — der Server prüft die Fähigkeit. */
 export function orderPeriscope(extended: boolean): void {
   game?.orderPeriscope(extended);
-}
-
-/**
- * Kamerafolgen ein-/ausschalten. Rein clientseitig — die Kamera ist keine
- * Spielmechanik, der Server erfährt davon nichts.
- */
-export function orderFollow(on: boolean): void {
-  game?.setFollowing(on);
 }
 
 /** Entwickler: eigenes Schiffsmodell wechseln (Server prüft die Rolle). */

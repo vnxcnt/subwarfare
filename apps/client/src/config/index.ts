@@ -50,9 +50,21 @@ export const VIEW = {
    * 3 px hoch). Zusätzlich wächst die anisotrope Texturstauchung auf 1/tilt.
    */
   minTilt: 0.25,
-  /** Tief genug, dass die ganze 10.000er-Karte auch in kleinen Fenstern passt. */
-  minZoom: 0.03,
-  maxZoom: 4,
+  /*
+   * Zoom-Grenzen. Eng gefasst, weil beide Enden vorher nur Unsinn zeigten.
+   *
+   * UNTEN (0,25): bei 900 px Fensterhöhe sind das 3600 m Sicht — knapp mehr als
+   * der Durchmesser des Sichtkreises (3750 m). Weiter herauszoomen zeigt
+   * ausschließlich Verdunkelung: was dahinter liegt, verrät der Server ohnehin
+   * nicht. Der alte Wert 0,03 fuhr die ganze 10.000er-Karte ins Bild und machte
+   * jedes Schiff zu einem Punkt von zwei Pixeln.
+   *
+   * OBEN (1,2): 750 m Bildhöhe, die Fregatte misst darin 140 px. Darüber
+   * verlässt man den Maßstab, in dem die Atlanten gerendert sind — die Frames
+   * werden weich, und vom Gefecht sieht man nichts mehr.
+   */
+  minZoom: 0.25,
+  maxZoom: 1.2,
   /** Multiplikator pro Mausrad-Raste. */
   zoomStep: 1.15,
   /** Anteil des Viewports, den die Karte beim Start ausfüllt. */
@@ -217,8 +229,14 @@ export const WAKE = {
  * als Schiff auf dem Wasser.
  */
 export const VISION = {
-  /** Sichtradius an der Oberfläche in Metern. Schrumpft mit der Tauchtiefe. */
-  radius: 2_500,
+  /**
+   * Sichtradius an der Oberfläche in Metern. Schrumpft mit der Tauchtiefe.
+   *
+   * Deutlich kleiner als die Sonarreichweite (4000 m) — und das ist Absicht:
+   * geortete Kontakte stehen im verdunkelten Ring, man weiß von ihnen, sieht
+   * sie aber nicht klar. Genau dieser Abstand macht das Aufklären wertvoll.
+   */
+  radius: 1_875,
   /** Länge des Periskop-Sichtkegels in Metern. Wächst mit dem Ausfahren. */
   coneLength: 2_200,
   /** Halber Öffnungswinkel des Kegels in Grad. */
@@ -337,9 +355,36 @@ export const FOLLOW = {
   snapScreenPx: 0.25,
 } as const;
 
-export const INPUT = {
-  /** Ab dieser Pan-Distanz schaltet die Kameranachführung ab. */
-  followBreakPixels: 5,
+/**
+ * Blickversatz zur Maus („peek").
+ *
+ * Die Kamera hängt fest am eigenen Boot — es gibt keine freie Ansicht mehr.
+ * Umschauen geht über den Zeiger: je weiter er aus der Bildmitte steht, desto
+ * weiter schiebt sich das Bild in seine Richtung. Lässt man ihn zurück in die
+ * Mitte wandern, zieht sich der Versatz von selbst wieder zusammen. Vorbild ist
+ * Foxhole, wo die Kamera ebenfalls dem Cursor nachgibt statt gezogen zu werden.
+ *
+ * Der Versatz ist BILDSCHIRM-Geometrie, kein Weltweg: er wird in `applyCamera`
+ * auf die Verschiebung der Ebenen gerechnet. Dadurch bleibt er beim Zoomen
+ * gleich groß, und Zielen wie Klicken rechnen automatisch richtig — sie gehen
+ * über dieselbe Matrix.
+ */
+export const PEEK = {
+  /**
+   * Wie weit die Kamera dem Zeiger folgt, als Anteil der halben Fensterkante.
+   * 0,35 heißt: Zeiger ganz am Rand → gut ein Drittel Bildhälfte Vorlauf. Genug,
+   * um in Fahrtrichtung vorauszuschauen, zu wenig, um das eigene Boot aus dem
+   * Bild zu schieben.
+   */
+  strength: 0.35,
+  /**
+   * Totzone um die Bildmitte (Anteil der halben Kante). Ohne sie wackelt das
+   * Bild bei jeder kleinen Handbewegung; der Rest wird nachskaliert, damit der
+   * Übergang aus der Totzone heraus stetig bleibt.
+   */
+  deadzone: 0.1,
+  /** Dämpfung wie bei der Nachführung: alpha = 1 - exp(-lambda * dt). */
+  lambda: 7,
 } as const;
 
 /** m/s je Knoten. 1 sm = 1852 m. Nur für die HUD-Anzeige. */

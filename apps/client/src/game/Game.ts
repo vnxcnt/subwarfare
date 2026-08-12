@@ -1,5 +1,5 @@
 import { Application } from 'pixi.js';
-import { DEMO_TRAFFIC, DEMO_VESSEL, RENDERER, SIM, VESSEL_DEMO, VISION } from '../config';
+import { DEMO_TRAFFIC, DEMO_VESSEL, PEEK, RENDERER, SIM, VESSEL_DEMO, VISION } from '../config';
 import { setSunkNotice, writeHud } from '../state/hud';
 import { CameraController } from './CameraController';
 import { DemoTraffic } from './DemoTraffic';
@@ -141,6 +141,7 @@ export class Game {
   /** Letzte Mausposition auf dem Canvas, in CSS-Pixeln. Null vor der ersten Bewegung. */
   private mouseScreen: { x: number; y: number } | null = null;
   private mouseMoveListener: ((event: PointerEvent) => void) | null = null;
+  private mouseLeaveListener: (() => void) | null = null;
   /** Pro Frame berechnete Zielpeilung in Kursgrad — null, wenn nicht zielbar. */
   private aimBearing: number | null = null;
 
@@ -391,7 +392,7 @@ export class Game {
 
     world.applyCamera(app.screen.width, app.screen.height);
 
-    this.camera = new CameraController(app.canvas, world, () => world.stopFollowing());
+    this.camera = new CameraController(app.canvas, world);
 
     // Rechtsklick steuert seit Protokoll v6 nichts mehr — aber das Browser-
     // Kontextmenü über der Karte wäre trotzdem nur im Weg.
@@ -405,6 +406,14 @@ export class Game {
       this.mouseScreen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     };
     app.canvas.addEventListener('pointermove', this.mouseMoveListener);
+
+    // Zeiger raus aus der Karte (Anzeige, Fensterrand): Blick zurück in die
+    // Mitte. Ohne das bliebe der Versatz stehen, wo der Zeiger die Fläche
+    // verlassen hat — das Bild hinge dann schief, ohne dass etwas passiert.
+    this.mouseLeaveListener = () => {
+      this.mouseScreen = null;
+    };
+    app.canvas.addEventListener('pointerleave', this.mouseLeaveListener);
 
     this.attachSteering();
 
@@ -812,39 +821,53 @@ export class Game {
   }
 
   /**
-   * Kamerafolgen ein- oder ausschalten.
+   * Blickversatz aus der Mausposition — der Kern der Umschau-Mechanik.
    *
-   * Bisher wurde das Folgen nur BEILÄUFIG gesetzt: beim Betreten der Karte,
-   * beim Einschalten des Zielmodus — und vom Kamera-Ziehen wieder abgeschaltet.
-   * Damit gab es keinen Weg zurück, außer den Zielmodus zu benutzen. Der Knopf
-   * in der Statusleiste braucht diese Naht.
+   * Der Zeiger wird auf −1..1 je Achse normiert, um eine runde Totzone
+   * beschnitten und auf die halbe Fensterkante mal `PEEK.strength` skaliert.
+   * Ohne Zeiger auf der Fläche (nie bewegt, Fenster verlassen) ist das Ziel
+   * die Mitte — der Versatz läuft dann von selbst zurück.
    */
-  setFollowing(on: boolean): void {
+  private updatePeek(width: number, height: number): void {
     const world = this.world;
     if (!world) return;
-    const own = this.ownVessel;
-    if (on && own) {
-      world.centerOn(own.x, own.y);
-      world.follow(own);
-    } else {
-      world.stopFollowing();
+
+    const maus = this.mouseScreen;
+    if (!maus) {
+      world.setPeekTarget(0, 0);
+      return;
     }
+
+    const halbeBreite = width / 2;
+    const halbeHoehe = height / 2;
+    if (halbeBreite <= 0 || halbeHoehe <= 0) return;
+
+    const nx = (maus.x - halbeBreite) / halbeBreite;
+    const ny = (maus.y - halbeHoehe) / halbeHoehe;
+    const laenge = Math.hypot(nx, ny);
+    if (laenge <= PEEK.deadzone) {
+      world.setPeekTarget(0, 0);
+      return;
+    }
+
+    // Radial nachskaliert: direkt hinter der Totzone beginnt der Versatz bei 0
+    // und erreicht am Rand den vollen Wert. Ein harter Sprung an der
+    // Totzonengrenze wäre genau das Ruckeln, das sie verhindern soll.
+    const gekappt = Math.min(laenge, 1);
+    const anteil = (gekappt - PEEK.deadzone) / (1 - PEEK.deadzone) / laenge;
+    world.setPeekTarget(
+      nx * anteil * halbeBreite * PEEK.strength,
+      ny * anteil * halbeHoehe * PEEK.strength,
+    );
   }
 
   /**
-   * Q schaltet den Zielmodus. Beim Einschalten zentriert die Kamera aufs
-   * eigene Boot und folgt ihm — gezielt wird relativ zum Schiff, die Karte
-   * soll dabei nicht wegdriften.
+   * Q schaltet den Zielmodus. Die Kamera hängt ohnehin am eigenen Boot — hier
+   * ist nur noch das Aufräumen der Ziellinie zu erledigen.
    */
   private toggleAiming(): void {
     if (!this.ownAimsWithMouse()) return;
     this.aiming = !this.aiming;
-    const own = this.ownVessel;
-    const world = this.world;
-    if (this.aiming && own && world) {
-      world.centerOn(own.x, own.y);
-      world.follow(own);
-    }
     if (!this.aiming) {
       this.world?.setAimLine(null);
       this.aimBearing = null;
@@ -1134,6 +1157,10 @@ export class Game {
     world.update(frameSeconds);
     world.syncViews(frameSeconds);
     world.updateFollow(frameSeconds);
+    // Blickversatz NACH der Nachführung und VOR der Matrix: er ist ein
+    // Bildschirm-Versatz auf die fertige Kameraposition, keine zweite Kamera.
+    this.updatePeek(app.screen.width, app.screen.height);
+    world.updatePeek(frameSeconds);
     world.applyCamera(app.screen.width, app.screen.height);
 
     // Ganz am Ende: die GUI liest denselben Zustand, der gerade gerendert wurde.
@@ -1192,6 +1219,10 @@ export class Game {
       this.app.canvas.removeEventListener('pointermove', this.mouseMoveListener);
     }
     this.mouseMoveListener = null;
+    if (this.mouseLeaveListener && this.app) {
+      this.app.canvas.removeEventListener('pointerleave', this.mouseLeaveListener);
+    }
+    this.mouseLeaveListener = null;
     this.aiming = false;
     this.aimBearing = null;
     this.mouseScreen = null;

@@ -1,7 +1,7 @@
 import type { GameMap, WeatherState } from '@subwarfare/shared';
 import { atmosphereFor } from '@subwarfare/shared';
 import { Container, Graphics, Matrix, Point, Sprite } from 'pixi.js';
-import { FALLBACK_MAP, FOLLOW, HULL, VIEW, VISION } from '../config';
+import { FALLBACK_MAP, FOLLOW, HULL, PEEK, VIEW, VISION } from '../config';
 import { EntityLayer } from './entities/EntityLayer';
 import type { Vessel } from '@subwarfare/shared';
 import { explosionFrame, splashFrame } from './fx-textures';
@@ -95,6 +95,15 @@ export class World {
   private map: GameMap = FALLBACK_MAP;
   private ocean: Ocean | null = null;
   private followTarget: Vessel | null = null;
+  /**
+   * Blickversatz zur Maus, in BILDSCHIRMPIXELN. `peek` ist der gezeigte Wert,
+   * `peekTarget` der gewünschte — dazwischen liegt die Dämpfung. Bewusst in
+   * Bildschirm- statt Weltkoordinaten: der Versatz soll beim Zoomen gleich
+   * groß bleiben, und alle Umrechnungen laufen ohnehin über die Matrix, in die
+   * er einfließt.
+   */
+  private readonly peek = { x: 0, y: 0 };
+  private readonly peekTarget = { x: 0, y: 0 };
 
   /** Wiederverwendet — `applyCamera` läuft 60-mal pro Sekunde. */
   private readonly groundMatrix = new Matrix();
@@ -128,9 +137,6 @@ export class World {
     return this.map;
   }
 
-  get isFollowing(): boolean {
-    return this.followTarget !== null;
-  }
 
   /**
    * Einziger Eintrittspunkt für Kartendaten. Startet mit `FALLBACK_MAP`, später
@@ -153,8 +159,14 @@ export class World {
     this.followTarget = target;
   }
 
-  stopFollowing(): void {
-    this.followTarget = null;
+  /**
+   * Blickversatz setzen — Zielwert in Bildschirmpixeln, positiv = nach rechts
+   * bzw. nach unten schauen. Der tatsächliche Versatz zieht in `updatePeek`
+   * gedämpft nach; hier wird nur das Ziel gesetzt.
+   */
+  setPeekTarget(x: number, y: number): void {
+    this.peekTarget.x = x;
+    this.peekTarget.y = y;
   }
 
   centerOn(x: number, y: number): void {
@@ -410,12 +422,26 @@ export class World {
     this.centerOn(this.camera.x + dx * alpha, this.camera.y + dy * alpha);
   }
 
+  /**
+   * Zieht den Blickversatz an sein Ziel nach — dieselbe framerate-unabhängige
+   * Dämpfung wie die Kameranachführung. Ohne sie spränge das Bild mit jeder
+   * Mausbewegung mit, statt ihr nachzugeben.
+   */
+  updatePeek(frameSeconds: number): void {
+    const alpha = 1 - Math.exp(-PEEK.lambda * frameSeconds);
+    this.peek.x += (this.peekTarget.x - this.peek.x) * alpha;
+    this.peek.y += (this.peekTarget.y - this.peek.y) * alpha;
+  }
+
   /** Rechnet Kamera, Zoom und Neigung in die Transformationen der Ebenen. */
   applyCamera(viewportWidth: number, viewportHeight: number): void {
     const { zoom } = this.camera;
     const centre = project(this.camera.x, this.camera.y, this.scratch);
-    const tx = viewportWidth / 2 - centre.x * zoom;
-    const ty = viewportHeight / 2 - centre.y * zoom;
+    // Der Blickversatz geht HIER ein und nirgends sonst: damit tragen ihn alle
+    // Ebenen, und `screenToWorld` (dieselbe Matrix) rechnet ihn automatisch
+    // wieder heraus — Zielen und Zoomen bleiben dadurch punktgenau.
+    const tx = viewportWidth / 2 - centre.x * zoom - this.peek.x;
+    const ty = viewportHeight / 2 - centre.y * zoom - this.peek.y;
 
     this.groundMatrix.copyFrom(PROJECTION).scale(zoom, zoom).translate(tx, ty);
     this.groundLayer.setFromMatrix(this.groundMatrix);

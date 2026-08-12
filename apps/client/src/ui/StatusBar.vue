@@ -4,12 +4,10 @@ import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import devIcon from '../assets/ui/ingame_dev.png';
 import exitIcon from '../assets/ui/ingame_exit.png';
-import followOffIcon from '../assets/ui/ingame_follow_off.png';
-import followOnIcon from '../assets/ui/ingame_follow_on.png';
 import settingsIcon from '../assets/ui/ingame_settings.png';
 import { mapLabel } from '../config';
 import { account } from '../state/auth';
-import { hud, orderFollow } from '../state/hud';
+import { hud } from '../state/hud';
 
 const isDev = import.meta.env.DEV;
 const isDeveloper = computed(() => (account.value?.role ?? 0) >= ROLE_DEVELOPER);
@@ -62,20 +60,8 @@ const weather = computed(() => {
     <span class="status__title">Sub Warfare</span>
     <span class="status__item">{{ mapName }}</span>
     <span class="status__item">{{ weather }}</span>
-    <!--
-      Folgen ist ein SCHALTER, kein Statustext: bisher schaltete das Ziehen der
-      Karte es ab, und es gab keinen Weg zurück außer über den Zielmodus.
-    -->
-    <button
-      class="status__knopf"
-      type="button"
-      :title="hud.following ? 'Kamera folgt — zum Lösen klicken' : 'Kamera folgt nicht — zum Anheften klicken'"
-      :aria-label="hud.following ? 'Kamerafolgen ausschalten' : 'Kamerafolgen einschalten'"
-      :aria-pressed="hud.following"
-      @click="orderFollow(!hud.following)"
-    >
-      <img class="status__icon" :src="hud.following ? followOnIcon : followOffIcon" alt="" />
-    </button>
+    <!-- Kein Folgen-Schalter mehr: die Kamera hängt fest am eigenen Boot, und
+         umgeschaut wird über den Zeiger. Es gibt keine zweite Ansicht. -->
     <span v-if="isDev" class="status__item hud__num">Neigung {{ tilt }} · [ ] neigt</span>
     <!-- Knöpfe rechtsbündig. -->
     <span class="status__right">
