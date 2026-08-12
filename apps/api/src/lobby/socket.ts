@@ -37,6 +37,8 @@ interface Reservation {
 interface PendingTicket {
   mapId: string;
   ticket: string;
+  /** Einmalkennung — daran erkennt free(), ob der Spielserver es verbraucht hat. */
+  jti: string;
   expiresAt: number;
 }
 
@@ -248,9 +250,17 @@ export class LobbyGateway {
   /** Freie Plätze abzüglich der bereits vergebenen, noch offenen Tickets. */
   private free(status: GameServerStatus): number {
     const now = Date.now();
+    const eingeloest = new Set(status.redeemed);
     for (const [accountId, reservation] of this.reservations) {
-      if (status.accounts.includes(accountId)) {
-        // Eingelöst — der Platz zählt ab jetzt in `players`.
+      const pending = this.pendingTickets.get(accountId);
+      // Zwei Wege, dieselbe Feststellung: das Konto ist gerade verbunden ODER
+      // seine Ticketkennung steht in der Verbrauchsliste. Der zweite Weg ist
+      // der wichtigere — wer beitritt und gleich wieder aussteigt, ist beim
+      // nächsten Sweep nicht mehr verbunden, sein Ticket bleibt aber verbrannt.
+      // Ohne ihn bekäme er bis zum Ablauf immer wieder dasselbe tote Ticket
+      // („Ticket wurde bereits eingelöst") und obendrein bei Verfall seine
+      // Einsatzkosten zurück, obwohl er gespielt hat.
+      if (status.accounts.includes(accountId) || (pending && eingeloest.has(pending.jti))) {
         this.reservations.delete(accountId);
         this.pendingTickets.delete(accountId);
       } else if (reservation.expiresAt <= now) {
@@ -339,7 +349,7 @@ export class LobbyGateway {
       console.warn('[api] Panzerung für das Ticket nicht lesbar — ungepanzert:', error);
     }
 
-    const ticket = await signTicket({
+    const { ticket, jti } = await signTicket({
       sub: accountId,
       name,
       mapId,
@@ -351,7 +361,7 @@ export class LobbyGateway {
     // Fürs idempotente Wieder-Zustellen aufheben (Doppelklick, Reconnect
     // innerhalb der Gültigkeit) — geräumt wird in free(), sobald das Ticket
     // eingelöst wurde oder verfallen ist.
-    this.pendingTickets.set(accountId, { mapId, ticket, expiresAt });
+    this.pendingTickets.set(accountId, { mapId, ticket, jti, expiresAt });
 
     this.io.of('/lobby').to(`account:${accountId}`).emit('queue:ticket', {
       mapId,

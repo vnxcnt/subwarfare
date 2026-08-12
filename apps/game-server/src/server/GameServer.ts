@@ -45,7 +45,7 @@ import { ArmorCatalog } from '../sim/ArmorCatalog.js';
 import { Bots } from '../sim/Bots.js';
 import { ShipCatalog } from '../sim/ShipCatalog.js';
 import { World, type WorldEvents } from '../world/World.js';
-import { consumeTicket, verifyTicket } from './tickets.js';
+import { consumeTicket, redeemedTickets, verifyTicket } from './tickets.js';
 
 type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, GameSocketData>;
 
@@ -199,9 +199,12 @@ export class GameServer {
         // Bots zählen nicht als Spieler — sonst wäre der Server sofort „voll".
         players: this.sockets.size,
         capacity: env.maxPlayers,
-        // Wer verbunden ist. Die Lobby erkennt daran, dass ein ausgegebenes
-        // Ticket eingelöst wurde, und gibt dessen Platzreservierung frei.
+        // Wer verbunden ist — daran sieht die Lobby, wer gerade Platz belegt.
         accounts: [...this.sockets.keys()],
+        // Welche Tickets verbraucht sind. Nötig, weil `accounts` nur die
+        // AKTUELL Verbundenen zeigt: wer beitritt und gleich wieder geht,
+        // verschwindet daraus, sein Ticket bleibt aber verbrannt.
+        redeemed: redeemedTickets(),
       }),
     );
   }

@@ -100,3 +100,19 @@ export function consumeTicket(jti: string, expiresAt: number): boolean {
   used.set(jti, expiresAt);
   return true;
 }
+
+/**
+ * Bereits eingelöste Kennungen — für den Statusbericht ans Backend.
+ *
+ * Das Backend hält nach der Ticketausgabe eine Reservierung und stellt dasselbe
+ * Ticket erneut zu, solange sie steht (Doppelklick, zweiter Reiter). Ob es
+ * inzwischen VERBRAUCHT ist, weiß nur diese Liste: an den verbundenen Konten
+ * ist das nicht abzulesen, sobald jemand wieder ausgestiegen ist.
+ *
+ * Vorher sweepen, damit nichts Abgelaufenes gemeldet wird; die Liste ist durch
+ * die kurze Ticket-Gültigkeit von Natur aus klein.
+ */
+export function redeemedTickets(): string[] {
+  sweep(Date.now());
+  return [...used.keys()];
+}

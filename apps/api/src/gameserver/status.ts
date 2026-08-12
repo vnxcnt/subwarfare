@@ -4,8 +4,18 @@ export interface GameServerStatus {
   mapId: string;
   players: number;
   capacity: number;
-  /** Verbundene Konten — daran erkennt die Lobby eingelöste Tickets. */
+  /** Verbundene Konten — daran erkennt die Lobby, wer gerade im Spiel ist. */
   accounts: string[];
+  /**
+   * Kennungen (`jti`) bereits eingelöster Tickets.
+   *
+   * `accounts` allein reicht dafür NICHT: wer beitritt und gleich wieder geht,
+   * ist beim nächsten Sweep schon nicht mehr verbunden — seine Reservierung
+   * stünde dann bis zum Ablauf, und die Lobby würde ihm sein verbranntes Ticket
+   * erneut zustellen („Ticket wurde bereits eingelöst"). Die Liste räumt sich
+   * beim Spielserver mit dem Ticket-Ablauf selbst.
+   */
+  redeemed: string[];
 }
 
 /**
@@ -36,6 +46,12 @@ export async function fetchGameServerStatus(): Promise<GameServerStatus | null> 
       capacity: data.capacity,
       accounts: Array.isArray(data.accounts)
         ? data.accounts.filter((id): id is string => typeof id === 'string')
+        : [],
+      // Fehlt bei einem älteren Spielserver: dann gilt wie bisher allein
+      // `accounts`. Leer heißt „nichts eingelöst", nicht „unbekannt" — der
+      // schlechtere Fall ist der alte Zustand, kein neuer.
+      redeemed: Array.isArray(data.redeemed)
+        ? data.redeemed.filter((id): id is string => typeof id === 'string')
         : [],
     };
   } catch {

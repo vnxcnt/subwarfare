@@ -40,8 +40,19 @@ export async function verifySession(token: string): Promise<SessionClaims | null
   }
 }
 
-export async function signTicket(claims: Omit<TicketClaims, 'jti'>): Promise<string> {
-  return new SignJWT({
+/**
+ * Stellt ein Join-Ticket aus — und gibt die Einmalkennung MIT heraus.
+ *
+ * Die `jti` bleibt bewusst nicht im Token verborgen: der Spielserver meldet
+ * eingelöste Kennungen in seinem Status, und nur darüber erkennt die Lobby,
+ * dass ein noch nicht abgelaufenes Ticket bereits verbraucht ist. Ohne das
+ * stellte sie einem Rückkehrer sein verbranntes Ticket erneut zu.
+ */
+export async function signTicket(
+  claims: Omit<TicketClaims, 'jti'>,
+): Promise<{ ticket: string; jti: string }> {
+  const jti = randomUUID();
+  const ticket = await new SignJWT({
     name: claims.name,
     mapId: claims.mapId,
     role: claims.role,
@@ -53,10 +64,11 @@ export async function signTicket(claims: Omit<TicketClaims, 'jti'>): Promise<str
     .setAudience(TICKET_AUDIENCE)
     // Einmalkennung: der Spielserver merkt sie sich und lehnt eine zweite
     // Einlösung ab.
-    .setJti(randomUUID())
+    .setJti(jti)
     .setIssuedAt()
     .setExpirationTime(`${env.ticketTtl}s`)
     .sign(secret);
+  return { ticket, jti };
 }
 
 /**
