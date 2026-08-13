@@ -16,26 +16,28 @@ import type { AccountStore } from '../accounts/store.js';
 export interface InventoryStore {
   items(accountId: string): Promise<InventoryItem[]>;
   loadouts(accountId: string): Promise<LoadoutEntry[]>;
-  /** Belegt einen Slot oder räumt ihn (`itemId: null`). */
+  /**
+   * Belegt einen Slot oder räumt ihn (`itemId: null`). `count` ist die
+   * Wunschmenge für den Einsatz; `null` heißt „alles, was da ist".
+   */
   setLoadout(
     accountId: string,
     model: string,
     slot: ItemCategory,
     itemId: ItemId | null,
+    count?: number | null,
   ): Promise<void>;
   /** Kauf: Coins abziehen + 1 Stück gutschreiben. 'poor' = Guthaben reicht nicht. */
   purchase(accountId: string, itemId: ItemId, price: number): Promise<'ok' | 'poor'>;
   /**
-   * Nimmt den GANZEN Bestand eines Items aus dem Inventar und liefert, wie viel
-   * es war. Damit geht die Munition eines Einsatzes an Bord: das Ticket ist
-   * zugleich der Lieferschein, und was der Einsatz nicht verbraucht, kommt über
-   * `credit` zurück.
-   *
-   * Bewusst „alles oder nichts" statt einer Wunschmenge: die Werft kennt keine
-   * Stückzahl, sie kennt nur den Slot. Wer weniger mitnehmen will, kauft
-   * weniger.
+   * Nimmt bis zu `limit` Stück eines Items aus dem Inventar (bei `null` den
+   * ganzen Bestand) und liefert, wie viel tatsächlich ging. Damit geht die
+   * Munition eines Einsatzes an Bord: das Ticket ist zugleich der
+   * Lieferschein, und was der Einsatz nicht verbraucht, kommt über `credit`
+   * zurück. Mehr als der Bestand geht nie — die Wunschmenge ist ein Deckel,
+   * kein Anspruch.
    */
-  takeAll(accountId: string, itemId: ItemId): Promise<number>;
+  take(accountId: string, itemId: ItemId, limit: number | null): Promise<number>;
   /** Schreibt Stücke gut — Rückgabe unverbrauchter Munition nach dem Einsatz. */
   credit(accountId: string, itemId: ItemId, amount: number): Promise<void>;
   /**
@@ -50,8 +52,11 @@ export interface InventoryStore {
 export class MemoryInventoryStore implements InventoryStore {
   /** accountId → itemId → Stückzahl. */
   private readonly owned = new Map<string, Map<string, number>>();
-  /** accountId → `${model}/${slot}` → itemId. */
-  private readonly equipped = new Map<string, Map<string, string>>();
+  /** accountId → `${model}/${slot}` → Item + Wunschmenge. */
+  private readonly equipped = new Map<
+    string,
+    Map<string, { itemId: string; count: number | null }>
+  >();
 
   /**
    * Coins liegen im Konto, nicht hier — der Kauf bucht über denselben
@@ -73,9 +78,9 @@ export class MemoryInventoryStore implements InventoryStore {
   async loadouts(accountId: string): Promise<LoadoutEntry[]> {
     const map = this.equipped.get(accountId);
     if (!map) return [];
-    return [...map.entries()].map(([key, itemId]) => {
+    return [...map.entries()].map(([key, eintrag]) => {
       const [model = '', slot = ''] = key.split('/');
-      return { model, slot, itemId };
+      return { model, slot, itemId: eintrag.itemId, count: eintrag.count };
     });
   }
 
@@ -84,6 +89,7 @@ export class MemoryInventoryStore implements InventoryStore {
     model: string,
     slot: ItemCategory,
     itemId: ItemId | null,
+    count: number | null = null,
   ): Promise<void> {
     let map = this.equipped.get(accountId);
     if (!map) {
@@ -92,7 +98,7 @@ export class MemoryInventoryStore implements InventoryStore {
     }
     const key = `${model}/${slot}`;
     if (itemId === null) map.delete(key);
-    else map.set(key, itemId);
+    else map.set(key, { itemId, count });
   }
 
   async purchase(accountId: string, itemId: ItemId, price: number): Promise<'ok' | 'poor'> {
@@ -106,10 +112,11 @@ export class MemoryInventoryStore implements InventoryStore {
     return 'ok';
   }
 
-  async takeAll(accountId: string, itemId: ItemId): Promise<number> {
+  async take(accountId: string, itemId: ItemId, limit: number | null): Promise<number> {
     const map = this.owned.get(accountId);
-    const menge = map?.get(itemId) ?? 0;
-    if (menge > 0) map?.set(itemId, 0);
+    const bestand = map?.get(itemId) ?? 0;
+    const menge = limit === null ? bestand : Math.min(Math.max(limit, 0), bestand);
+    if (menge > 0) map?.set(itemId, bestand - menge);
     return menge;
   }
 

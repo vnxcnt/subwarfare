@@ -527,11 +527,23 @@ export class VesselView {
     let used = 0;
     for (const sample of this.wakeSamples) {
       const t = sample.age / WAKE.maxAgeSeconds;
-      const alpha = WAKE.foamAlpha * sample.strength * (1 - t) ** WAKE.fadeExponent;
+      /*
+       * Einblendrampe: frisch abgelegte Batzen BLÜHEN AUF, statt fertig ins
+       * Bild zu poppen — ohne sie erschien alle `minSampleDistance` Meter ein
+       * Schaumfleck in voller Deckkraft. Smoothstep statt linear, damit auch
+       * das Ende der Rampe ohne Knick in die Abkling-Kurve übergeht.
+       */
+      const roh = Math.min(sample.age / WAKE.fadeInSeconds, 1);
+      const einblenden = roh * roh * (3 - 2 * roh);
+      const alpha = WAKE.foamAlpha * sample.strength * einblenden * (1 - t) ** WAKE.fadeExponent;
       if (alpha < 0.012) continue;
 
       const spread = dims.beam * (WAKE.spreadStart + t * (WAKE.spreadEnd - WAKE.spreadStart));
-      const size = dims.beam * (WAKE.puffStart + t * (WAKE.puffEnd - WAKE.puffStart));
+      // Beim Aufblühen wächst der Batzen von 60 % auf volle Größe mit.
+      const size =
+        dims.beam *
+        (WAKE.puffStart + t * (WAKE.puffEnd - WAKE.puffStart)) *
+        (0.6 + 0.4 * einblenden);
       const quer = Math.cos(sample.heading);
       const laengs = Math.sin(sample.heading);
 

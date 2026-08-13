@@ -9,6 +9,7 @@ import fireGunUrl from '../assets/audio/firing_gun.mp3';
 import fireSubmarineUrl from '../assets/audio/firing_torpedo01.mp3';
 import fireShipUrl from '../assets/audio/firing_torpedo02.mp3';
 import impactUrl from '../assets/audio/impact_shell02.mp3';
+import lootUrl from '../assets/audio/looting_chest.mp3';
 
 /** Zustand des eigenen Boots, soweit der Klang ihn braucht. Null = versenkt. */
 export interface AudioOwnState {
@@ -50,6 +51,7 @@ export class GameAudio {
   private fireSubmarineBuffer: AudioBuffer | null = null;
   private fireGunBuffer: AudioBuffer | null = null;
   private impactBuffer: AudioBuffer | null = null;
+  private lootBuffer: AudioBuffer | null = null;
 
   private resumeListener: (() => void) | null = null;
 
@@ -82,7 +84,7 @@ export class GameAudio {
       return context.decodeAudioData(await response.arrayBuffer());
     };
 
-    const [water, underwater, ship, submarine, fireShip, fireSubmarine, fireGun, impact] =
+    const [water, underwater, ship, submarine, fireShip, fireSubmarine, fireGun, impact, loot] =
       await Promise.all([
         load(ambientWaterUrl),
         load(ambientUnderwaterUrl),
@@ -92,6 +94,7 @@ export class GameAudio {
         load(fireSubmarineUrl),
         load(fireGunUrl),
         load(impactUrl),
+        load(lootUrl),
       ]);
 
     // `destroy()` kann während des Ladens gelaufen sein (schneller Routenwechsel).
@@ -101,6 +104,7 @@ export class GameAudio {
     this.fireSubmarineBuffer = fireSubmarine;
     this.fireGunBuffer = fireGun;
     this.impactBuffer = impact;
+    this.lootBuffer = loot;
 
     this.ambientWater = this.startLoop(context, water);
     this.ambientUnderwater = this.startLoop(context, underwater);
@@ -147,6 +151,11 @@ export class GameAudio {
       this.impactBuffer,
       AUDIO.impact * falloff(distanceMetres) * volumes.value.effects,
     );
+  }
+
+  /** Lootkiste geborgen — immer am eigenen Boot, daher ohne Dämpfung. */
+  playLoot(): void {
+    this.playOnce(this.lootBuffer, AUDIO.loot * volumes.value.effects);
   }
 
   destroy(): void {

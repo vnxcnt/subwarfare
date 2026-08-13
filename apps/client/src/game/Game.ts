@@ -528,6 +528,10 @@ export class Game {
         this.ownArmor = payload.armor ?? null;
         this.ownAmmo = payload.ammo;
         this.ownTubes = payload.tubes ?? [];
+        // Gestiegene Fracht heißt: gerade eine Kiste geborgen. Nur der
+        // ANSTIEG klingt — Tod und Extraktion setzen die Fracht auf null,
+        // und das ist kein Beutemoment.
+        if ((payload.loot ?? 0) > this.ownLoot) this.audio?.playLoot();
         this.ownLoot = payload.loot ?? 0;
         this.ownExtractionSeconds = payload.extractionSeconds ?? 0;
         // Bestätigter Stand übernimmt — die optimistische Stufe hat gedient.

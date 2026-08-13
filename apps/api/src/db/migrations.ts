@@ -224,4 +224,15 @@ export const MIGRATIONS: readonly Migration[] = [
        ON DUPLICATE KEY UPDATE item_id = item_id`,
     ],
   },
+  {
+    id: 11,
+    name: 'loadout-menge',
+    statements: [
+      // Wunschmenge je Slot-Belegung: wie viel Munition in den Einsatz
+      // mitgehen soll. NULL heisst "alles, was da ist" - das bisherige
+      // Verhalten und der Stand aller bestehenden Zeilen. Abgebucht wird beim
+      // Auslaufen hoechstens der tatsaechliche Bestand (take() deckelt).
+      `ALTER TABLE ship_loadouts ADD COLUMN wish_count INT UNSIGNED NULL`,
+    ],
+  },
 ];

@@ -198,6 +198,13 @@ export const WAKE = {
    */
   fadeExponent: 0.65,
   /**
+   * Einblendzeit einer frischen Probe in Sekunden. Ohne sie stünde jeder
+   * Batzen im Moment seines Ablegens mit voller Deckkraft da — die Spur
+   * poppte sichtbar Stück für Stück hinters Heck. Mit der Rampe blüht der
+   * Schaum auf, während das Schiff schon weiterfährt.
+   */
+  fadeInSeconds: 0.7,
+  /**
    * Obergrenze der Proben je Fahrzeug — jede kostet drei Sprites.
    *
    * Bei Höchstfahrt reicht die Lebensdauer für gut 56 Proben; die Grenze
@@ -261,6 +268,8 @@ export const AUDIO = {
   engineMax: 0.4,
   fire: 0.65,
   impact: 0.8,
+  /** Bergen einer Lootkiste — immer das eigene Boot, keine Entfernungsdämpfung. */
+  loot: 0.55,
   /** Hörweite für Abschüsse/Einschläge in Metern — linearer Abfall auf 0. */
   hearingRangeMetres: 2_500,
 } as const;

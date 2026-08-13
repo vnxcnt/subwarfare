@@ -57,8 +57,32 @@ export class PropView {
     }
     this.sprite.rotation =
       screenAxisAngle(course, getTilt()) - screenAxisAngle(frame.angleDegrees, RENDER_ELEVATION);
-    this.sprite.width = frame.texture.width * frame.metresPerPx;
-    this.sprite.height = frame.texture.height * frame.metresPerPx;
+
+    /*
+     * Auf der Dünung SCHWIMMEN, nicht liegen. Wellen bewegen Treibgut auf
+     * ORBITALBAHNEN — und von (nahezu) senkrecht oben ist vom Auf und Ab
+     * nichts zu sehen (der Höhenversatz skaliert mit √(1 − tilt²), bei
+     * tilt 1 exakt null). Sichtbar bleiben drei Signale, alle relativ zur
+     * GRÖSSE der Requisite, damit Kiste und Boje gleichermaßen leben:
+     * - Drift in der Wasserebene (der Kreis der Orbitalbahn von oben),
+     * - „Atmen" der Größe (auf dem Wellenberg näher an der Kamera),
+     * - bei gekippter Sicht zusätzlich der echte Hub.
+     * Zwei überlagerte Perioden, je Instanz phasenversetzt — sonst wippt die
+     * ganze See im Gleichtakt.
+     */
+    const tilt = getTilt();
+    const langsam = this.time * 1.25 + this.phase;
+    const schnell = this.time * 2.1 + this.phase * 1.7;
+    const hub = Math.sin(langsam) * 0.7 + Math.sin(schnell) * 0.3;
+    const drift = Math.cos(langsam) * 0.7 + Math.cos(schnell) * 0.25;
+
+    const breite = frame.texture.width * frame.metresPerPx;
+    const hoehe = frame.texture.height * frame.metresPerPx;
+    const atmen = 1 + hub * 0.045;
+    this.sprite.width = breite * atmen;
+    this.sprite.height = hoehe * atmen;
+    this.sprite.x = drift * hoehe * 0.07;
+    this.sprite.y = hub * hoehe * (0.045 * tilt + 0.09 * Math.sqrt(1 - tilt * tilt));
   }
 
   destroy(): void {

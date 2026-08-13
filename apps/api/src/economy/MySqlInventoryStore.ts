@@ -12,6 +12,7 @@ interface LoadoutRow extends RowDataPacket {
   model: string;
   slot: string;
   item_id: string;
+  wish_count: number | null;
 }
 
 /**
@@ -32,10 +33,16 @@ export class MySqlInventoryStore implements InventoryStore {
 
   async loadouts(accountId: string): Promise<LoadoutEntry[]> {
     const [rows] = await this.pool.execute<LoadoutRow[]>(
-      'SELECT model, slot, item_id FROM ship_loadouts WHERE account_id = ?',
+      'SELECT model, slot, item_id, wish_count FROM ship_loadouts WHERE account_id = ?',
       [accountId],
     );
-    return rows.map((row) => ({ model: row.model, slot: row.slot, itemId: row.item_id }));
+    return rows.map((row) => ({
+      model: row.model,
+      slot: row.slot,
+      itemId: row.item_id,
+      // mysql2 liefert INT NULL als null — alte Zeilen heißen damit „alles".
+      count: row.wish_count === null ? null : Number(row.wish_count),
+    }));
   }
 
   async setLoadout(
@@ -43,6 +50,7 @@ export class MySqlInventoryStore implements InventoryStore {
     model: string,
     slot: ItemCategory,
     itemId: ItemId | null,
+    count: number | null = null,
   ): Promise<void> {
     if (itemId === null) {
       await this.pool.execute(
@@ -52,10 +60,10 @@ export class MySqlInventoryStore implements InventoryStore {
       return;
     }
     await this.pool.execute(
-      `INSERT INTO ship_loadouts (account_id, model, slot, item_id)
-       VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE item_id = VALUES(item_id)`,
-      [accountId, model, slot, itemId],
+      `INSERT INTO ship_loadouts (account_id, model, slot, item_id, wish_count)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE item_id = VALUES(item_id), wish_count = VALUES(wish_count)`,
+      [accountId, model, slot, itemId, count],
     );
   }
 
@@ -91,11 +99,12 @@ export class MySqlInventoryStore implements InventoryStore {
     }
   }
 
-  async takeAll(accountId: string, itemId: ItemId): Promise<number> {
-    // Lesen und Leeren in EINER Transaktion, mit `FOR UPDATE` auf der Zeile:
+  async take(accountId: string, itemId: ItemId, limit: number | null): Promise<number> {
+    // Lesen und Abziehen in EINER Transaktion, mit `FOR UPDATE` auf der Zeile:
     // ohne die Sperre könnte zwischen Lesen und Schreiben ein Kauf laufen, und
-    // der würde beim Nullsetzen mit verschwinden. Der Rückgabewert ist die
+    // der würde beim Runterzählen mit verschwinden. Der Rückgabewert ist die
     // Stückzahl, die tatsächlich an Bord geht — der Lieferschein fürs Ticket.
+    // `limit` deckelt die Entnahme (Wunschmenge); `null` nimmt alles.
     const connection = await this.pool.getConnection();
     try {
       await connection.beginTransaction();
@@ -103,14 +112,15 @@ export class MySqlInventoryStore implements InventoryStore {
         'SELECT quantity FROM account_items WHERE account_id = ? AND item_id = ? FOR UPDATE',
         [accountId, itemId],
       );
-      const menge = Number(rows[0]?.quantity ?? 0);
+      const bestand = Number(rows[0]?.quantity ?? 0);
+      const menge = limit === null ? bestand : Math.min(Math.max(limit, 0), bestand);
       if (menge <= 0) {
         await connection.rollback();
         return 0;
       }
       await connection.execute(
-        'UPDATE account_items SET quantity = 0 WHERE account_id = ? AND item_id = ?',
-        [accountId, itemId],
+        'UPDATE account_items SET quantity = quantity - ? WHERE account_id = ? AND item_id = ?',
+        [menge, accountId, itemId],
       );
       await connection.commit();
       return menge;

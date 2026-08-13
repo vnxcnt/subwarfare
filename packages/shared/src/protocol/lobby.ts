@@ -68,6 +68,13 @@ export interface LoadoutEntry {
   model: string;
   slot: string;
   itemId: string;
+  /**
+   * Wunschmenge, die in den Einsatz mitgeht. `null` heißt „alles, was da
+   * ist" — das bisherige Verhalten und der Stand alter Slot-Belegungen.
+   * Abgebucht wird beim Auslaufen höchstens der tatsächliche Bestand; für
+   * nicht verbrauchbare Ausrüstung (Panzerung) ist die Menge bedeutungslos.
+   */
+  count: number | null;
 }
 
 /** Antwort von `GET /api/inventory` — Besitz und Zuordnungen eines Kontos. */
@@ -91,6 +98,11 @@ export interface LoadoutUpdateRequest {
   slot: string;
   /** `null` räumt den Slot. */
   itemId: string | null;
+  /**
+   * Wunschmenge für den Einsatz (ganzzahlig, ≥ 1). Fehlt sie oder ist sie
+   * `null`, geht der ganze Bestand mit. Bei Panzerung wird sie verworfen.
+   */
+  count?: number | null;
 }
 
 /** Zwischenstand, solange die Karte voll ist. */
@@ -121,16 +133,36 @@ export interface QueueErrorPayload {
   message: string;
 }
 
+/**
+ * Eine Chat-Zeile des Hauptmenüs. BEWUSST flüchtig: der Server reicht sie nur
+ * an die gerade Verbundenen durch und speichert nichts — wer später kommt,
+ * liest nichts nach. Der Name stammt aus dem geprüften Sitzungs-Token, nie
+ * vom Client.
+ */
+export interface ChatMessagePayload {
+  name: string;
+  text: string;
+}
+
+export interface ChatSendRequest {
+  text: string;
+}
+
 export interface LobbyServerToClientEvents {
   'queue:update': (payload: QueueUpdatePayload) => void;
   'queue:ticket': (payload: QueueTicketPayload) => void;
   'queue:error': (payload: QueueErrorPayload) => void;
+  'chat:message': (payload: ChatMessagePayload) => void;
 }
 
 export interface LobbyClientToServerEvents {
   'queue:join': (payload: QueueJoinRequest) => void;
   'queue:leave': () => void;
+  'chat:send': (payload: ChatSendRequest) => void;
 }
+
+/** Längste zulässige Chat-Zeile — Client schneidet ab, Server erzwingt. */
+export const CHAT_MAX_LENGTH = 200;
 
 /** Pro Lobby-Verbindung hinterlegt, nachdem das Sitzungs-Token geprüft wurde. */
 export interface LobbySocketData {

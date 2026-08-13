@@ -3,15 +3,14 @@ import { ref } from 'vue';
 import AmmoBar from './AmmoBar.vue';
 import DeathNotice from './DeathNotice.vue';
 import DevMenu from './DevMenu.vue';
-import DivePanel from './DivePanel.vue';
 import EventLog from './EventLog.vue';
 import ExtractionPanel from './ExtractionPanel.vue';
-import PeriscopePanel from './PeriscopePanel.vue';
 import QuestLog from './QuestLog.vue';
 import SettingsPanel from './SettingsPanel.vue';
 import SonarPanel from './SonarPanel.vue';
 import StatusBar from './StatusBar.vue';
 import TelegraphPanel from './TelegraphPanel.vue';
+import UbootPanel from './UbootPanel.vue';
 import VitalsPanel from './VitalsPanel.vue';
 import { isTextEntry } from './dom';
 
@@ -72,8 +71,7 @@ function suppressContextMenu(event: MouseEvent): void {
       </div>
       <AmmoBar />
       <div class="hud-root__right">
-        <PeriscopePanel />
-        <DivePanel />
+        <UbootPanel />
         <TelegraphPanel />
       </div>
     </div>

@@ -43,6 +43,11 @@ export function equippedItem(model: string, slot: ItemCategory): string | null {
   );
 }
 
+/** Die volle Slot-Belegung inklusive Wunschmenge — null, wenn leer. */
+export function equippedEntry(model: string, slot: ItemCategory): LoadoutEntry | null {
+  return loadouts.value.find((entry) => entry.model === model && entry.slot === slot) ?? null;
+}
+
 export async function refreshInventory(): Promise<void> {
   try {
     const response = await api('/inventory');
@@ -85,11 +90,15 @@ export async function buyItem(itemId: ItemId): Promise<string | null> {
   }
 }
 
-/** Belegt oder räumt einen Ausrüstungs-Slot. Liefert null bei Erfolg. */
+/**
+ * Belegt oder räumt einen Ausrüstungs-Slot. Liefert null bei Erfolg.
+ * `count` ist die Wunschmenge für den Einsatz — `null` nimmt alles mit.
+ */
 export async function equip(
   model: string,
   slot: ItemCategory,
   itemId: ItemId | null,
+  count: number | null = null,
 ): Promise<string | null> {
   if (economyBusy.value) return null;
   economyBusy.value = true;
@@ -97,7 +106,7 @@ export async function equip(
   try {
     const response = await api('/loadout', {
       method: 'POST',
-      body: JSON.stringify({ model, slot, itemId }),
+      body: JSON.stringify({ model, slot, itemId, count }),
     });
     const body = (await response.json().catch(() => null)) as
       | { loadouts?: LoadoutEntry[]; error?: string }

@@ -71,7 +71,7 @@ export function registerEconomyRoutes(
     const account = await accountFromRequest(request, accounts);
     if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
 
-    const { model, slot, itemId } = (request.body ?? {}) as Partial<LoadoutUpdateRequest>;
+    const { model, slot, itemId, count } = (request.body ?? {}) as Partial<LoadoutUpdateRequest>;
     if (!isPlayableModel(model)) return reply.code(400).send({ error: 'Unbekanntes Schiff.' });
 
     // Die Slot-Liste folgt der Bewaffnung aus dem Code-Katalog: er ist der
@@ -95,7 +95,21 @@ export function registerEconomyRoutes(
       if (!owned.some((entry) => entry.itemId === itemId && entry.quantity > 0)) {
         return reply.code(409).send({ error: 'Item nicht im Inventar.' });
       }
-      await inventory.setLoadout(account.id, model, category, itemId);
+
+      /*
+       * Wunschmenge: ganzzahlig und ≥ 1, sonst 400. Sie wird bewusst NICHT
+       * gegen den Bestand geprüft — der ändert sich bis zum Auslaufen ohnehin,
+       * abgebucht wird dort höchstens, was da ist (take() deckelt). Panzerung
+       * ist ein Stück, keine Menge — dort wird sie verworfen.
+       */
+      let wunsch: number | null = null;
+      if (category !== 'panzerung' && count !== null && count !== undefined) {
+        if (!Number.isInteger(count) || count < 1 || count > 999) {
+          return reply.code(400).send({ error: 'Ungültige Stückzahl.' });
+        }
+        wunsch = count;
+      }
+      await inventory.setLoadout(account.id, model, category, itemId, wunsch);
     }
 
     return { loadouts: await inventory.loadouts(account.id) };

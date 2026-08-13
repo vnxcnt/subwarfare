@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import type { WeaponId } from '@subwarfare/shared';
-import { TUBE_LABELS } from '@subwarfare/shared';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { DECOY, DEPTH_CHARGE, GUN, TUBE_LABELS } from '@subwarfare/shared';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import feuerUrl from '../assets/ui/button_fire.webp';
+import bereitUrl from '../assets/ui/button_ready.webp';
+import nachladenUrl from '../assets/ui/button_reload.webp';
 import { WEAPON_SLOTS } from '../config';
 import { hud, orderFire, orderTube } from '../state/hud';
 import { keys, settingsModalOpen } from '../state/settings';
@@ -67,13 +70,86 @@ const ready = computed(() => {
   return waffe.count > 0;
 });
 
+/*
+ * Nachlade-Anzeige. Der Server kennt die Feuerpausen und setzt sie durch —
+ * der Client SIEHT einen Schuss aber nur als sinkenden Bestand im own-Payload.
+ * Genau daran hängt die Anzeige: fällt der Vorrat einer Waffe, läuft ab da
+ * ihre Feuerpause aus dem shared-Katalog. Reine Darstellung, selbstheilend —
+ * verwirft der Server einen Schuss, sinkt nichts und nichts blockiert.
+ * Der Torpedo fehlt bewusst: bei ihm erzählen die ROHRE das Nachladen.
+ */
+const FEUERPAUSE_SEKUNDEN: Partial<Record<string, number>> = {
+  geschuetz: GUN.cooldownSeconds,
+  wasserbombe: DEPTH_CHARGE.cooldownSeconds,
+  taeuschkoerper: DECOY.cooldownSeconds,
+};
+
+const reloadUntil = ref<Partial<Record<string, number>>>({});
+let prevAmmo: Record<string, number> = {};
+
+watch(
+  // Über den Inhalt statt die Identität: der HUD-Snapshot wird getriggert,
+  // nicht ersetzt — Objektgleichheit sagt hier nichts über Änderungen.
+  () => JSON.stringify(hud.value.ammo),
+  () => {
+    const ammo = hud.value.ammo;
+    const aktuell: Record<string, number> = {};
+    for (const [id, count] of Object.entries(ammo)) {
+      if (count === undefined) continue;
+      aktuell[id] = count;
+      const vorher = prevAmmo[id];
+      const pause = FEUERPAUSE_SEKUNDEN[id];
+      if (pause !== undefined && vorher !== undefined && count < vorher) {
+        reloadUntil.value = { ...reloadUntil.value, [id]: performance.now() + pause * 1000 };
+      }
+    }
+    prevAmmo = aktuell;
+  },
+);
+
+/**
+ * Eigene kleine Uhr fürs Ablaufen der Pause: das HUD weckt Vue nur bei
+ * Änderungen, und am ENDE der Feuerpause ändert sich sonst nichts — der Knopf
+ * bliebe auf „Nachladen" stehen, bis irgendetwas anderes passiert.
+ */
+const jetzt = ref(performance.now());
+let pausenUhr: number | null = null;
+
+const nachladen = computed(() => {
+  const waffe = active.value;
+  if (!waffe || waffe.id === 'torpedo') return false;
+  const bis = reloadUntil.value[waffe.id];
+  return bis !== undefined && jetzt.value < bis;
+});
+
+/**
+ * Der Feuerknopf als Zustands-Plakette:
+ * - Torpedo bereit (Rohr scharf + geladen) → BEREIT, sonst → NACHLADEN.
+ * - Andere Waffen: Feuerpause läuft → NACHLADEN, sonst mit Vorrat → FEUER.
+ * - Ohne Vorrat bleibt NACHLADEN stehen, aber stumm (gesperrt) — der Slot
+ *   daneben zeigt die Null.
+ */
+const knopf = computed(() => {
+  const waffe = active.value;
+  if (!waffe) return { bild: nachladenUrl, aktiv: false, label: 'Keine Waffe' };
+  if (waffe.id === 'torpedo') {
+    return ready.value
+      ? { bild: bereitUrl, aktiv: true, label: 'Salve feuern' }
+      : { bild: nachladenUrl, aktiv: false, label: 'Kein Rohr scharf und geladen' };
+  }
+  if (nachladen.value) return { bild: nachladenUrl, aktiv: false, label: 'Nachladen' };
+  return ready.value
+    ? { bild: feuerUrl, aktiv: true, label: `${waffe.def?.label ?? 'Waffe'} feuern` }
+    : { bild: nachladenUrl, aktiv: false, label: 'Kein Vorrat' };
+});
+
 function choose(id: string): void {
   chosen.value = id;
 }
 
 function fire(): void {
   const waffe = active.value;
-  if (waffe) orderFire(waffe.id as WeaponId);
+  if (waffe && knopf.value.aktiv) orderFire(waffe.id as WeaponId);
 }
 
 function onKey(event: KeyboardEvent): void {
@@ -128,8 +204,17 @@ function tubeKey(index: number): number {
   return slots.value.length + index + 1;
 }
 
-onMounted(() => window.addEventListener('keydown', onKey));
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
+onMounted(() => {
+  window.addEventListener('keydown', onKey);
+  pausenUhr = window.setInterval(() => {
+    // Nur ticken, wenn überhaupt eine Pause laufen kann — sonst schläft Vue.
+    if (Object.keys(reloadUntil.value).length > 0) jetzt.value = performance.now();
+  }, 120);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey);
+  if (pausenUhr !== null) window.clearInterval(pausenUhr);
+});
 </script>
 
 <template>
@@ -185,10 +270,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
       <button
         class="ammo__fire"
         type="button"
-        :disabled="!ready"
+        :disabled="!knopf.aktiv"
+        :aria-label="knopf.label"
+        :title="knopf.label"
         @click="fire"
       >
-        {{ active?.def?.label ?? 'Feuern' }}
+        <img :src="knopf.bild" alt="" draggable="false" />
       </button>
     </div>
   </section>
@@ -382,25 +469,30 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 
 /* --- Feuerknopf und Hinweis --------------------------------------------- */
 
+/* Die Plakette (FEUER/BEREIT/NACHLADEN) bringt Rahmen und Farbe selbst mit —
+   der Knopf ist nur noch die Klickfläche. NACHLADEN bleibt bewusst voll
+   sichtbar: es ist eine Statusanzeige, kein ausgegrauter Knopf. */
 .ammo__fire {
   width: 100%;
-  padding: 0.3rem 0.6rem;
-  border: 1px solid rgb(111 208 189 / 45%);
-  background: rgb(111 208 189 / 10%);
-  color: var(--ui-accent);
-  font: inherit;
-  font-size: calc(0.6875rem * var(--ui-scale));
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  max-width: 212px;
+  padding: 0;
+  border: 0;
+  background: none;
   cursor: pointer;
 }
 
-.ammo__fire:hover:not(:disabled) {
-  background: rgb(111 208 189 / 20%);
+.ammo__fire img {
+  display: block;
+  width: 100%;
+  height: auto;
+  -webkit-user-drag: none;
+}
+
+.ammo__fire:hover:not(:disabled) img {
+  filter: brightness(1.12);
 }
 
 .ammo__fire:disabled {
-  opacity: 0.35;
   cursor: default;
 }
 

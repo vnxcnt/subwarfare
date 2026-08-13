@@ -18,11 +18,13 @@ import { useRouter } from 'vue-router';
 import menuMusicUrl from '../assets/audio/mainmenu.mp3';
 import { mapLabel } from '../config';
 import { API_URL, account, confirmDiscordLink, logout, restoreSession } from '../state/auth';
+import { connectChat, disconnectChat } from '../state/chat';
 import {
   buyItem,
   economyBusy,
   economyError,
   equip,
+  equippedEntry,
   equippedItem,
   ownedQuantity,
   refreshInventory,
@@ -37,6 +39,7 @@ import {
 } from '../state/lobby';
 import { itemIconUrl } from '../ui/itemIcons';
 import { rankIconUrl } from '../ui/rankIcons';
+import MenuChat from '../ui/MenuChat.vue';
 import SettingsPanel from '../ui/SettingsPanel.vue';
 import { volumes } from '../state/settings';
 
@@ -106,6 +109,20 @@ const SHIP_LABELS: Record<PlayableModel, string> = {
 
 const SHIP_KEY = 'subwarfare:ship';
 
+/**
+ * Schiffs-Previews, Dateiname = Modellkennung — wie bei den Item-Icons über
+ * `import.meta.glob`: ein neues Bild braucht nur seine Datei. Modelle ohne
+ * Datei behalten die reine Textkarte.
+ */
+const SHIP_PREVIEWS = import.meta.glob('../assets/ships/*.webp', {
+  eager: true,
+  import: 'default',
+}) as Record<string, string>;
+
+function shipPreviewUrl(model: PlayableModel): string | null {
+  return SHIP_PREVIEWS[`../assets/ships/${model}.webp`] ?? null;
+}
+
 function restoreShip(): PlayableModel {
   try {
     const stored = localStorage.getItem(SHIP_KEY);
@@ -159,19 +176,47 @@ function equippedName(slot: ItemCategory): string | null {
   return id !== null && isItemId(id) ? itemById(id).name : null;
 }
 
+/** Icon des equippten Items — null bei leerem Slot oder fehlender Grafik. */
+function slotIcon(slot: ItemCategory): string | null {
+  const id = equippedItem(effectiveShip.value, slot);
+  return id !== null ? itemIconUrl(id) : null;
+}
+
 /**
- * Stückzahl, die dieser Slot in den Einsatz mitnimmt.
- *
- * Seit die Munition aus dem Inventar kommt, ist das die entscheidende Zahl:
- * was hier steht, geht an Bord und wird beim Auslaufen abgebucht. `null` bei
- * leerem Slot oder bei der Panzerung — die ist ein Stück und wird nicht
- * verbraucht.
+ * Stückzahl, die dieser Slot in den Einsatz mitnimmt: die gewählte
+ * Wunschmenge, gedeckelt auf den Lagerbestand (`null` in der Belegung heißt
+ * „alles"). `null` bei leerem Slot oder bei der Panzerung — die ist ein Stück
+ * und wird nicht verbraucht.
  */
 function aboardCount(slot: ItemCategory): number | null {
   if (slot === 'panzerung') return null;
+  const entry = equippedEntry(effectiveShip.value, slot);
+  if (!entry || !isItemId(entry.itemId)) return null;
+  const vorrat = ownedQuantity(entry.itemId);
+  return Math.min(entry.count ?? vorrat, vorrat);
+}
+
+/** Lagerbestand des equippten Items — Obergrenze des Mengen-Steppers. */
+function aboardMax(slot: ItemCategory): number {
   const id = equippedItem(effectiveShip.value, slot);
-  if (id === null || !isItemId(id)) return null;
-  return ownedQuantity(id);
+  return id !== null && isItemId(id) ? ownedQuantity(id) : 0;
+}
+
+/**
+ * Setzt die Wunschmenge des Slots — geklemmt auf 1..Bestand. Läuft über
+ * denselben /loadout-Weg wie das Equippen selbst; die Server-Antwort ist die
+ * Wahrheit, nicht der lokale Wunsch.
+ */
+async function orderCount(slot: ItemCategory, roh: number): Promise<void> {
+  const entry = equippedEntry(effectiveShip.value, slot);
+  if (!entry || !isItemId(entry.itemId)) return;
+  const max = Math.max(ownedQuantity(entry.itemId), 1);
+  const wert = Math.min(Math.max(Math.round(roh) || 1, 1), max);
+  await equip(effectiveShip.value, slot, entry.itemId, wert);
+}
+
+function onCountInput(slot: ItemCategory, event: Event): void {
+  void orderCount(slot, Number((event.target as HTMLInputElement).value));
 }
 
 /** Besitz einer Kategorie in Katalog-Reihenfolge (aufsteigend nach Stärke). */
@@ -183,7 +228,10 @@ function ownedInCategory(category: ItemCategory): Array<ItemDefinition & { quant
 
 async function equipSlot(slot: ItemCategory, itemId: ItemId | null): Promise<void> {
   await equip(effectiveShip.value, slot, itemId);
-  activeSlot.value = null;
+  // Beim Belegen offen lassen: direkt daneben sitzt jetzt der Mengen-Stepper,
+  // und wer ein Item wählt, will meist auch die Stückzahl setzen. Nur das
+  // Leeren schließt — dann gibt es nichts mehr einzustellen.
+  if (itemId === null) activeSlot.value = null;
 }
 
 /* --- Inventar + Shop (rechte Spalte) ------------------------------------ */
@@ -318,12 +366,17 @@ onMounted(() => {
   void restoreSession();
   void refreshMapStatus();
   void refreshInventory();
+  // Hafen-Funk: lebt genau so lange wie das Menü.
+  connectChat();
   statusTimer = window.setInterval(() => void refreshMapStatus(), 10_000);
 });
 
 onBeforeUnmount(() => {
   // Wer das Menü verlässt, ohne zu spielen, steht nicht weiter in der Schlange.
   if (queueState.value === 'waiting' || queueState.value === 'connecting') leaveQueue();
+
+  // Der Funk gehört zum Hafen — auf See und am Login schweigt er.
+  disconnectChat();
 
   if (statusTimer !== null) clearInterval(statusTimer);
   statusTimer = null;
@@ -474,6 +527,13 @@ onBeforeUnmount(() => {
               :disabled="shipLocked(model) || waiting"
               @click="selectShip(model)"
             >
+              <img
+                v-if="shipPreviewUrl(model)"
+                class="menu__ship-img"
+                :src="shipPreviewUrl(model)!"
+                alt=""
+                draggable="false"
+              />
               <span class="menu__ship-name">{{ SHIP_LABELS[model] }}</span>
               <span v-if="shipLocked(model)" class="menu__ship-status">
                 Ab Level {{ SHIP_ACCESS[model].minLevel }}
@@ -495,6 +555,12 @@ onBeforeUnmount(() => {
                 class="menu__slot-item"
                 :class="{ 'menu__slot-item--empty': !equippedName(slot) }"
               >
+                <img
+                  v-if="slotIcon(slot)"
+                  class="menu__slot-icon"
+                  :src="slotIcon(slot)!"
+                  alt=""
+                />
                 {{ equippedName(slot) ?? '— leer —' }}
                 <!-- Was wirklich mitfährt. Ohne Bestand nützt der belegte Slot
                      nichts — dann fährt die Waffe nicht mit. -->
@@ -508,6 +574,40 @@ onBeforeUnmount(() => {
               </span>
             </button>
             <div v-if="activeSlot === slot" class="menu__slot-options">
+              <!-- Mengenwahl: wie viel vom Bestand in den Einsatz geht. Nur für
+                   Verbrauchsgüter mit Vorrat — Panzerung ist ein Stück. -->
+              <div
+                v-if="equippedName(slot) && aboardCount(slot) !== null && aboardMax(slot) > 0"
+                class="menu__slot-menge"
+              >
+                <span class="menu__slot-menge-label">Menge für den Einsatz</span>
+                <span class="menu__slot-stepper">
+                  <button
+                    type="button"
+                    :disabled="economyBusy || (aboardCount(slot) ?? 0) <= 1"
+                    @click="orderCount(slot, (aboardCount(slot) ?? 1) - 1)"
+                  >
+                    −
+                  </button>
+                  <input
+                    class="hud__num"
+                    type="number"
+                    min="1"
+                    :max="aboardMax(slot)"
+                    :value="aboardCount(slot)"
+                    :disabled="economyBusy"
+                    @change="onCountInput(slot, $event)"
+                  />
+                  <button
+                    type="button"
+                    :disabled="economyBusy || (aboardCount(slot) ?? 0) >= aboardMax(slot)"
+                    @click="orderCount(slot, (aboardCount(slot) ?? 0) + 1)"
+                  >
+                    +
+                  </button>
+                </span>
+                <span class="menu__slot-vorrat hud__num">von {{ aboardMax(slot) }} im Lager</span>
+              </div>
               <button
                 v-if="equippedName(slot)"
                 type="button"
@@ -525,7 +625,15 @@ onBeforeUnmount(() => {
                 :disabled="economyBusy"
                 @click="equipSlot(slot, item.id)"
               >
-                <span>{{ item.name }}</span>
+                <span class="menu__slot-option-name">
+                  <img
+                    v-if="itemIconUrl(item.id)"
+                    class="menu__slot-icon"
+                    :src="itemIconUrl(item.id)!"
+                    alt=""
+                  />
+                  {{ item.name }}
+                </span>
                 <span class="menu__slot-qty hud__num">×{{ item.quantity }}</span>
               </button>
               <p v-if="ownedInCategory(slot).length === 0" class="menu__soon">
@@ -629,6 +737,8 @@ onBeforeUnmount(() => {
         </template>
       </section>
     </div>
+
+    <MenuChat />
 
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
   </div>
@@ -1015,6 +1125,17 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
+/* Preview über dem Namen: feste Höhe, damit die Karten trotz verschiedener
+   Seitenverhältnisse (Fregatte quadratisch, U-Boot breit) gleich hoch bleiben. */
+.menu__ship-img {
+  width: 100%;
+  height: 72px;
+  object-fit: contain;
+  justify-self: center;
+  filter: drop-shadow(0 3px 5px rgb(0 0 0 / 45%));
+  -webkit-user-drag: none;
+}
+
 .menu__ship-name {
   font-weight: 600;
   letter-spacing: 0.05em;
@@ -1122,6 +1243,91 @@ onBeforeUnmount(() => {
 
 .menu__slot-qty {
   opacity: 0.6;
+}
+
+/* Item-Icon im Slot-Kopf und in den Auswahlzeilen — klein und mittig zur
+   Schrift, das Bild bestimmt nicht die Zeilenhöhe. */
+.menu__slot-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  vertical-align: -5px;
+  margin-right: 0.25rem;
+  image-rendering: -webkit-optimize-contrast;
+}
+
+.menu__slot-option-name {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+/* --- Mengenwahl im offenen Slot ----------------------------------------- */
+
+.menu__slot-menge {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--gold-border);
+  background: rgb(0 0 0 / 25%);
+}
+
+.menu__slot-menge-label {
+  flex: 1;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+}
+
+.menu__slot-stepper {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.menu__slot-stepper button {
+  width: 26px;
+  border: 1px solid var(--gold-border);
+  background: rgb(0 0 0 / 30%);
+  color: var(--gold);
+  font: inherit;
+  cursor: pointer;
+}
+
+.menu__slot-stepper button:hover:not(:disabled) {
+  background: var(--gold-faint);
+}
+
+.menu__slot-stepper button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.menu__slot-stepper input {
+  width: 3.2rem;
+  padding: 0.25rem 0.3rem;
+  border: 1px solid var(--gold-border);
+  border-left: none;
+  border-right: none;
+  background: rgb(0 0 0 / 30%);
+  color: var(--gold-bright);
+  font: inherit;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.menu__slot-stepper input::-webkit-outer-spin-button,
+.menu__slot-stepper input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.menu__slot-vorrat {
+  font-size: 0.6875rem;
+  opacity: 0.55;
+  white-space: nowrap;
 }
 
 /* --- Flotte (rechte Spalte) --------------------------------------------- */

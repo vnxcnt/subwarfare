@@ -7,6 +7,7 @@ import type {
 } from '@subwarfare/shared';
 import {
   AMMO_CATEGORIES,
+  CHAT_MAX_LENGTH,
   SHIP_ACCESS,
   WEAPON_FOR_CATEGORY,
   isItemId,
@@ -159,6 +160,26 @@ export class LobbyGateway {
 
     socket.on('queue:leave', () => {
       void this.queue.leave('ocean01', socket.data.accountId);
+    });
+
+    /*
+     * Hauptmenü-Chat: reines Durchreichen an alle gerade Verbundenen, KEINE
+     * Speicherung — wer später kommt, liest nichts nach. Der Absendername
+     * kommt aus dem geprüften Token (socket.data), nie aus dem Ereignis.
+     * Ein einfaches Rate-Limit je Verbindung (eine Nachricht pro Sekunde)
+     * hält Flutversuche vom Broadcast fern; überzählige fallen still weg.
+     */
+    let letzteNachricht = 0;
+    socket.on('chat:send', (payload) => {
+      const text = typeof payload?.text === 'string' ? payload.text.trim() : '';
+      if (text.length === 0) return;
+      const jetzt = Date.now();
+      if (jetzt - letzteNachricht < 1000) return;
+      letzteNachricht = jetzt;
+      this.io.of('/lobby').emit('chat:message', {
+        name: socket.data.name,
+        text: text.slice(0, CHAT_MAX_LENGTH),
+      });
     });
 
     socket.on('disconnect', () => {
@@ -381,27 +402,30 @@ export class LobbyGateway {
     const loadout: LoadoutEntryStack[] = [];
     try {
       const loadouts = await this.inventory.loadouts(accountId);
-      const belegt = (slot: string): string | null =>
-        loadouts.find((l) => l.model === shipModel && l.slot === slot)?.itemId ?? null;
+      const belegt = (slot: string) =>
+        loadouts.find((l) => l.model === shipModel && l.slot === slot) ?? null;
 
-      armorItem = belegt('panzerung');
+      armorItem = belegt('panzerung')?.itemId ?? null;
 
       /*
-       * Munition an Bord nehmen. Für jeden belegten Waffen-Slot geht der GANZE
-       * Bestand des Items aus dem Inventar mit — und wird dabei abgebucht. Das
-       * Ticket ist damit zugleich der Lieferschein.
+       * Munition an Bord nehmen. Für jeden belegten Waffen-Slot geht die in
+       * der Werft gewählte WUNSCHMENGE des Items mit (`null` = alles, was da
+       * ist) — und wird dabei abgebucht. Das Ticket ist damit zugleich der
+       * Lieferschein; mehr als der Bestand geht nie, take() deckelt.
        *
        * Abgebucht wird VOR dem Einsatz, nicht danach: sonst könnte man alles
        * verschießen und vor der Abrechnung die Verbindung kappen. So kostet
-       * genau dieser Griff den vollen Vorrat — der Anreiz zeigt in die richtige
-       * Richtung. Was übrig bleibt, meldet der Spielserver am Ende zurück.
+       * genau dieser Griff die gewählte Menge — der Anreiz zeigt in die
+       * richtige Richtung. Was übrig bleibt, meldet der Spielserver am Ende
+       * zurück.
        */
       for (const kategorie of AMMO_CATEGORIES) {
-        const itemId = belegt(kategorie);
+        const eintrag = belegt(kategorie);
+        const itemId = eintrag?.itemId;
         if (!itemId || !isItemId(itemId)) continue;
         const weapon = WEAPON_FOR_CATEGORY[kategorie];
         if (!weapon) continue;
-        const count = await this.inventory.takeAll(accountId, itemId);
+        const count = await this.inventory.take(accountId, itemId, eintrag.count);
         if (count <= 0) continue;
         loadout.push({ weapon, itemId, count });
         // Sofort in die Reservierung: verfällt das Ticket ungenutzt, weiß
@@ -413,7 +437,7 @@ export class LobbyGateway {
       // Ohne lesbares Inventar läuft der Einsatz unbewaffnet statt gar nicht:
       // die Ausrüstung ist Ausstattung, kein Zugangsrecht. Verlorene Munition
       // kann es dabei nicht geben — abgebucht wird erst beim erfolgreichen
-      // takeAll, und dessen Ergebnis steht dann auch im Ticket.
+      // take, und dessen Ergebnis steht dann auch im Ticket.
       console.warn('[api] Ausrüstung für das Ticket nicht lesbar:', error);
     }
 
