@@ -54,6 +54,10 @@ uniform float uSunStrength;
 uniform float uLightLevel;
 /** Belichtung — Anpassung ans Umgebungslicht, ganz am Ende angewandt. */
 uniform float uExposure;
+/** Stärke der Verzerrungs-„Atmung" in Metern (WATER.warpStrength). */
+uniform float uWarpStrength;
+/** Tempo-Faktor für Drift und Verzerrung aller Lagen (WATER.driftSpeed). */
+uniform float uDrift;
 
 /**
  * Die Wasseroberfläche als FARBIGE Kachel — eine echte Wasseraufnahme, von
@@ -92,8 +96,18 @@ void main() {
    * atmet nur. Ohne diesen Schritt sähe die Fläche aus wie ein gemustertes
    * Tuch, das über den Bildschirm geschoben wird.
    */
-  vec2 warpUV = vWorld * (1.0 / 430.0) + vec2(0.0042, -0.0029) * uTime;
-  vec2 warp = (texture(uWater, warpUV).rg - 0.5) * (34.0 * (0.30 + 0.70 * see));
+  float zeit = uTime * uDrift;
+  vec2 warpUV = vWorld * (1.0 / 430.0) + vec2(0.0042, -0.0029) * zeit;
+  vec2 warp = (texture(uWater, warpUV).rg - 0.5) * (uWarpStrength * (0.30 + 0.70 * see));
+
+  /*
+   * ZWEITE Verzerrungslage, gegenläufig und auf anderem Maßstab: zwei
+   * interferierende Felder lassen die Fläche sichtbar ROLLEN, wo eine einzelne
+   * Lage nur gleichförmig schiebt. Andere Kanäle (gb) derselben Kachel, damit
+   * die beiden Felder nicht korrelieren.
+   */
+  vec2 warpUV2 = dreh(vWorld, 0.9) * (1.0 / 233.0) - vec2(0.0036, 0.0027) * zeit;
+  warp += (texture(uWater, warpUV2).gb - 0.5) * (uWarpStrength * 0.55 * (0.30 + 0.70 * see));
 
   /*
    * ZWEI MASSSTÄBE derselben Kachel, gegeneinander verdreht und
@@ -102,10 +116,10 @@ void main() {
    * beiden Raster periodisch zusammenfallen.
    */
   vec2 pWeit = dreh(vWorld + warp * 1.4, -0.55) * (1.0 / 940.0)
-             + vec2(0.0004, 0.0003) * uTime;
-  vec2 pGrob = (vWorld + warp) * (1.0 / 255.0) + vec2(0.0011, 0.0008) * uTime;
+             + vec2(0.0004, 0.0003) * zeit;
+  vec2 pGrob = (vWorld + warp) * (1.0 / 255.0) + vec2(0.0011, 0.0008) * zeit;
   vec2 pFein = dreh(vWorld + warp * 0.55, 1.05) * (1.0 / 61.0)
-             + vec2(-0.0034, 0.0023) * uTime;
+             + vec2(-0.0034, 0.0023) * zeit;
 
   vec3 weit = texture(uWater, pWeit).rgb;
   vec3 grob = texture(uWater, pGrob).rgb;
@@ -290,6 +304,8 @@ export class Ocean {
           uSunStrength: { value: 1, type: 'f32' },
           uLightLevel: { value: 1, type: 'f32' },
           uExposure: { value: 1, type: 'f32' },
+          uWarpStrength: { value: WATER.warpStrength, type: 'f32' },
+          uDrift: { value: WATER.driftSpeed, type: 'f32' },
         },
         // Texturen sind in Pixi 8 RESSOURCEN, keine Uniforms: Quelle und
         // Abtaststil gehen getrennt hinein. `loadFxTextures` läuft in

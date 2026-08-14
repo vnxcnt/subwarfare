@@ -36,7 +36,15 @@ Daten oder Farbe unter transparenten Pixeln sind verloren.
 auf WebGL1 zurück, und dort erlaubt der Wiederholmodus nur Zweierpotenzen —
 sonst bricht die Kachelung genau auf den alten Rechnern weg.
 
-Aufruf:  python tools/ocean-texture.py <vorlage.png> [512|1024]
+Aufruf:  python tools/ocean-texture.py <vorlage.png> [512|1024] [--ruhig] [--tiefpass N]
+
+--ruhig     Normiert auf ruhige See (Mittel 0.185, Streuung 0.035) statt der
+            Sturm-Zielwerte — für flaue Vorlagen, deren Charakter erhalten
+            bleiben soll. Die Shader-Schwellen vertragen beides; ruhig heißt
+            schlicht: kaum Kämme, gleichmäßige Fläche.
+--tiefpass  Sigma des Verlaufsausgleichs NACH dem Nahtlos-Schritt (Standard
+            n/5). Kleinere Werte bügeln auch mittelgrobe Schlieren-Bänder aus
+            — nötig bei gerichteten, gebürsteten Vorlagen (water_flat01: 44).
 """
 
 from __future__ import annotations
@@ -177,6 +185,31 @@ def gauss_periodisch(feld: np.ndarray, sigma: float) -> np.ndarray:
     return aus
 
 
+def verlauf_weg(feld: np.ndarray, sigma: float) -> np.ndarray:
+    """
+    Beleuchtungsverlauf NICHT-periodisch entfernen — VOR dem Nahtlos-Schritt.
+
+    ⚠️ Der periodische Ausgleich nach dem Nahtlos-Machen reicht nicht: der
+    Versatz rollt die BILDRÄNDER in die Kachelmitte, und ein heller Rahmen
+    oder ein Helligkeitsverlauf der Vorlage steht danach als helles Kreuz
+    mitten in der Kachel (so gefunden bei water_flat01 — im Spiel ein sich
+    wiederholender Fleck plus gerade Linien). Deshalb hier mit SPIEGEL-Polster
+    statt Umlauf: die Ränder werden gegen ihr eigenes Spiegelbild geglättet,
+    der Abzug kennt keine Wrap-Kante.
+    """
+    rand = int(3 * sigma)
+    gepolstert = np.pad(feld, ((rand, rand), (rand, rand), (0, 0)), mode="reflect")
+    n0, n1 = gepolstert.shape[:2]
+    k = np.hypot(np.fft.fftfreq(n1)[None, :], np.fft.fftfreq(n0)[:, None])
+    kern = np.exp(-2.0 * (np.pi * sigma * k) ** 2)
+    glatt = np.empty_like(gepolstert)
+    for c in range(feld.shape[2]):
+        glatt[..., c] = np.real(np.fft.ifft2(np.fft.fft2(gepolstert[..., c]) * kern))
+    glatt = glatt[rand:-rand, rand:-rand]
+    mittel = feld.reshape(-1, feld.shape[2]).mean(axis=0)
+    return np.clip(feld - glatt + mittel, 0, 255)
+
+
 def naht_rang(f: np.ndarray, achse: int) -> float:
     """
     Perzentilrang der Naht unter allen Nachbarpaaren dieser Achse.
@@ -209,12 +242,30 @@ def name_aus(quelle: str) -> str:
 
 
 def main() -> None:
-    quelle = sys.argv[1]
-    n = int(sys.argv[2]) if len(sys.argv) > 2 else 512
+    argumente = [a for a in sys.argv[1:] if not a.startswith("--")]
+    quelle = argumente[0]
+    n = int(argumente[1]) if len(argumente) > 1 else 512
     if n & (n - 1):
         raise SystemExit(f"Kantenlänge muss eine Zweierpotenz sein, nicht {n}.")
 
+    ruhig = "--ruhig" in sys.argv
+    tiefpass = n / 5.0
+    if "--tiefpass" in sys.argv:
+        tiefpass = float(sys.argv[sys.argv.index("--tiefpass") + 1])
+    if ruhig:
+        # Ruhige-See-Zielwerte: der Charakter einer flauen Vorlage bleibt
+        # erhalten, statt sie auf Sturm-Kontrast zu spreizen (die 5,6-fache
+        # Spreizung machte bei water_flat01 aus unsichtbaren Bürstenstrichen
+        # ein hartes Diagonal-Gitter).
+        global ZIEL_MITTEL, ZIEL_STREUUNG
+        ZIEL_MITTEL, ZIEL_STREUUNG = 0.185, 0.035
+
     roh = np.asarray(Image.open(quelle).convert("RGB"), dtype=np.float64)
+    # Bildrand großzügig abschneiden: erzeugte Vorlagen tragen dort oft einen
+    # hellen Rahmen oder eine Vignette, und der Nahtlos-Versatz rollte beides
+    # als helles Kreuz mitten in die Kachel.
+    if min(roh.shape[0], roh.shape[1]) > 600:
+        roh = roh[40:-40, 40:-40]
     felder = felder_aus_mosaik(roh)
     print(f"Vorlage: {os.path.basename(quelle)} — {len(felder)} Ausschnitt(e) à {felder[0].shape[0]} px")
 
@@ -225,13 +276,18 @@ def main() -> None:
     partner = auf_groesse(felder[reihenfolge[len(felder) // 2]], n)
     print(f"  Hauptausschnitt #{reihenfolge[0]}, Blendpartner #{reihenfolge[len(felder) // 2]}")
 
+    # Beleuchtungsverlauf VOR dem Nahtlos-Schritt entfernen (nicht-periodisch)
+    # — danach ist es zu spät, siehe verlauf_weg.
+    haupt = verlauf_weg(haupt, sigma=n / 13.0)
+    partner = verlauf_weg(partner, sigma=n / 13.0)
+
     kachel = nahtlos_machen(haupt, partner)
 
-    # Beleuchtungsverlauf ausgleichen: Vorlagen haben fast immer eine
-    # großflächige Aufhellung; gekachelt wäre die als regelmäßiges Muster
-    # sichtbar. NUR die gröbste Lage (sigma = n/5) gegen den Bildmittelwert
-    # tauschen — die Wellenschattierung sitzt knapp darunter und muss bleiben.
-    verlauf = gauss_periodisch(kachel, sigma=n / 5.0)
+    # Rest-Verlauf ausgleichen, jetzt periodisch: NUR die gröbste Lage gegen
+    # den Bildmittelwert tauschen — die Wellenschattierung sitzt knapp darunter
+    # und muss bleiben. `--tiefpass` zieht die Schwelle tiefer und bügelt auch
+    # mittelgrobe Schlieren-Bänder gerichteter Vorlagen aus.
+    verlauf = gauss_periodisch(kachel, sigma=tiefpass)
     mittel = kachel.reshape(-1, kachel.shape[2]).mean(axis=0)
     ausgeglichen = np.clip(kachel - verlauf + mittel, 0, 255)
     ausgeglichen = normieren(ausgeglichen)

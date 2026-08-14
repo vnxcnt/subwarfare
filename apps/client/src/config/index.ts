@@ -121,6 +121,16 @@ export const WATER = {
    * die Dünung bleibt davon unberührt. Später vom Server steuerbar.
    */
   seaState: 0.7,
+  /**
+   * Stärke der Verzerrungs-„Atmung" in Metern (Basis, skaliert mit dem
+   * Seegang). Vor der Verstärkung: 34.
+   */
+  warpStrength: 58,
+  /**
+   * Tempo-Faktor für Drift und Verzerrung aller Lagen. 1 = das alte, sehr
+   * gemächliche Tempo; der Wert wirkt live über die Uniforms.
+   */
+  driftSpeed: 1.7,
 } as const;
 
 /** Simulationstakt. Passt zum `tickRate`-Default 20 des Game-Servers. */
