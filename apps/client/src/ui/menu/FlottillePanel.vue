@@ -9,6 +9,7 @@ import {
 } from '@subwarfare/shared';
 import { computed, onMounted, ref } from 'vue';
 import { account, progression } from '../../state/auth';
+import { openProfile } from '../../state/social';
 import {
   createFleet,
   donateToFleet,
@@ -179,6 +180,10 @@ onMounted(() => {
               <span
                 class="fl__mitglied-name"
                 :class="{ 'fl__mitglied-name--selbst': mitglied.accountId === account?.id }"
+                role="button"
+                tabindex="0"
+                @click="openProfile(mitglied.accountId)"
+                @keydown.enter="openProfile(mitglied.accountId)"
               >
                 {{ mitglied.displayName }}
               </span>
@@ -399,6 +404,12 @@ onMounted(() => {
 .fl__mitglied-name {
   font-weight: 600;
   overflow-wrap: anywhere;
+  /* Klickbar: öffnet die Profilkarte des Mitglieds. */
+  cursor: pointer;
+}
+
+.fl__mitglied-name:hover {
+  text-decoration: underline;
 }
 
 .fl__mitglied-name--selbst {

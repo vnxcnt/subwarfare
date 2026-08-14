@@ -85,6 +85,8 @@ export interface InventoryPayload {
 
 export interface ShopBuyRequest {
   itemId: string;
+  /** Stückzahl (Mengenkauf). Fehlt sie, gilt 1. 1..SHOP_BUY_MAX. */
+  quantity?: number;
 }
 
 /** Antwort eines Kaufs: neuer Kontostand + frischer Besitz. */
@@ -140,16 +142,28 @@ export interface QueueErrorPayload {
  * vom Client.
  */
 export interface ChatMessagePayload {
+  /** Kanal der Zeile. Fehlt er (alter Server), gilt der Hafen. */
+  channel?: import('../meta/social.js').ChatChannel;
+  /** Konto des Absenders — macht Namen klickbar (Profil öffnen). */
+  senderId?: string;
   name: string;
   text: string;
   /** Spielstufe des Absenders — der Client zeigt das Rang-Abzeichen. */
   level: number;
   /** Kontorolle (ROLE_*) — färbt den Namen: Dev lila, GM rot, Mod grün. */
   role: number;
+  /** Nur privat: der Empfänger — daraus leitet der Client den Gesprächsfaden ab. */
+  to?: string | null;
+  /** ISO-Zeitstempel des Versands. */
+  at?: string;
 }
 
 export interface ChatSendRequest {
   text: string;
+  /** Zielkanal. Fehlt er (alter Client), gilt der Hafen. */
+  channel?: import('../meta/social.js').ChatChannel;
+  /** Nur privat: Empfänger-Konto. Muss ein bestätigter Freund sein. */
+  to?: string;
 }
 
 export interface LobbyServerToClientEvents {
@@ -157,6 +171,12 @@ export interface LobbyServerToClientEvents {
   'queue:ticket': (payload: QueueTicketPayload) => void;
   'queue:error': (payload: QueueErrorPayload) => void;
   'chat:message': (payload: ChatMessagePayload) => void;
+  /**
+   * Freundschafts-Stand hat sich geändert (Anfrage erhalten, angenommen,
+   * entfernt) — der Client lädt seine Freundesliste neu. Bewusst ohne
+   * Nutzlast: die Wahrheit holt sich der Client per REST.
+   */
+  'social:update': () => void;
 }
 
 export interface LobbyClientToServerEvents {

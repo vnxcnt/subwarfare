@@ -17,6 +17,7 @@ import StatistikPanel from '../ui/menu/StatistikPanel.vue';
 import WerftPanel from '../ui/menu/WerftPanel.vue';
 import type { MenuSection } from '../ui/menu/sections';
 import MenuChat from '../ui/MenuChat.vue';
+import PlayerProfileCard from '../ui/PlayerProfileCard.vue';
 import SettingsPanel from '../ui/SettingsPanel.vue';
 
 /**
@@ -188,6 +189,9 @@ onBeforeUnmount(() => {
     <span class="menu__version hud__num">v{{ GAME_VERSION }}</span>
 
     <MenuChat />
+
+    <!-- Profilkarte: zeigt sich selbst, sobald ein Name angeklickt wurde. -->
+    <PlayerProfileCard />
 
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
   </div>

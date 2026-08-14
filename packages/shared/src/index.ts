@@ -41,6 +41,9 @@ export * from './meta/fleet.js';
 // Statistik: XP-Belohnungen, Kampf-Ereignisse, Bestenlisten-Wire-Typen.
 export * from './meta/stats.js';
 
+// Social: Chat-Kanäle, Freundschaften, Spieler-Profile.
+export * from './meta/social.js';
+
 // Fahrmodell. Liegt hier, damit Client und Server denselben Code fahren —
 // der Server rechnet damit autoritativ, der Client rendert das Ergebnis und
 // nutzt es nur im Offline-Demobetrieb selbst.

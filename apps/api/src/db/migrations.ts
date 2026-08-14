@@ -295,4 +295,41 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deaths INT UNSIGNED NOT NULL DEFAULT 0`,
     ],
   },
+  {
+    id: 15,
+    name: 'social',
+    statements: [
+      // Freundschaften: EINE Zeile je Paar, gerichtet (wer hat angefragt).
+      // status 0 = angefragt, 1 = angenommen. Der Primary Key verhindert
+      // Doppel-Anfragen derselben Richtung; die Gegenrichtung faengt die
+      // request-Logik ab (sie nimmt stattdessen an).
+      `CREATE TABLE IF NOT EXISTS friendships (
+         requester_id CHAR(36) NOT NULL,
+         addressee_id CHAR(36) NOT NULL,
+         status TINYINT UNSIGNED NOT NULL DEFAULT 0,
+         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         PRIMARY KEY (requester_id, addressee_id),
+         KEY idx_friendships_addressee (addressee_id),
+         CONSTRAINT fk_friendships_requester FOREIGN KEY (requester_id)
+           REFERENCES accounts (id) ON DELETE CASCADE,
+         CONSTRAINT fk_friendships_addressee FOREIGN KEY (addressee_id)
+           REFERENCES accounts (id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      // Gespeicherte Chat-Zeilen (Flottille und Privat; der Hafen bleibt
+      // fluechtig). context_id: die fleet_id bzw. der sortierte Paar-Schluessel
+      // beider Konten ("a:b"). Loeschung eines Kontos raeumt seine Zeilen mit
+      // (CASCADE) — Namen werden beim Lesen aufgeloest, nie gespeichert.
+      `CREATE TABLE IF NOT EXISTS chat_messages (
+         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+         channel VARCHAR(16) NOT NULL,
+         context_id VARCHAR(80) NOT NULL,
+         sender_id CHAR(36) NOT NULL,
+         text VARCHAR(200) NOT NULL,
+         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         KEY idx_chat_context (channel, context_id, id),
+         CONSTRAINT fk_chat_sender FOREIGN KEY (sender_id)
+           REFERENCES accounts (id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    ],
+  },
 ];

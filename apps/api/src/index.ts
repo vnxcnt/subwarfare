@@ -16,6 +16,9 @@ import { registerFleetRoutes } from './fleet/routes.js';
 import { MySqlFleetStore } from './fleet/MySqlFleetStore.js';
 import { MemoryFleetStore, type FleetStore } from './fleet/store.js';
 import { registerStatsRoutes } from './stats/routes.js';
+import { registerSocialRoutes } from './social/routes.js';
+import { MySqlSocialStore } from './social/MySqlSocialStore.js';
+import { MemorySocialStore, type SocialStore } from './social/store.js';
 import { migrate } from './db/migrate.js';
 import { env, warnAboutDefaults } from './env.js';
 import { fetchGameServerStatus } from './gameserver/status.js';
@@ -48,6 +51,7 @@ const inventory: InventoryStore = env.databaseUrl
   ? new MySqlInventoryStore()
   : new MemoryInventoryStore(accounts);
 const fleets: FleetStore = env.databaseUrl ? new MySqlFleetStore() : new MemoryFleetStore(accounts);
+const social: SocialStore = env.databaseUrl ? new MySqlSocialStore() : new MemorySocialStore();
 
 const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
 
@@ -72,6 +76,12 @@ await app.register(
     registerEconomyRoutes(scope, accounts, inventory);
     registerFleetRoutes(scope, accounts, fleets);
     registerStatsRoutes(scope, accounts);
+    // Die Hooks greifen auf `lobby` zu, das erst NACH app.ready() entsteht —
+    // die Pfeile binden spät (zur Anfragezeit), genau wie sortie-end unten.
+    registerSocialRoutes(scope, accounts, fleets, social, {
+      online: (id) => lobby.isOnline(id),
+      notify: (id) => lobby.notifySocial(id),
+    });
 
     // Interner Kanal für den Spielserver — derselbe Schlüssel wie dessen
     // /status. Von außen kommt man über Caddy zwar an die URL, aber ohne
@@ -188,7 +198,7 @@ const io = new Server(app.server, {
   cors: { origin: env.corsOrigin, credentials: true },
 });
 
-const lobby = new LobbyGateway(io, new MemoryQueue(), accounts, inventory);
+const lobby = new LobbyGateway(io, new MemoryQueue(), accounts, inventory, fleets, social);
 lobby.register();
 
 await app.listen({ port: env.port, host: env.host });

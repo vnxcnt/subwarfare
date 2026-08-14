@@ -1,4 +1,6 @@
 import type {
+  ChatMessagePayload,
+  ChatSendRequest,
   LoadoutEntryStack,
   LobbyClientToServerEvents,
   LobbyServerToClientEvents,
@@ -20,6 +22,8 @@ import { env } from '../env.js';
 import { fetchGameServerStatus, type GameServerStatus } from '../gameserver/status.js';
 import type { AccountStore } from '../accounts/store.js';
 import type { InventoryStore } from '../economy/store.js';
+import type { FleetStore } from '../fleet/store.js';
+import { dmKey, type SocialStore } from '../social/store.js';
 import type { MatchQueue } from './queue.js';
 
 type LobbySocket = Socket<
@@ -93,7 +97,21 @@ export class LobbyGateway {
     private readonly accounts: AccountStore,
     /** Nur zum Nachschlagen der getragenen Panzerung bei der Ticketausgabe. */
     private readonly inventory: InventoryStore,
+    /** Flottillen-Mitgliedschaft — Zustellung und Gate des Flottillen-Kanals. */
+    private readonly fleets: FleetStore,
+    /** Freundschaften und Verlauf — Gate und Speicher für Privat/Flottille. */
+    private readonly social: SocialStore,
   ) {}
+
+  /** Ist das Konto gerade im Hafen (mindestens eine Lobby-Verbindung)? */
+  isOnline(accountId: string): boolean {
+    return (this.io.of('/lobby').adapter.rooms.get(`account:${accountId}`)?.size ?? 0) > 0;
+  }
+
+  /** Stößt beim Konto ein Neuladen der Freundesliste an (Social-Routen). */
+  notifySocial(accountId: string): void {
+    this.io.of('/lobby').to(`account:${accountId}`).emit('social:update');
+  }
 
   register(): void {
     const lobby = this.io.of('/lobby');
@@ -163,11 +181,12 @@ export class LobbyGateway {
     });
 
     /*
-     * Hauptmenü-Chat: reines Durchreichen an alle gerade Verbundenen, KEINE
-     * Speicherung — wer später kommt, liest nichts nach. Der Absendername
-     * kommt aus dem geprüften Token (socket.data), nie aus dem Ereignis.
-     * Ein einfaches Rate-Limit je Verbindung (eine Nachricht pro Sekunde)
-     * hält Flutversuche vom Broadcast fern; überzählige fallen still weg.
+     * Funkraum: drei Kanäle über EIN Ereignis. Der Hafen bleibt reines
+     * Durchreichen an alle Verbundenen ohne Speicherung; Flottille und Privat
+     * werden gespeichert und gezielt zugestellt. Der Absendername kommt aus
+     * dem geprüften Token (socket.data), nie aus dem Ereignis. Ein einfaches
+     * Rate-Limit je Verbindung (eine Nachricht pro Sekunde) hält Flutversuche
+     * fern; überzählige und unberechtigte fallen still weg.
      */
     let letzteNachricht = 0;
     socket.on('chat:send', (payload) => {
@@ -176,23 +195,9 @@ export class LobbyGateway {
       const jetzt = Date.now();
       if (jetzt - letzteNachricht < 1000) return;
       letzteNachricht = jetzt;
-      void (async () => {
-        // Rolle und Level FRISCH vom Konto — beides kann sich seit dem Login
-        // ändern, und der Session-Token trägt sie bewusst nicht. Eine
-        // DB-Störung schluckt die Werte, nicht die Nachricht.
-        let konto = null;
-        try {
-          konto = await this.accounts.byId(socket.data.accountId);
-        } catch {
-          // Standardwerte unten.
-        }
-        this.io.of('/lobby').emit('chat:message', {
-          name: socket.data.name,
-          text: text.slice(0, CHAT_MAX_LENGTH),
-          level: progressionFromXp(konto?.xp ?? 0).level,
-          role: konto?.role ?? 0,
-        });
-      })();
+      this.handleChat(socket, text.slice(0, CHAT_MAX_LENGTH), payload).catch((error) => {
+        console.error('[api] chat:send fehlgeschlagen:', error);
+      });
     });
 
     socket.on('disconnect', () => {
@@ -206,6 +211,76 @@ export class LobbyGateway {
       if ((room?.size ?? 0) > 0) return;
       for (const mapId of KNOWN_MAPS) void this.queue.leave(mapId, socket.data.accountId);
     });
+  }
+
+  /**
+   * Stellt eine Chat-Zeile zu — je nach Kanal an alle (Hafen), an die
+   * Flottille (gespeichert) oder an genau einen Freund (gespeichert).
+   * Unberechtigte Versuche (keine Flottille, kein Freund) fallen still weg:
+   * der ehrliche Client bietet diese Wege gar nicht erst an.
+   */
+  private async handleChat(
+    socket: LobbySocket,
+    text: string,
+    payload: ChatSendRequest,
+  ): Promise<void> {
+    // Rolle und Level FRISCH vom Konto — beides kann sich seit dem Login
+    // ändern, und der Session-Token trägt sie bewusst nicht. Eine DB-Störung
+    // schluckt die Werte, nicht die Nachricht.
+    let konto = null;
+    try {
+      konto = await this.accounts.byId(socket.data.accountId);
+    } catch {
+      // Standardwerte unten.
+    }
+    const zeile: ChatMessagePayload = {
+      channel: 'hafen',
+      senderId: socket.data.accountId,
+      name: socket.data.name,
+      text,
+      level: progressionFromXp(konto?.xp ?? 0).level,
+      role: konto?.role ?? 0,
+      to: null,
+      at: new Date().toISOString(),
+    };
+
+    const channel = payload.channel ?? 'hafen';
+    if (channel === 'flottille') {
+      const membership = await this.fleets.membership(socket.data.accountId);
+      if (!membership) return;
+      await this.social.saveMessage('flottille', membership.fleetId, socket.data.accountId, text);
+      // Zustellung über die Konto-Räume der Mitglieder — wer nicht verbunden
+      // ist, liest die Zeile später aus dem Verlauf.
+      const mine = await this.fleets.mine(socket.data.accountId);
+      zeile.channel = 'flottille';
+      for (const mitglied of mine?.members ?? []) {
+        this.io.of('/lobby').to(`account:${mitglied.accountId}`).emit('chat:message', zeile);
+      }
+      return;
+    }
+
+    if (channel === 'privat') {
+      const to = payload.to;
+      if (typeof to !== 'string' || to.length === 0 || to === socket.data.accountId) return;
+      // Das Freundschafts-Gate IST der Spam-Schutz: Privatnachrichten gibt es
+      // nur zwischen bestätigten Freunden.
+      if (!(await this.social.areFriends(socket.data.accountId, to))) return;
+      await this.social.saveMessage(
+        'privat',
+        dmKey(socket.data.accountId, to),
+        socket.data.accountId,
+        text,
+      );
+      zeile.channel = 'privat';
+      zeile.to = to;
+      this.io.of('/lobby').to(`account:${to}`).emit('chat:message', zeile);
+      // Auch an den Absender selbst (alle seine Reiter) — die eigene Zeile
+      // kommt wie bei den anderen Kanälen vom Server zurück, nie lokal.
+      this.io.of('/lobby').to(`account:${socket.data.accountId}`).emit('chat:message', zeile);
+      return;
+    }
+
+    this.io.of('/lobby').emit('chat:message', zeile);
   }
 
   private async handleJoin(

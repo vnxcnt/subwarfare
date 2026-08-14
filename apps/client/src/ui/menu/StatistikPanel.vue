@@ -3,6 +3,7 @@ import type { PvpLeaderboardEntry } from '@subwarfare/shared';
 import { RANKS } from '@subwarfare/shared';
 import { onMounted, ref } from 'vue';
 import { account } from '../../state/auth';
+import { openProfile } from '../../state/social';
 import { leaderboard, leaderboardLoaded, refreshLeaderboard } from '../../state/stats';
 
 /**
@@ -82,7 +83,13 @@ onMounted(() => void refreshLeaderboard());
           role="row"
         >
           <span class="stat__zelle stat__zelle--platz hud__num">{{ index + 1 }}</span>
-          <span class="stat__zelle stat__zelle--name">{{ eintrag.displayName }}</span>
+          <span
+            class="stat__zelle stat__zelle--name"
+            role="button"
+            tabindex="0"
+            @click="openProfile(eintrag.accountId)"
+            @keydown.enter="openProfile(eintrag.accountId)"
+          >{{ eintrag.displayName }}</span>
           <span class="stat__zelle stat__zelle--zahl hud__num">{{ eintrag.level }}</span>
           <span class="stat__zelle stat__zelle--zahl hud__num">{{ eintrag.kills }}</span>
           <span class="stat__zelle stat__zelle--zahl hud__num">{{ eintrag.deaths }}</span>
@@ -112,7 +119,13 @@ onMounted(() => void refreshLeaderboard());
           role="row"
         >
           <span class="stat__zelle stat__zelle--platz hud__num">{{ index + 1 }}</span>
-          <span class="stat__zelle stat__zelle--name">{{ eintrag.displayName }}</span>
+          <span
+            class="stat__zelle stat__zelle--name"
+            role="button"
+            tabindex="0"
+            @click="openProfile(eintrag.accountId)"
+            @keydown.enter="openProfile(eintrag.accountId)"
+          >{{ eintrag.displayName }}</span>
           <span class="stat__zelle stat__zelle--rang">{{ rangName(eintrag.level) }}</span>
           <span class="stat__zelle stat__zelle--zahl hud__num">{{ eintrag.level }}</span>
           <span class="stat__zelle stat__zelle--zahl hud__num">{{ eintrag.xp }}</span>
@@ -225,6 +238,12 @@ onMounted(() => void refreshLeaderboard());
 .stat__zelle--name {
   font-weight: 600;
   overflow-wrap: anywhere;
+  /* Klickbar: öffnet die Profilkarte des Spielers. */
+  cursor: pointer;
+}
+
+.stat__zelle--name:hover {
+  text-decoration: underline;
 }
 
 .stat__zelle--rang {
