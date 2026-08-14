@@ -235,4 +235,21 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE ship_loadouts ADD COLUMN wish_count INT UNSIGNED NULL`,
     ],
   },
+  {
+    id: 12,
+    name: 'dev-accounts-nachziehen',
+    statements: [
+      // Reparatur: dev_accounts wurde seinerzeit NACHTRÄGLICH in die längst
+      // angewandte Migration 1 geschrieben (Verstoß gegen die Regel oben) —
+      // auf Datenbanken, die Migration 1 vorher ausgeführt hatten, fehlt die
+      // Tabelle deshalb bis heute. IF NOT EXISTS macht das Nachziehen überall
+      // gefahrlos, auch wo sie schon existiert.
+      `CREATE TABLE IF NOT EXISTS dev_accounts (
+         display_name_key VARCHAR(24) NOT NULL PRIMARY KEY,
+         account_id CHAR(36) NOT NULL,
+         CONSTRAINT fk_dev_accounts_account FOREIGN KEY (account_id)
+           REFERENCES accounts (id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    ],
+  },
 ];
