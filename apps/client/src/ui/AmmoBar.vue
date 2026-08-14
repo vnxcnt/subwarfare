@@ -58,6 +58,18 @@ const tubes = computed(() => hud.value.tubes);
 const showTubes = computed(() => tubes.value.length > 0 && active.value?.id === 'torpedo');
 
 /**
+ * Restliche Kampfkraft an Bord? Ohne jeden Vorrat UND ohne geladenes oder
+ * ladendes Rohr gibt es nichts zu feuern, nachzuladen oder zu wählen — dann
+ * verschwindet die ganze Leiste statt leer herumzustehen. Ein geladenes Rohr
+ * zählt auch bei Vorrat 0: genau das schießt noch.
+ */
+const einsatzbereit = computed(
+  () =>
+    slots.value.some((slot) => slot.count > 0) ||
+    tubes.value.some((rohr) => rohr.status !== 'leer'),
+);
+
+/**
  * Feuerbereit? Beim Torpedo zählt NICHT der Vorrat, sondern ob mindestens ein
  * Rohr scharf und geladen ist — genau das schießt.
  */
@@ -156,6 +168,8 @@ function onKey(event: KeyboardEvent): void {
   // Offene Einstellungen: die Leertaste aktiviert dort Dialog-Knöpfe — sie
   // darf dabei nicht nebenbei einen echten Torpedo abfeuern.
   if (isTextEntry(event.target) || settingsModalOpen.value) return;
+  // Leiste ausgeblendet (nichts mehr an Bord): auch die Tasten schweigen.
+  if (!einsatzbereit.value) return;
 
   if (event.code === keys.value.fire) {
     fire();
@@ -218,7 +232,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="ammo" aria-label="Bewaffnung">
+  <section v-if="einsatzbereit" class="ammo" aria-label="Bewaffnung">
     <!-- Rumpf und Panzerung sitzen oben rechts (VitalsPanel), nicht mehr hier:
          der Gefechtsblock trägt jetzt Waffenwahl, Rohre und Feuerknopf. -->
     <div class="ammo__block">
