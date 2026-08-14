@@ -30,6 +30,7 @@ import {
   isPlayableModel,
   isVesselModel,
   sanitizeWeather,
+  torusDistanceSquared,
 } from '@subwarfare/shared';
 import type {
   LoadoutEntryStack,
@@ -1026,17 +1027,18 @@ export class GameServer {
    * Fehler aus.
    */
   private emitFx(kind: 'impact' | 'sunk', x: number, y: number): void {
+    const { width, height } = this.world.map;
     for (const [accountId, socket] of this.sockets) {
       const observer = this.world.get(accountId);
       if (!observer) continue;
-      const dx = x - observer.x;
-      const dy = y - observer.y;
       // Dieselbe gedämpfte Reichweite wie Fahrzeug- und Projektilfilter. Mit
       // dem rohen Basiswert kämen bei Seegang Explosionen samt Koordinaten für
       // Gefechte durch, die das eigene Sonar gar nicht sieht — genau die
       // Aufklärung, die die Filterung verhindern soll.
       const range = this.sensorRangeFor(observer);
-      if (dx * dx + dy * dy <= range * range) socket.emit('fx', { kind, x, y });
+      if (torusDistanceSquared(observer.x, observer.y, x, y, width, height) <= range * range) {
+        socket.emit('fx', { kind, x, y });
+      }
     }
   }
 
@@ -1079,20 +1081,19 @@ export class GameServer {
 
       // Projektile durch denselben Sonar-Filter — ohne Hysterese: sie laufen
       // mit ~68 m/s, ein Flackern an der Reichweitengrenze dauert Sekundenbruchteile.
+      const { width, height } = this.world.map;
       const range = this.sensorRangeFor(observer);
-      const visible = projectiles.filter((p) => {
-        const dx = p.x - observer.x;
-        const dy = p.y - observer.y;
-        return dx * dx + dy * dy <= range * range;
-      });
+      const visible = projectiles.filter(
+        (p) =>
+          torusDistanceSquared(observer.x, observer.y, p.x, p.y, width, height) <= range * range,
+      );
 
       // Kisten ebenso: eine Kiste außerhalb der Sonar-Reichweite wäre die
       // Information, dass dort irgendwo ein Gefecht endete — Aufklärung.
-      const sichtbareKisten = crates.filter((c) => {
-        const dx = c.x - observer.x;
-        const dy = c.y - observer.y;
-        return dx * dx + dy * dy <= range * range;
-      });
+      const sichtbareKisten = crates.filter(
+        (c) =>
+          torusDistanceSquared(observer.x, observer.y, c.x, c.y, width, height) <= range * range,
+      );
 
       socket.volatile.emit('state', {
         tick: this.tick,
@@ -1153,9 +1154,14 @@ export class GameServer {
         held.add(vessel.id);
         continue;
       }
-      const dx = vessel.x - observer.x;
-      const dy = vessel.y - observer.y;
-      const squared = dx * dx + dy * dy;
+      const squared = torusDistanceSquared(
+        observer.x,
+        observer.y,
+        vessel.x,
+        vessel.y,
+        this.world.map.width,
+        this.world.map.height,
+      );
       const limit = held.has(vessel.id) ? release : acquire;
       if (squared <= limit * limit) held.add(vessel.id);
       else held.delete(vessel.id);

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { keys, settingsModalOpen } from '../state/settings';
 import AmmoBar from './AmmoBar.vue';
 import DeathNotice from './DeathNotice.vue';
 import DevMenu from './DevMenu.vue';
 import EventLog from './EventLog.vue';
 import ExtractionPanel from './ExtractionPanel.vue';
+import MinimapOverlay from './MinimapOverlay.vue';
 import QuestLog from './QuestLog.vue';
 import SettingsPanel from './SettingsPanel.vue';
 import SonarPanel from './SonarPanel.vue';
@@ -18,6 +20,22 @@ defineProps<{ error?: string | null }>();
 
 const devMenu = ref<InstanceType<typeof DevMenu> | null>(null);
 const settingsOpen = ref(false);
+const minimapOpen = ref(false);
+
+/** Minimap auf der belegbaren Taste (Standard M); Escape schließt sie auch. */
+function onKey(event: KeyboardEvent): void {
+  if (isTextEntry(event.target) || settingsModalOpen.value) return;
+  if (event.code === keys.value.minimap) {
+    minimapOpen.value = !minimapOpen.value;
+    event.preventDefault();
+  } else if (event.code === 'Escape' && minimapOpen.value) {
+    minimapOpen.value = false;
+    event.preventDefault();
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKey));
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 
 /**
  * Das Browser-Kontextmenü wird bisher nur auf dem Canvas unterdrückt
@@ -78,6 +96,7 @@ function suppressContextMenu(event: MouseEvent): void {
 
     <DeathNotice />
     <ExtractionPanel />
+    <MinimapOverlay v-if="minimapOpen" @close="minimapOpen = false" />
   </div>
 </template>
 

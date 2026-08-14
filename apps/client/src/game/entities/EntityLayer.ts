@@ -1,6 +1,6 @@
 import type { Container } from 'pixi.js';
 import type { CrateState, ProjectileState, Vessel } from '@subwarfare/shared';
-import { EXTRACTION_BUOYS, LOOT_CRATE_MODEL, angleDelta, norm360 } from '@subwarfare/shared';
+import { EXTRACTION_BUOYS, LOOT_CRATE_MODEL, angleDelta, norm360, torusDelta } from '@subwarfare/shared';
 import { VISION } from '../../config';
 import { ProjectileView } from './ProjectileView';
 import { PropView } from './PropView';
@@ -42,10 +42,30 @@ export class EntityLayer {
   private buoys: Array<{ x: number; y: number; view: PropView }> = [];
   private ownId: string | null = null;
   private vision: VisionState | null = null;
+  /** Kartenmaße für die Torus-Darstellung der Statiken (Bojen). */
+  private mapSize = { width: 0, height: 0 };
 
   constructor(waterLayer: Container, billboardLayer: Container) {
     this.waterLayer = waterLayer;
     this.billboardLayer = billboardLayer;
+  }
+
+  setMapSize(width: number, height: number): void {
+    this.mapSize = { width, height };
+  }
+
+  /**
+   * ENDLOS-KARTE: alle Render-Spiegel um eine Kartenlänge verschieben — Teil
+   * des gemeinsamen Rebase (siehe World.rebase). Projektile und Kisten
+   * brauchen nichts: ihre Positionen kommen jeden Frame frisch und bereits
+   * kameranah gewrappt aus dem Game.
+   */
+  rebase(dx: number, dy: number): void {
+    for (const entry of this.entries.values()) {
+      entry.model.x += dx;
+      entry.model.y += dy;
+      entry.view.rebase(dx, dy);
+    }
   }
 
   get count(): number {
@@ -211,7 +231,16 @@ export class EntityLayer {
       entry.view.setVisible(sichtbar);
       if (sichtbar) entry.view.sync(entry.state.x, entry.state.y, frameSeconds);
     }
-    for (const buoy of this.buoys) buoy.view.sync(buoy.x, buoy.y, frameSeconds);
+    // Bojen liegen fest in SERVER-Koordinaten — gezeichnet wird die KOPIE,
+    // die der eigenen Sicht auf dem Torus am nächsten liegt. Ohne Sichtanker
+    // (Beitritt läuft noch) die Rohlage.
+    const anker = this.vision;
+    const { width, height } = this.mapSize;
+    for (const buoy of this.buoys) {
+      const bx = anker && width > 0 ? anker.x + torusDelta(anker.x, buoy.x, width) : buoy.x;
+      const by = anker && height > 0 ? anker.y + torusDelta(anker.y, buoy.y, height) : buoy.y;
+      buoy.view.sync(bx, by, frameSeconds);
+    }
   }
 
   destroy(): void {

@@ -194,6 +194,18 @@ export class VesselView {
     billboardLayer.addChild(this.root);
   }
 
+  /**
+   * ENDLOS-KARTE: die Schaumspur ist der einzige Bestand dieser Ansicht in
+   * ABSOLUTEN Weltkoordinaten — beim Rebase wandert sie mit dem Schiff mit.
+   * Rauch ist schiffslokal, Position und Schatten entstehen jeden Frame neu.
+   */
+  rebase(dx: number, dy: number): void {
+    for (const sample of this.wakeSamples) {
+      sample.x += dx;
+      sample.y += dy;
+    }
+  }
+
   sync(model: Vessel, zoom: number, frameSeconds: number, isOwn = false): void {
     // Alterung an EINER Stelle — dieselbe, die auch für unsichtbare Fahrzeuge
     // läuft. Getrennte Zähler in drawWake und updateSmoke wären zwangsläufig

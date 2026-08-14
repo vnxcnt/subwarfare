@@ -34,7 +34,9 @@ import {
   clampStep,
   norm360,
   profileForShip,
+  torusDelta,
 } from '@subwarfare/shared';
+import type { ExitPoint } from '@subwarfare/shared';
 import { GameSocket } from '../network/GameSocket';
 import { keys, settingsModalOpen } from '../state/settings';
 import { fxTextureCount, loadFxTextures } from './fx-textures';
@@ -542,7 +544,12 @@ export class Game {
         if (id !== this.selfId) world.entities.remove(id);
       },
       onFx: (payload) => {
-        world.spawnImpact(payload.x, payload.y, payload.kind === 'sunk');
+        // Effekt-Koordinaten kommen in Server-Lage — in die kameranahe
+        // Torus-Kopie rücken, sonst explodiert es eine Kartenlänge entfernt.
+        const karte = world.currentMap;
+        const fxX = this.nearestWrap(payload.x, world.camera.x, karte.width);
+        const fxY = this.nearestWrap(payload.y, world.camera.y, karte.height);
+        world.spawnImpact(fxX, fxY, payload.kind === 'sunk');
         // Klang NUR für 'impact': der tödliche Treffer schickt impact UND
         // sunk im selben Tick — zweimal derselbe Knall wäre ein Doppelklang.
         // 'sunk' bleibt (vorerst) rein visuell.
@@ -552,7 +559,7 @@ export class Game {
         // Einschlag kilometerweit weg bleibt auch im Respawn-Fenster leise —
         // Distanz 0 als Fallback wäre ein Vollknall aus 4 km.
         const listener = this.ownVessel ?? world.camera;
-        this.audio?.playImpact(Math.hypot(payload.x - listener.x, payload.y - listener.y));
+        this.audio?.playImpact(Math.hypot(fxX - listener.x, fxY - listener.y));
       },
       onDestroyed: (payload) => {
         // Das eigene Boot verschwindet mit dem nächsten Broadcast von selbst
@@ -574,6 +581,22 @@ export class Game {
    * werden sofort entfernt — nur die BEWEGUNG bestehender Fahrzeuge läuft
    * über die Interpolation in `applyInterpolated`, nicht über diesen Pfad.
    */
+  /**
+   * ENDLOS-KARTE: rückt einen Server-Wert auf die Torus-Kopie, die dem Anker
+   * (in der Regel der Kamera) am nächsten liegt. Alles Sichtbare landet damit
+   * in einer zusammenhängenden RENDER-Ebene um die Kamera — auch wenn es in
+   * Server-Koordinaten jenseits der Naht liegt.
+   */
+  private nearestWrap(value: number, anchor: number, size: number): number {
+    return size > 0 ? anchor + torusDelta(anchor, value, size) : value;
+  }
+
+  /** Karten-Info für Anzeigen (Minimap): Maße und Extraktionszonen. */
+  get mapInfo(): { width: number; height: number; exits: ExitPoint[] } | null {
+    const map = this.world?.currentMap;
+    return map ? { width: map.width, height: map.height, exits: [...map.exitPoints] } : null;
+  }
+
   private ingestState(payload: StatePayload): void {
     const world = this.world;
     if (!world) return;
@@ -598,25 +621,30 @@ export class Game {
     this.detectLaunches(payload);
 
     const seen = new Set<string>();
+    const karte = world.currentMap;
     for (const player of payload.players) {
       seen.add(player.id);
       if (world.entities.get(player.id)) continue;
 
+      // Frisch gesichtete Fahrzeuge kommen in Server-Koordinaten — für die
+      // Darstellung in die Torus-Kopie nächst der Kamera gerückt.
+      const wx = this.nearestWrap(player.x, world.camera.x, karte.width);
+      const wy = this.nearestWrap(player.y, world.camera.y, karte.height);
       const vessel = world.entities.spawn(
         new Vessel(
           {
             id: player.id,
             name: player.name,
             model: player.model,
-            x: player.x,
-            y: player.y,
+            x: wx,
+            y: wy,
             rotation: player.rotation,
           },
           profileForShip(DESTROYER, this.shipStats(player.model)),
         ),
       );
       this.appliedProfileModel.set(player.id, player.model);
-      vessel.applyState(player);
+      vessel.applyState({ ...player, x: wx, y: wy });
 
       if (player.id === this.selfId) {
         // Der zwischengespeicherte Besitzer-Zustand gehört auf das frisch
@@ -657,10 +685,18 @@ export class Game {
       // Bestand aufnehmen — diese Torpedos wurden irgendwann früher gefeuert.
       if (!this.launchSoundsArmed) continue;
 
+      // Beide Positionen liegen in Server-Koordinaten — die Distanz muss
+      // trotzdem über den Torus laufen (Abschuss direkt hinter der Naht).
+      const karte = this.world?.currentMap;
       let closest: PlayerState | null = null;
       let best = Number.POSITIVE_INFINITY;
       for (const player of payload.players) {
-        const d = Math.hypot(projectile.x - player.x, projectile.y - player.y);
+        const d = karte
+          ? Math.hypot(
+              torusDelta(player.x, projectile.x, karte.width),
+              torusDelta(player.y, projectile.y, karte.height),
+            )
+          : Math.hypot(projectile.x - player.x, projectile.y - player.y);
         if (d < best) {
           best = d;
           closest = player;
@@ -679,7 +715,15 @@ export class Game {
       // Abschussoffset liegt bei ~75 m plus ein Broadcast-Intervall Flugweg.
       if (closest && best < 200) {
         const own = this.ownVessel;
-        const distance = own ? Math.hypot(projectile.x - own.x, projectile.y - own.y) : 0;
+        // Eigenes Boot liegt in RENDER-Koordinaten (evtl. jenseits der Naht)
+        // — torusDelta verkraftet beide Lagen.
+        const distance =
+          own && karte
+            ? Math.hypot(
+                torusDelta(own.x, projectile.x, karte.width),
+                torusDelta(own.y, projectile.y, karte.height),
+              )
+            : 0;
         if (projectile.model === GUN.model) {
           this.audio?.playGunFire(distance);
         } else if (projectile.model === DEPTH_CHARGE.model) {
@@ -759,14 +803,35 @@ export class Game {
     const span = newer.tick - older.tick;
     const t = span > 0 ? Math.min(Math.max((this.renderTick - older.tick) / span, 0), 1) : 1;
 
+    const karte = world.currentMap;
+    const cam = world.camera;
     for (const vessel of world.entities.models()) {
       const a = older.byId.get(vessel.id);
-      const b = newer.byId.get(vessel.id);
+      const bRoh = newer.byId.get(vessel.id);
+      // Torus: den neueren Zustand an den älteren HERANRÜCKEN, bevor
+      // interpoliert wird — sonst schwenkte eine Nahtquerung einmal quer
+      // über die ganze Karte.
+      const b =
+        a && bRoh
+          ? {
+              ...bRoh,
+              x: a.x + torusDelta(a.x, bRoh.x, karte.width),
+              y: a.y + torusDelta(a.y, bRoh.y, karte.height),
+            }
+          : bRoh;
       // Frisch gespawnt oder kurz vor dem Entfernen: den vorhandenen Stand
       // halten statt zwischen Lücken zu raten.
       const state = a && b ? lerpState(a, b, t) : (b ?? a);
       if (state) {
-        vessel.applyState(state);
+        // In die RENDER-Kopie nächst der Kamera: Fahrzeuge hinter der Naht
+        // erscheinen auf der nahen Seite, und das eigene Boot läuft ohne
+        // Sprung über die Naht hinaus (die Kamera folgt, das Rebase holt
+        // später alles gemeinsam zurück).
+        vessel.applyState({
+          ...state,
+          x: this.nearestWrap(state.x, cam.x, karte.width),
+          y: this.nearestWrap(state.y, cam.y, karte.height),
+        });
         // Modellwechsel (Dev-Menü) bringt neue Fahrwerte mit — fürs HUD
         // (Telegraf-Höchstfahrt) muss das Profil mitziehen.
         this.ensureProfile(vessel);
@@ -774,17 +839,37 @@ export class Game {
     }
 
     // Projektile: Bestand aus dem NEUEREN Snapshot (wer dort fehlt, ist
-    // eingeschlagen oder abgelaufen), Bewegung zwischen beiden interpoliert.
+    // eingeschlagen oder abgelaufen), Bewegung zwischen beiden interpoliert —
+    // mit derselben Torus-Behandlung wie die Fahrzeuge.
     const projectiles: ProjectileState[] = [];
-    for (const [id, b] of newer.projectiles) {
+    for (const [id, bRoh] of newer.projectiles) {
       const a = older.projectiles.get(id);
-      projectiles.push(a ? lerpProjectile(a, b, t) : b);
+      const b = a
+        ? {
+            ...bRoh,
+            x: a.x + torusDelta(a.x, bRoh.x, karte.width),
+            y: a.y + torusDelta(a.y, bRoh.y, karte.height),
+          }
+        : bRoh;
+      const p = a ? lerpProjectile(a, b, t) : b;
+      projectiles.push({
+        ...p,
+        x: this.nearestWrap(p.x, cam.x, karte.width),
+        y: this.nearestWrap(p.y, cam.y, karte.height),
+      });
     }
     world.entities.applyProjectiles(projectiles);
 
     // Kisten aus dem NEUEREN Snapshot: sie bewegen sich nicht, und wer fehlt,
-    // ist eingesammelt — die Ansicht soll das sofort zeigen.
-    world.entities.applyCrates(newer.crates);
+    // ist eingesammelt — die Ansicht soll das sofort zeigen. Auch sie in die
+    // kameranahe Torus-Kopie.
+    world.entities.applyCrates(
+      newer.crates.map((c) => ({
+        ...c,
+        x: this.nearestWrap(c.x, cam.x, karte.width),
+        y: this.nearestWrap(c.y, cam.y, karte.height),
+      })),
+    );
   }
 
   /* --- Befehle -------------------------------------------------------- */
@@ -1238,6 +1323,25 @@ export class Game {
     world.update(frameSeconds);
     world.syncViews(frameSeconds);
     world.updateFollow(frameSeconds);
+
+    /*
+     * ENDLOS-KARTE, Rebase: nach einer Kartenrunde liegt die Kamera weit
+     * außerhalb von [0, Kante) — dann wandern Kamera, Spiegel, Spuren,
+     * Effekte und die Wasser-Offsets GEMEINSAM um genau eine Kartenlänge
+     * zurück. Im selben Frame verschoben ist der Bildinhalt identisch; die
+     * Hysterese (±¼ Kante) hält den Vorgang selten und das Ozean-Quad klein.
+     */
+    {
+      const karte = world.currentMap;
+      const cam = world.camera;
+      let shiftX = 0;
+      let shiftY = 0;
+      if (cam.x < -karte.width * 0.25) shiftX = karte.width;
+      else if (cam.x > karte.width * 1.25) shiftX = -karte.width;
+      if (cam.y < -karte.height * 0.25) shiftY = karte.height;
+      else if (cam.y > karte.height * 1.25) shiftY = -karte.height;
+      if (shiftX !== 0 || shiftY !== 0) world.rebase(shiftX, shiftY);
+    }
     // Blickversatz NACH der Nachführung und VOR der Matrix: er ist ein
     // Bildschirm-Versatz auf die fertige Kameraposition, keine zweite Kamera.
     this.updatePeek(app.screen.width, app.screen.height);

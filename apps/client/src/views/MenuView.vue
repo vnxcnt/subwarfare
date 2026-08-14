@@ -53,7 +53,7 @@ const settingsOpen = ref(false);
  * KNOWN_MAPS des Backends passen, sonst antwortet die Lobby „Unbekannte Karte".
  */
 const MAPS = [
-  { id: 'ocean01', label: mapLabel('ocean01'), detail: '10 × 10 km · offene See' },
+  { id: 'ocean01', label: mapLabel('ocean01'), detail: '25 × 25 km · offene See · endlos' },
 ] as const;
 
 const selectedMap = ref<string>(MAPS[0].id);

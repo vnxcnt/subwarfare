@@ -2,25 +2,26 @@ import { WEATHER_PRESETS } from '@subwarfare/shared';
 import { defineMap } from './MapDefinition.js';
 
 /**
- * Erste Testkarte: 10.000 × 10.000 Units offenes Wasser.
- * Spawns liegen im Norden und Süden, die Extraktionszonen oben links und
- * oben rechts.
+ * Erste Karte: 25.000 × 25.000 Units offenes Wasser — als TORUS. Es gibt
+ * keinen Rand: wer über eine Kante fährt, kommt auf der Gegenseite wieder
+ * herein (Wrap in World.update). Spawns liegen im Norden und Süden, die
+ * Extraktionszonen oben links und oben rechts.
  */
 export const ocean01 = defineMap({
   id: 'ocean01',
-  width: 10_000,
-  height: 10_000,
+  width: 25_000,
+  height: 25_000,
   spawnPoints: [
-    { id: 'spawn-north', x: 5_000, y: 1_000, rotation: 180 },
-    { id: 'spawn-south', x: 5_000, y: 9_000, rotation: 0 },
+    { id: 'spawn-north', x: 12_500, y: 2_500, rotation: 180 },
+    { id: 'spawn-south', x: 12_500, y: 22_500, rotation: 0 },
   ],
-  // Bewusst NICHT direkt am Rand (2000 statt 800 von der Kante): wer
-  // extrahieren will, soll durchs offene Wasser, nicht an der Wand entlang.
+  // Ein Viertel der Kantenlänge von der (gedachten) Ecke entfernt: weit genug
+  // von den Spawns, dass eine Extraktion eine Fahrt durchs offene Wasser ist.
   // Acht Sekunden im Kreis sichern den Einsatz (EXTRACTION_SECONDS, shared);
   // der Client markiert jeden Kreis mit sechs Bojen.
   exitPoints: [
-    { id: 'exit-nw', x: 2_000, y: 2_000, radius: 400 },
-    { id: 'exit-ne', x: 8_000, y: 2_000, radius: 400 },
+    { id: 'exit-nw', x: 6_250, y: 6_250, radius: 400 },
+    { id: 'exit-ne', x: 18_750, y: 6_250, radius: 400 },
   ],
 });
 

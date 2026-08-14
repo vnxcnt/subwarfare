@@ -44,6 +44,7 @@ export * from './sim/movement.js';
 export * from './sim/telegraph.js';
 export * from './sim/profiles.js';
 export * from './sim/Vessel.js';
+export * from './sim/torus.js';
 
 /**
  * Version des Wire-Protokolls. Client und Server müssen übereinstimmen —
@@ -79,5 +80,8 @@ export * from './sim/Vessel.js';
  *     Munitionsrückgabe gibt es NUR noch über die Extraktion.
  * 15: Ereignislog — `log`-Ereignis mit Kanälen welt (alle), lokal (nur der
  *     Betroffene) und event (Platzhalter).
+ * 16: Endlos-Karte (Torus) — Positionen wrappen an den Kartengrenzen statt an
+ *     einer Randwand zu stoppen; alle Distanzen laufen über den kürzesten Weg
+ *     über die Naht. Alte Clients zeigten Nahtquerungen als Teleport.
  */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 16;

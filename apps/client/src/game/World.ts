@@ -146,7 +146,31 @@ export class World {
   setMap(map: GameMap): void {
     this.map = map;
     this.ocean?.resizeTo(map);
+    // Die Bojen der Extraktionszonen brauchen die Kartengröße für die
+    // Torus-Darstellung (nächste Kopie relativ zur Sicht).
+    this.entities.setMapSize(map.width, map.height);
     this.centerOnMap();
+  }
+
+  /**
+   * ENDLOS-KARTE: verschiebt ALLE Render-Weltkoordinaten um eine Kartenlänge —
+   * Kamera, Fahrzeug-Spiegel samt Spuren, laufende Effekte und die
+   * Wasser-Offsets, gemeinsam im selben Frame. Der Bildinhalt ist danach
+   * IDENTISCH; ausgelöst wird das vom Game-Ticker, wenn die Kamera nach einer
+   * Kartenrunde zu weit von [0, Kante) weggelaufen ist.
+   */
+  rebase(dx: number, dy: number): void {
+    this.camera.x += dx;
+    this.camera.y += dy;
+    for (const fx of this.fxEntries) {
+      fx.x += dx;
+      fx.y += dy;
+      fx.splash.position.set(fx.splash.position.x + dx, fx.splash.position.y + dy);
+      // Aufrechte Ebene: y trägt die Stauchung selbst (siehe spawnImpact).
+      fx.fire?.position.set(fx.fire.position.x + dx, fx.fire.position.y + dy * getTilt());
+    }
+    this.entities.rebase(dx, dy);
+    this.ocean?.applyRebase(dx, dy);
   }
 
   /** Begrenzt einen Punkt auf die Karte. Der Server wird später dasselbe tun. */
@@ -170,8 +194,10 @@ export class World {
   }
 
   centerOn(x: number, y: number): void {
-    this.camera.x = clamp(x, 0, this.map.width);
-    this.camera.y = clamp(y, 0, this.map.height);
+    // Endlos-Karte: die Kamera darf über die Naht hinauslaufen — zurückgeholt
+    // wird sie vom Rebase im Game-Ticker, nicht von einer Klemme.
+    this.camera.x = x;
+    this.camera.y = y;
   }
 
   centerOnMap(): void {

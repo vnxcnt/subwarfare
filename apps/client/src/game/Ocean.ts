@@ -58,6 +58,18 @@ uniform float uExposure;
 uniform float uWarpStrength;
 /** Tempo-Faktor für Drift und Verzerrung aller Lagen (WATER.driftSpeed). */
 uniform float uDrift;
+/**
+ * Rebase-Offsets der Endlos-Karte, je Abtastlage einer (siehe applyRebase):
+ * verschiebt der Client alle Weltkoordinaten um eine Kartenlänge, gleichen
+ * diese Offsets die UV-Verschiebung exakt aus — das Wasserbild bleibt im
+ * Rebase-Frame IDENTISCH, auch für die gedrehten Lagen.
+ */
+uniform vec2 uOffWarp;
+uniform vec2 uOffWarp2;
+uniform vec2 uOffWeit;
+uniform vec2 uOffGrob;
+uniform vec2 uOffFein;
+uniform vec2 uOffTiefe;
 
 /**
  * Die Wasseroberfläche als FARBIGE Kachel — eine echte Wasseraufnahme, von
@@ -97,7 +109,7 @@ void main() {
    * Tuch, das über den Bildschirm geschoben wird.
    */
   float zeit = uTime * uDrift;
-  vec2 warpUV = vWorld * (1.0 / 430.0) + vec2(0.0042, -0.0029) * zeit;
+  vec2 warpUV = vWorld * (1.0 / 430.0) + vec2(0.0042, -0.0029) * zeit + uOffWarp;
   vec2 warp = (texture(uWater, warpUV).rg - 0.5) * (uWarpStrength * (0.30 + 0.70 * see));
 
   /*
@@ -106,7 +118,7 @@ void main() {
    * Lage nur gleichförmig schiebt. Andere Kanäle (gb) derselben Kachel, damit
    * die beiden Felder nicht korrelieren.
    */
-  vec2 warpUV2 = dreh(vWorld, 0.9) * (1.0 / 233.0) - vec2(0.0036, 0.0027) * zeit;
+  vec2 warpUV2 = dreh(vWorld, 0.9) * (1.0 / 233.0) - vec2(0.0036, 0.0027) * zeit + uOffWarp2;
   warp += (texture(uWater, warpUV2).gb - 0.5) * (uWarpStrength * 0.55 * (0.30 + 0.70 * see));
 
   /*
@@ -116,10 +128,10 @@ void main() {
    * beiden Raster periodisch zusammenfallen.
    */
   vec2 pWeit = dreh(vWorld + warp * 1.4, -0.55) * (1.0 / 940.0)
-             + vec2(0.0004, 0.0003) * zeit;
-  vec2 pGrob = (vWorld + warp) * (1.0 / 255.0) + vec2(0.0011, 0.0008) * zeit;
+             + vec2(0.0004, 0.0003) * zeit + uOffWeit;
+  vec2 pGrob = (vWorld + warp) * (1.0 / 255.0) + vec2(0.0011, 0.0008) * zeit + uOffGrob;
   vec2 pFein = dreh(vWorld + warp * 0.55, 1.05) * (1.0 / 61.0)
-             + vec2(-0.0034, 0.0023) * zeit;
+             + vec2(-0.0034, 0.0023) * zeit + uOffFein;
 
   vec3 weit = texture(uWater, pWeit).rgb;
   vec3 grob = texture(uWater, pGrob).rgb;
@@ -182,7 +194,7 @@ void main() {
    * derselben Kachel. Sie wirkt als HELLIGKEIT und als reine Tönung, nicht als
    * Multiplikator mit der Wasserfarbe — sonst verdunkelt sie die Fläche.
    */
-  float tiefe = smoothstep(0.25, 0.75, texture(uWater, vWorld * (1.0 / 5200.0) + vec2(0.11, 0.37)).b);
+  float tiefe = smoothstep(0.25, 0.75, texture(uWater, vWorld * (1.0 / 5200.0) + vec2(0.11, 0.37) + uOffTiefe).b);
   vec3 wasserton = nurFarbe(mix(uShallow, uDeep, tiefe));
   wasser = mix(wasser, wasser * wasserton, 0.35) * mix(1.12, 0.88, tiefe);
 
@@ -306,6 +318,12 @@ export class Ocean {
           uExposure: { value: 1, type: 'f32' },
           uWarpStrength: { value: WATER.warpStrength, type: 'f32' },
           uDrift: { value: WATER.driftSpeed, type: 'f32' },
+          uOffWarp: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffWarp2: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffWeit: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffGrob: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffFein: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffTiefe: { value: new Float32Array(2), type: 'vec2<f32>' },
         },
         // Texturen sind in Pixi 8 RESSOURCEN, keine Uniforms: Quelle und
         // Abtaststil gehen getrennt hinein. `loadFxTextures` läuft in
@@ -327,6 +345,34 @@ export class Ocean {
     const buffer = this.geometry.getBuffer('aPosition');
     (buffer.data as Float32Array).set(quadVertices(map));
     buffer.update();
+  }
+
+  /**
+   * ENDLOS-KARTE: der Client hat alle Weltkoordinaten um (dx, dy) verschoben
+   * (Rebase nach einer Kartenrunde). Jede Abtastlage bekommt den exakten
+   * UV-Ausgleich — Drehwinkel und Maßstäbe MÜSSEN zu den Konstanten im
+   * Fragment-Shader passen. Damit ist das Wasserbild im Rebase-Frame
+   * identisch, der Spieler sieht nichts.
+   */
+  applyRebase(dx: number, dy: number): void {
+    const uniforms = this.shader.resources['oceanUniforms'].uniforms;
+    const lagen: Array<{ ziel: string; winkel: number; inv: number }> = [
+      { ziel: 'uOffWarp', winkel: 0, inv: 1 / 430 },
+      { ziel: 'uOffWarp2', winkel: 0.9, inv: 1 / 233 },
+      { ziel: 'uOffWeit', winkel: -0.55, inv: 1 / 940 },
+      { ziel: 'uOffGrob', winkel: 0, inv: 1 / 255 },
+      { ziel: 'uOffFein', winkel: 1.05, inv: 1 / 61 },
+      { ziel: 'uOffTiefe', winkel: 0, inv: 1 / 5200 },
+    ];
+    for (const lage of lagen) {
+      const c = Math.cos(lage.winkel);
+      const s = Math.sin(lage.winkel);
+      const offset = uniforms[lage.ziel] as Float32Array;
+      // uv = dreh(world)·inv + off. world wandert um (dx, dy) — der Ausgleich
+      // ist das Negative der gedrehten, skalierten Verschiebung.
+      offset[0] = (offset[0] ?? 0) - (dx * c - dy * s) * lage.inv;
+      offset[1] = (offset[1] ?? 0) - (dx * s + dy * c) * lage.inv;
+    }
   }
 
   /** Seegang von 0 (spiegelglatt) bis 1. Kommt vom Server (Karten-Wetter). */
@@ -371,5 +417,16 @@ export class Ocean {
 }
 
 function quadVertices(map: GameMap): Float32Array {
-  return new Float32Array([0, 0, map.width, 0, map.width, map.height, 0, map.height]);
+  // ENDLOS-KARTE: die Fläche reicht eine halbe Kartenlänge über jede Naht
+  // hinaus. Die Kamera pendelt (durch den Rebase) in [−0,25·Kante, 1,25·Kante]
+  // — mit diesem Rand sieht man nie eine Wasserkante, und die Kosten hängen
+  // ohnehin nur an der Bildschirmfläche, nicht an der Quad-Größe.
+  const rx = map.width * 0.5;
+  const ry = map.height * 0.5;
+  return new Float32Array([
+    -rx, -ry,
+    map.width + rx, -ry,
+    map.width + rx, map.height + ry,
+    -rx, map.height + ry,
+  ]);
 }

@@ -29,6 +29,8 @@ import {
   salvoSpread,
   smokeLevelForHp,
   splitDamage,
+  torusDelta,
+  wrapCoord,
 } from '@subwarfare/shared';
 import type { ShipCatalog } from '../sim/ShipCatalog.js';
 
@@ -276,7 +278,14 @@ export class World {
   spawnCrate(x: number, y: number, coins: number): void {
     if (coins <= 0) return;
     const id = `c-${this.nextCrateId++}`;
-    this.crates.set(id, { id, x, y, coins });
+    // Einwrappen — die Testkiste des Dev-Menüs entsteht „voraus" und kann
+    // damit hinter der Naht liegen.
+    this.crates.set(id, {
+      id,
+      x: wrapCoord(x, this.map.width),
+      y: wrapCoord(y, this.map.height),
+      coins,
+    });
   }
 
   /**
@@ -287,8 +296,8 @@ export class World {
   pickupCrates(vessel: Vessel, radius: number): number {
     let summe = 0;
     for (const crate of this.crates.values()) {
-      const dx = crate.x - vessel.x;
-      const dy = crate.y - vessel.y;
+      const dx = torusDelta(vessel.x, crate.x, this.map.width);
+      const dy = torusDelta(vessel.y, crate.y, this.map.height);
       if (dx * dx + dy * dy > radius * radius) continue;
       summe += crate.coins;
       this.crates.delete(crate.id);
@@ -376,8 +385,10 @@ export class World {
       kind,
       ownerId: shooter.id,
       model,
-      x: shooter.x + Math.sin(heading) * offsetMetres,
-      y: shooter.y - Math.cos(heading) * offsetMetres,
+      // Direkt einwrappen: der Spawn-Offset kann über die Naht reichen, und
+      // die Torus-Deltas erwarten Koordinaten in [0, Kante).
+      x: wrapCoord(shooter.x + Math.sin(heading) * offsetMetres, this.map.width),
+      y: wrapCoord(shooter.y - Math.cos(heading) * offsetMetres, this.map.height),
       rotation: bearing,
       speed,
       damage: wirkung,
@@ -488,8 +499,8 @@ export class World {
 
     for (const vessel of this.vessels.values()) {
       if (sunkThisStep.has(vessel.id)) continue;
-      const dx = vessel.x - charge.x;
-      const dy = vessel.y - charge.y;
+      const dx = torusDelta(charge.x, vessel.x, this.map.width);
+      const dy = torusDelta(charge.y, vessel.y, this.map.height);
       const distance = Math.hypot(dx, dy);
       if (distance > charge.blastRadius) continue;
 
@@ -580,8 +591,8 @@ export class World {
   /** Exit-Zone, in der sich der Punkt gerade befindet — sonst `undefined`. */
   findExitPointAt(x: number, y: number): ExitPoint | undefined {
     return this.map.exitPoints.find((exit) => {
-      const dx = exit.x - x;
-      const dy = exit.y - y;
+      const dx = torusDelta(x, exit.x, this.map.width);
+      const dy = torusDelta(y, exit.y, this.map.height);
       return dx * dx + dy * dy <= exit.radius * exit.radius;
     });
   }
@@ -594,20 +605,18 @@ export class World {
   update(deltaSeconds: number): WorldEvents {
     for (const vessel of this.vessels.values()) {
       vessel.simulate(deltaSeconds);
-      // Der Kartenrand ist eine Wand. Seit der Tastensteuerung (v6) klemmt
-      // kein Wegpunkt mehr — ohne das hier führe jedes Boot endlos in die
-      // Leere hinaus, und Abschüsse jenseits der ±500-m-Zone stürben sofort
-      // als Blindgänger (in der Praxis passiert: 5 km außerhalb gefunden).
-      let angeschlagen = false;
-      if (vessel.x < 0) { vessel.x = 0; angeschlagen = true; }
-      else if (vessel.x > this.map.width) { vessel.x = this.map.width; angeschlagen = true; }
-      if (vessel.y < 0) { vessel.y = 0; angeschlagen = true; }
-      else if (vessel.y > this.map.height) { vessel.y = this.map.height; angeschlagen = true; }
-      // Die Wand stoppt auch die FAHRT: ohne das stünde das Boot mit voller
-      // angezeigter Fahrt auf der Stelle — „der Schub geht nicht". Mit
-      // Fahrt ≈ 0 stimmt die Anzeige, und der Bugstrahler (thrusterRate)
-      // dreht das Boot im Stand wieder von der Wand weg.
-      if (angeschlagen) vessel.speed *= 0.5;
+      // ENDLOS-KARTE: die frühere Randwand ist weg — wer über eine Kante
+      // fährt, kommt auf der Gegenseite wieder herein. Der Wegpunkt (Bots)
+      // wandert dabei MIT über die Naht, sonst läge das Ziel plötzlich eine
+      // Kartenlänge entfernt und der Autopilot drehte um.
+      const rohX = vessel.x;
+      const rohY = vessel.y;
+      vessel.x = wrapCoord(vessel.x, this.map.width);
+      vessel.y = wrapCoord(vessel.y, this.map.height);
+      if (vessel.waypoint && (vessel.x !== rohX || vessel.y !== rohY)) {
+        vessel.waypoint.x += vessel.x - rohX;
+        vessel.waypoint.y += vessel.y - rohY;
+      }
     }
 
     const events: WorldEvents = { impacts: [], destroyed: [] };
@@ -627,19 +636,11 @@ export class World {
       if (!sinking) {
         const step = projectile.speed * deltaSeconds;
         const heading = projectile.rotation * DEG;
-        projectile.x += Math.sin(heading) * step;
-        projectile.y -= Math.cos(heading) * step;
+        // Auch Munition fährt über die Naht — die Endlos-Karte kennt kein
+        // „draußen" mehr; begrenzt wird nur noch über die Laufstrecke.
+        projectile.x = wrapCoord(projectile.x + Math.sin(heading) * step, this.map.width);
+        projectile.y = wrapCoord(projectile.y - Math.cos(heading) * step, this.map.height);
         projectile.travelled += step;
-      }
-
-      const draussen =
-        projectile.x < -500 ||
-        projectile.y < -500 ||
-        projectile.x > this.map.width + 500 ||
-        projectile.y > this.map.height + 500;
-      if (draussen) {
-        this.projectiles.delete(projectile.id);
-        continue;
       }
 
       if (projectile.kind === 'depthcharge') {
@@ -781,11 +782,17 @@ export class World {
     const da = HULL_DIMENSIONS[a.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
     const db = HULL_DIMENSIONS[b.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
 
-    // Billiger Vorfilter über die umschließenden Kreise.
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
+    // Billiger Vorfilter über die umschließenden Kreise — Torus-Versatz, damit
+    // sich zwei Schiffe auch ÜBER die Naht hinweg rammen können.
+    const dx = torusDelta(a.x, b.x, this.map.width);
+    const dy = torusDelta(a.y, b.y, this.map.height);
     const outer = (da.length + db.length) / 2;
     if (dx * dx + dy * dy > outer * outer) return false;
+
+    // B in die NÄCHSTE Kopie relativ zu A gerückt — danach ist die
+    // Kapsel-Mathematik wieder gewöhnliche Ebene.
+    const bx = a.x + dx;
+    const by = a.y + dy;
 
     const ha = Math.max(da.length / 2 - da.beam / 2, 0);
     const hb = Math.max(db.length / 2 - db.beam / 2, 0);
@@ -797,8 +804,8 @@ export class World {
       segmentDistanceSquared(
         a.x - Math.sin(wa) * ha, a.y + Math.cos(wa) * ha,
         a.x + Math.sin(wa) * ha, a.y - Math.cos(wa) * ha,
-        b.x - Math.sin(wb) * hb, b.y + Math.cos(wb) * hb,
-        b.x + Math.sin(wb) * hb, b.y - Math.cos(wb) * hb,
+        bx - Math.sin(wb) * hb, by + Math.cos(wb) * hb,
+        bx + Math.sin(wb) * hb, by - Math.cos(wb) * hb,
       ) <= reach * reach
     );
   }
@@ -895,8 +902,9 @@ export class World {
 
       // Billiger Vorfilter: außerhalb des umschließenden Kreises kann nichts
       // treffen. Läuft für jedes Paar aus Projektil und Fahrzeug pro Tick.
-      const dx = x - vessel.x;
-      const dy = y - vessel.y;
+      // Torus: der kürzeste Versatz — ein Schuss trifft auch über die Naht.
+      const dx = torusDelta(vessel.x, x, this.map.width);
+      const dy = torusDelta(vessel.y, y, this.map.height);
       const outer = dims.length / 2 + projectile.hitRadius;
       if (dx * dx + dy * dy > outer * outer) continue;
 

@@ -36,6 +36,8 @@ export interface KeyBindings {
   loadTubes: string;
   /** Alle geladenen Rohre scharf schalten bzw. entschärfen. */
   armTubes: string;
+  /** Minimap ein-/ausblenden. */
+  minimap: string;
 }
 
 export const DEFAULT_KEYS: KeyBindings = {
@@ -48,6 +50,7 @@ export const DEFAULT_KEYS: KeyBindings = {
   fire: 'Space',
   loadTubes: 'KeyR',
   armTubes: 'KeyT',
+  minimap: 'KeyM',
 };
 
 /** Anzeige-Reihenfolge und Beschriftung im Einstellungs-Panel. */
@@ -61,10 +64,13 @@ export const KEY_ACTIONS: ReadonlyArray<{ id: keyof KeyBindings; label: string }
   { id: 'fire', label: 'Feuern' },
   { id: 'loadTubes', label: 'Rohre laden' },
   { id: 'armTubes', label: 'Rohre scharf' },
+  { id: 'minimap', label: 'Minimap' },
 ];
 
 export const volumes = ref<VolumeSettings>({ effects: 1, ambient: 1 });
 export const keys = ref<KeyBindings>({ ...DEFAULT_KEYS });
+/** Deckkraft der Minimap (persönliche Vorliebe), 0,2..1. */
+export const minimapAlpha = ref(0.9);
 
 /**
  * Offen, solange das Einstellungs-Panel angezeigt wird. Die Spiel-Handler
@@ -97,7 +103,11 @@ function load(): void {
     return;
   }
   if (typeof parsed !== 'object' || parsed === null) return;
-  const data = parsed as { volumes?: Partial<VolumeSettings>; keys?: Partial<KeyBindings> };
+  const data = parsed as {
+    volumes?: Partial<VolumeSettings>;
+    keys?: Partial<KeyBindings>;
+    minimapAlpha?: unknown;
+  };
 
   const clamp = (value: unknown, fallback: number): number =>
     typeof value === 'number' && Number.isFinite(value) ? Math.min(Math.max(value, 0), 1) : fallback;
@@ -105,6 +115,7 @@ function load(): void {
     effects: clamp(data.volumes?.effects, 1),
     ambient: clamp(data.volumes?.ambient, 1),
   };
+  minimapAlpha.value = Math.max(clamp(data.minimapAlpha, 0.9), 0.2);
 
   const next = { ...DEFAULT_KEYS };
   for (const action of Object.keys(DEFAULT_KEYS) as Array<keyof KeyBindings>) {
@@ -121,7 +132,14 @@ function load(): void {
 
 function save(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ volumes: volumes.value, keys: keys.value }));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        volumes: volumes.value,
+        keys: keys.value,
+        minimapAlpha: minimapAlpha.value,
+      }),
+    );
   } catch {
     // Gesperrter Storage (privater Modus) — dann gelten sie eben nur für
     // diese Sitzung.
@@ -140,6 +158,12 @@ window.addEventListener('storage', (event) => {
 
 export function setVolume(kind: keyof VolumeSettings, value: number): void {
   volumes.value = { ...volumes.value, [kind]: Math.min(Math.max(value, 0), 1) };
+  save();
+}
+
+/** Minimap-Deckkraft setzen — geklemmt auf 0,2..1, damit sie nie „weg" ist. */
+export function setMinimapAlpha(value: number): void {
+  minimapAlpha.value = Math.min(Math.max(value, 0.2), 1);
   save();
 }
 

@@ -1,4 +1,4 @@
-import type { ArmorState, TubeState, VesselModel, WeaponId, WeatherState } from '@subwarfare/shared';
+import type { ArmorState, ExitPoint, TubeState, VesselModel, WeaponId, WeatherState } from '@subwarfare/shared';
 import { DEFAULT_WEATHER, SHIP_TYPE_SUBMARINE } from '@subwarfare/shared';
 import { ref, shallowRef, triggerRef } from 'vue';
 import { SONAR } from '../config';
@@ -338,6 +338,11 @@ export function devSetWeather(weather: WeatherState): void {
 /** Entwickler: Testkiste mit Coins vor dem Bug — zum Testen der Beuteschleife. */
 export function devSpawnCrate(coins: number): void {
   game?.devSpawnCrate(coins);
+}
+
+/** Karten-Info für die Minimap: Maße und Extraktionszonen. Null vorm Beitritt. */
+export function currentMapInfo(): { width: number; height: number; exits: ExitPoint[] } | null {
+  return game?.mapInfo ?? null;
 }
 
 /** Feuerbefehl — Bewaffnung, Munition und Rohr-Sperre prüft der Server. */
