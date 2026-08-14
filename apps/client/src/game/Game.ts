@@ -23,8 +23,10 @@ import {
   currentHour,
   DECOY,
   DEFAULT_SHIP_STATS,
+  DEFAULT_VESSEL_MODEL,
   DESTROYER,
   GUN,
+  HULL_DIMENSIONS,
   SHIP_TYPE_SUBMARINE,
   DEPTH_CHARGE,
   SIDE_LAUNCH_HALF_ANGLE_DEG,
@@ -36,7 +38,7 @@ import {
   profileForShip,
   torusDelta,
 } from '@subwarfare/shared';
-import type { ExitPoint } from '@subwarfare/shared';
+import type { ExitPoint, RoutePoint } from '@subwarfare/shared';
 import { GameSocket } from '../network/GameSocket';
 import { keys, settingsModalOpen } from '../state/settings';
 import { fxTextureCount, loadFxTextures } from './fx-textures';
@@ -158,6 +160,8 @@ export class Game {
 
   private socket: GameSocket | null = null;
   private selfId: string = DEMO_VESSEL.id;
+  /** Angeklicktes fremdes Schiff — Ring + Namensschild. Null = keine Auswahl. */
+  private selectedId: string | null = null;
   private audio: GameAudio | null = null;
   /**
    * Projektil-Kennungen des letzten Broadcasts. Eine NEUE Kennung neben einem
@@ -257,6 +261,49 @@ export class Game {
   /** Das eigene Boot. Online erst vorhanden, wenn der erste `state` da ist. */
   get ownVessel(): Vessel | undefined {
     return this.world?.entities.get(this.selfId);
+  }
+
+  /** Das angeklickte fremde Schiff — null ohne Auswahl oder nach Zielverlust. */
+  get selectedVessel(): Vessel | null {
+    if (!this.selectedId) return null;
+    return this.world?.entities.get(this.selectedId) ?? null;
+  }
+
+  /** Steht die Auswahl gerade optisch in Sicht (Ring und Schild sichtbar)? */
+  get selectedVisible(): boolean {
+    return !!this.selectedId && !!this.world?.entities.sichtbar(this.selectedId);
+  }
+
+  /**
+   * Klick-Selektion: das nächstgelegene fremde Schiff unter dem Zeiger. Die
+   * Modelle tragen RENDER-Koordinaten im selben Raum wie `screenToWorld` —
+   * ein einfacher Distanzvergleich genügt, kein Torus-Rechnen.
+   */
+  private selectAt(screenX: number, screenY: number): void {
+    const world = this.world;
+    if (!world) return;
+    const punkt = world.screenToWorld(screenX, screenY);
+    const zoom = world.camera.zoom;
+
+    let treffer: string | null = null;
+    let besteDistanz = Number.POSITIVE_INFINITY;
+    for (const model of world.entities.models()) {
+      if (model.id === this.selfId) continue;
+      if (!world.entities.sichtbar(model.id)) continue;
+      const dims = HULL_DIMENSIONS[model.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+      // Klickradius: halbe Rumpflänge plus Griffweite — herausgezoomt hält
+      // eine Mindestgröße in Bildschirmpixeln das Schiff treffbar.
+      const radius = Math.max(dims.length * 0.62, 22 / zoom);
+      const distanz = Math.hypot(model.x - punkt.x, model.y - punkt.y);
+      if (distanz <= radius && distanz < besteDistanz) {
+        besteDistanz = distanz;
+        treffer = model.id;
+      }
+    }
+
+    // Klick ins Leere hebt die Auswahl auf — wie beim Vorbild.
+    this.selectedId = treffer;
+    world.entities.setSelectedId(treffer);
   }
 
   /** Basiswerte eines Modells — Katalog vom Server, sonst die shared-Defaults. */
@@ -436,9 +483,15 @@ export class Game {
     // Umschau-Taste: rechte Maustaste halten. `pointerup` hängt am FENSTER,
     // nicht am Canvas — wer über einem Anzeigefeld loslässt, soll trotzdem
     // zurückfokussieren. Das Kontextmenü ist oben ohnehin unterdrückt.
+    // Linksklick: fremdes Schiff anklicken = auswählen (Ring + Namensschild),
+    // Klick ins Leere = Auswahl aufheben.
     this.peekButtonListeners = {
       down: (event: PointerEvent) => {
         if (event.button === 2) this.peekHeld = true;
+        else if (event.button === 0) {
+          const rect = app.canvas.getBoundingClientRect();
+          this.selectAt(event.clientX - rect.left, event.clientY - rect.top);
+        }
       },
       up: (event: PointerEvent) => {
         if (event.button === 2) this.peekHeld = false;
@@ -591,10 +644,22 @@ export class Game {
     return size > 0 ? anchor + torusDelta(anchor, value, size) : value;
   }
 
-  /** Karten-Info für Anzeigen (Minimap): Maße und Extraktionszonen. */
-  get mapInfo(): { width: number; height: number; exits: ExitPoint[] } | null {
+  /** Karten-Info für Anzeigen (Minimap): Maße, Extraktionszonen, Frachtroute. */
+  get mapInfo(): {
+    width: number;
+    height: number;
+    exits: ExitPoint[];
+    route: RoutePoint[];
+  } | null {
     const map = this.world?.currentMap;
-    return map ? { width: map.width, height: map.height, exits: [...map.exitPoints] } : null;
+    return map
+      ? {
+          width: map.width,
+          height: map.height,
+          exits: [...map.exitPoints],
+          route: map.route ? [...map.route] : [],
+        }
+      : null;
   }
 
   private ingestState(payload: StatePayload): void {
@@ -1250,6 +1315,12 @@ export class Game {
     const world = this.world;
     if (!app || !world) return;
 
+    // Auswahl verfällt mit dem Ziel: versenkt oder aus der Ortung gefallen.
+    if (this.selectedId && !world.entities.get(this.selectedId)) {
+      this.selectedId = null;
+      world.entities.setSelectedId(null);
+    }
+
     if (!this.socket) {
       // Feste Schritte: das Fahrmodell ist nichtlinear und mit variablem dt
       // nicht reproduzierbar. Der Deckel begrenzt das Aufholen nach einem
@@ -1449,6 +1520,7 @@ function lerpState(a: PlayerState, b: PlayerState, t: number): PlayerState {
     periscope: a.periscope + (b.periscope - a.periscope) * t,
     // Diskret wie das Modell: eine Rauchstufe „interpoliert" nicht.
     smoke: b.smoke,
+    level: b.level,
   };
 }
 

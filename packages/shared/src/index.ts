@@ -83,5 +83,10 @@ export * from './sim/torus.js';
  * 16: Endlos-Karte (Torus) — Positionen wrappen an den Kartengrenzen statt an
  *     einer Randwand zu stoppen; alle Distanzen laufen über den kürzesten Weg
  *     über die Naht. Alte Clients zeigten Nahtquerungen als Teleport.
+ * 17: Frachtroute — die Karte trägt optional `route` (Polylinie, auf dem Torus
+ *     zur Schleife geschlossen); NPC-Frachter verkehren ausschließlich darauf,
+ *     die Minimap zeichnet die Linie.
+ * 18: Kommandanten-Level im PlayerState (aus dem Ticket-Claim `level`) — fürs
+ *     Namensschild beim Anklicken fremder Schiffe (Rang + Name, keine HP).
  */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 18;

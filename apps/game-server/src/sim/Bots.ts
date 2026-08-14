@@ -16,8 +16,12 @@ const NAMES = [
 /** Zufallsziele bleiben in diesem Abstand zum Kartenrand. */
 const MARGIN = 600;
 
-/** Bots fahren die NPC-Schiffe aus der ships-Tabelle (Typ 1). */
-const NPC_MODELS: VesselModel[] = ['speedster01', 'yachtgun01', 'tanker01'];
+/**
+ * Bots fahren die NPC-Schiffe aus der ships-Tabelle (Typ 1) — OHNE tanker01:
+ * Frachter entstehen ausschließlich über die Frachtroute (sim/Freighters.ts),
+ * nicht als Zufallsverkehr.
+ */
+const NPC_MODELS: VesselModel[] = ['speedster01', 'yachtgun01'];
 
 /**
  * Fremdverkehr, damit die Karte nicht leer ist und das Sonar etwas anzeigt.

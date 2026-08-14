@@ -55,4 +55,10 @@ export interface PlayerState {
    * ist gewollte Aufklärung, der exakte Zustand nicht.
    */
   smoke: number;
+  /**
+   * Spielstufe des Kommandanten (1..MAX_LEVEL) — fürs Namensschild beim
+   * Anklicken (Rang aus RANKS abgeleitet). NPCs fahren mit 1; der Client
+   * zeigt für sie eine Flottenbezeichnung statt eines Dienstgrads.
+   */
+  level: number;
 }

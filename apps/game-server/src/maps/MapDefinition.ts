@@ -24,5 +24,16 @@ export function defineMap(map: GameMap): GameMap {
     }
   }
 
+  if (map.route) {
+    if (map.route.length < 2) {
+      throw new Error(`Map "${map.id}": eine Frachtroute braucht mindestens zwei Punkte.`);
+    }
+    for (const [index, point] of map.route.entries()) {
+      if (point.x < 0 || point.x > map.width || point.y < 0 || point.y > map.height) {
+        throw new Error(`Map "${map.id}": Routenpunkt ${index} liegt außerhalb der Weltgrenzen.`);
+      }
+    }
+  }
+
   return map;
 }

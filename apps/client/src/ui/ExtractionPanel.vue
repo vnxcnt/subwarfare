@@ -30,15 +30,19 @@ const rest = computed(() =>
 </template>
 
 <style scoped>
+/* Gleicher Rahmen wie Auftragsbuch und U-Boot-Panel: quest-frame als
+   9-Slice, dunkler Grund unter dem Rahmenbild. */
 .extraktion {
   position: absolute;
   top: 18%;
   left: 50%;
   transform: translateX(-50%);
+  box-sizing: border-box;
   width: min(22rem, 60vw);
-  padding: 0.6rem 0.9rem;
-  border: 1px solid rgb(230 207 120 / 45%);
-  background: rgb(4 20 31 / 82%);
+  padding: 0.35rem 0.6rem 0.5rem;
+  border: 24px solid transparent;
+  border-image: url('../assets/ui/quest-frame.png') 50 / 24px stretch;
+  background: #141310;
   text-align: center;
   pointer-events: none;
 }

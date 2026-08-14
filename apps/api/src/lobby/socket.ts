@@ -449,6 +449,9 @@ export class LobbyGateway {
       shipModel,
       armorItem,
       loadout,
+      // Momentaufnahme wie die Rolle: das Level zum Zeitpunkt der Ausgabe —
+      // fremde Spieler sehen es beim Anklicken als Rang auf dem Namensschild.
+      level: progressionFromXp(account.xp).level,
     });
 
     // Fürs idempotente Wieder-Zustellen aufheben (Doppelklick, Reconnect

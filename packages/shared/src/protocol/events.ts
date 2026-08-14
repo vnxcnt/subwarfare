@@ -318,6 +318,8 @@ export interface GameSocketData {
   armorItem: string | null;
   /** Munition aus dem Ticket: je Waffe Sorte und mitgenommene Stückzahl. */
   loadout: LoadoutEntryStack[];
+  /** Spielstufe aus dem Ticket — fürs Namensschild im Broadcast. */
+  level: number;
 }
 
 /** Inhalt eines Join-Tickets. Vom Backend signiert, vom Spielserver geprüft. */
@@ -351,6 +353,12 @@ export interface TicketClaims {
    * meldet der Spielserver am Ende zurück und die api schreibt es gut.
    */
   loadout: LoadoutEntryStack[];
+  /**
+   * Spielstufe (aus dem XP-Stand abgeleitet) zum Zeitpunkt der Ticketausgabe.
+   * Momentaufnahme wie `role` — geht in den `state`-Broadcast, damit fremde
+   * Spieler beim Anklicken Rang und Name sehen.
+   */
+  level: number;
   /** Einmalkennung — der Spielserver merkt sich verbrauchte Tickets. */
   jti: string;
 }

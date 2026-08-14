@@ -51,9 +51,8 @@ const tauchLabel = computed(() => {
       >
         <img :src="periBild" alt="" draggable="false" />
       </button>
-      <!-- Füllt sich von UNTEN — das Periskop steigt aus dem Turm auf. -->
-      <div class="uboot__balken uboot__balken--steigend">
-        <div :style="{ height: `${periPercent}%` }"></div>
+      <div class="uboot__balken">
+        <div :style="{ width: `${periPercent}%` }"></div>
       </div>
     </div>
 
@@ -69,9 +68,8 @@ const tauchLabel = computed(() => {
       >
         <img :src="tauchBild" alt="" draggable="false" />
       </button>
-      <!-- Tiefenanzeige: füllt sich von OBEN — das Boot sinkt ja hinab. -->
       <div class="uboot__balken">
-        <div :style="{ height: `${tauchPercent}%` }"></div>
+        <div :style="{ width: `${tauchPercent}%` }"></div>
       </div>
     </div>
   </section>
@@ -128,24 +126,19 @@ const tauchLabel = computed(() => {
   filter: grayscale(0.7) brightness(0.7);
 }
 
-/* Schmaler Übergangs-Balken — die Plakette sagt WOHIN, er sagt WIE WEIT. */
+/* Schmaler Übergangs-Balken — die Plakette sagt WOHIN, er sagt WIE WEIT.
+   Läuft waagerecht und trägt das Gold der Extraktions-Anzeige. */
 .uboot__balken {
   width: 82px;
-  height: 5px;
+  height: 7px;
   background: rgb(0 0 0 / 55%);
-  border: 1px solid rgb(111 208 189 / 25%);
+  border: 1px solid rgb(230 207 120 / 30%);
   overflow: hidden;
 }
 
 .uboot__balken > div {
-  width: 100%;
-  background: rgb(111 208 189 / 55%);
-  transition: height 120ms linear;
-}
-
-/* „Steigend": der Füllstand wächst von unten nach oben. */
-.uboot__balken--steigend {
-  display: flex;
-  align-items: flex-end;
+  height: 100%;
+  background: linear-gradient(90deg, #a8842e, #fee584);
+  transition: width 120ms linear;
 }
 </style>

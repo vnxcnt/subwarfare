@@ -11,6 +11,7 @@ import QuestLog from './QuestLog.vue';
 import SettingsPanel from './SettingsPanel.vue';
 import SonarPanel from './SonarPanel.vue';
 import StatusBar from './StatusBar.vue';
+import TargetPlate from './TargetPlate.vue';
 import TelegraphPanel from './TelegraphPanel.vue';
 import UbootPanel from './UbootPanel.vue';
 import VitalsPanel from './VitalsPanel.vue';
@@ -96,6 +97,7 @@ function suppressContextMenu(event: MouseEvent): void {
 
     <DeathNotice />
     <ExtractionPanel />
+    <TargetPlate />
     <MinimapOverlay v-if="minimapOpen" @close="minimapOpen = false" />
   </div>
 </template>

@@ -11,9 +11,11 @@ import { ensureGis } from './gis';
 import { leaveQueue } from '../state/lobby';
 import {
   KEY_ACTIONS,
+  gridEnabled,
   keyLabel,
   keys,
   resetKeys,
+  setGridEnabled,
   setKey,
   setVolume,
   settingsModalOpen,
@@ -208,6 +210,17 @@ async function confirmDelete(): Promise<void> {
           <span class="settings__value hud__num">{{ Math.round(volumes.ambient * 100) }} %</span>
         </label>
 
+        <h3 class="settings__group">Anzeige</h3>
+        <label class="settings__row">
+          <span>Planquadrat-Gitter (A1, B2 …)</span>
+          <input
+            type="checkbox"
+            class="settings__check"
+            :checked="gridEnabled"
+            @change="setGridEnabled(($event.target as HTMLInputElement).checked)"
+          />
+        </label>
+
         <h3 class="settings__group">Tastenbelegung</h3>
         <div v-for="action in KEY_ACTIONS" :key="action.id" class="settings__row">
           <span>{{ action.label }}</span>
@@ -373,6 +386,13 @@ async function confirmDelete(): Promise<void> {
   width: 3.2rem;
   text-align: right;
   opacity: 0.75;
+}
+
+.settings__check {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #d6bf84;
+  cursor: pointer;
 }
 
 .settings__key {

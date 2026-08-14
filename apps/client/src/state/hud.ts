@@ -1,4 +1,4 @@
-import type { ArmorState, ExitPoint, TubeState, VesselModel, WeaponId, WeatherState } from '@subwarfare/shared';
+import type { ArmorState, ExitPoint, RoutePoint, TubeState, VesselModel, WeaponId, WeatherState } from '@subwarfare/shared';
 import { DEFAULT_WEATHER, SHIP_TYPE_SUBMARINE } from '@subwarfare/shared';
 import { ref, shallowRef, triggerRef } from 'vue';
 import { SONAR } from '../config';
@@ -68,6 +68,17 @@ export interface HudState {
   /** Gesamtstrecke beim Erteilen des Befehls — Bezugsgröße für den Fortschritt. */
   waypointTotal: number | null;
   contacts: SonarContact[];
+  /**
+   * Angeklicktes fremdes Schiff fürs Namensschild — Rang aus Level, bewusst
+   * OHNE HP. Null ohne Auswahl oder außer Sicht; `art` unterscheidet Spieler
+   * von NPC-Verkehr (die bekommen eine Flottenbezeichnung statt Dienstgrad).
+   */
+  selection: {
+    id: string;
+    name: string;
+    level: number;
+    art: 'spieler' | 'frachter' | 'patrouille';
+  } | null;
 }
 
 /**
@@ -116,6 +127,7 @@ export const hud = shallowRef<HudState>({
   waypointDistance: null,
   waypointTotal: null,
   contacts: [],
+  selection: null,
 });
 
 /** Ein Eintrag im Ereignislog unten links. */
@@ -256,6 +268,7 @@ export function writeHud(frameSeconds: number): void {
   }
 
   writeContacts(state, own.id, own.x, own.y);
+  writeSelection(state);
 
   // Zeichnende Abnehmer bekommen jeden Frame, Vue nur gedrosselt.
   for (const listener of frameListeners) listener(frameSeconds, state);
@@ -265,6 +278,41 @@ export function writeHud(frameSeconds: number): void {
     sinceWake = 0;
     triggerRef(hud);
   }
+}
+
+/** Auswahl-Infos fürs Namensschild — nur bei Änderung neu allozieren. */
+function writeSelection(state: HudState): void {
+  const auswahl = game?.selectedVessel ?? null;
+  if (!auswahl || !game?.selectedVisible) {
+    if (state.selection) state.selection = null;
+    return;
+  }
+  const alt = state.selection;
+  if (alt && alt.id === auswahl.id && alt.name === auswahl.name && alt.level === auswahl.level) {
+    return;
+  }
+  state.selection = {
+    id: auswahl.id,
+    name: auswahl.name,
+    level: auswahl.level,
+    art: auswahl.id.startsWith('bot-fracht-')
+      ? 'frachter'
+      : auswahl.id.startsWith('bot-')
+        ? 'patrouille'
+        : 'spieler',
+  };
+}
+
+/**
+ * Bildschirmposition der Auswahl (CSS-Pixel im Canvas-Raum) — für das
+ * Namensschild, das dem Schiff jeden Frame folgt (onFrame, nicht 20-Hz-Vue).
+ */
+export function selectionScreenPoint(): { x: number; y: number } | null {
+  const scene = game?.scene;
+  const auswahl = game?.selectedVessel;
+  if (!scene || !auswahl || !game?.selectedVisible) return null;
+  const punkt = scene.worldToScreen(auswahl.x, auswahl.y);
+  return { x: punkt.x, y: punkt.y };
 }
 
 function writeContacts(state: HudState, ownId: string, ownX: number, ownY: number): void {
@@ -340,8 +388,13 @@ export function devSpawnCrate(coins: number): void {
   game?.devSpawnCrate(coins);
 }
 
-/** Karten-Info für die Minimap: Maße und Extraktionszonen. Null vorm Beitritt. */
-export function currentMapInfo(): { width: number; height: number; exits: ExitPoint[] } | null {
+/** Karten-Info für die Minimap: Maße, Extraktionszonen, Frachtroute. Null vorm Beitritt. */
+export function currentMapInfo(): {
+  width: number;
+  height: number;
+  exits: ExitPoint[];
+  route: RoutePoint[];
+} | null {
   return game?.mapInfo ?? null;
 }
 

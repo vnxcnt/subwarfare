@@ -181,18 +181,28 @@ die Spielserver weiterreichen.
 
 ## Karte `ocean01` — „Nordatlantik"
 
-10.000 × 10.000 Units offenes Wasser, Wetterlage „Nordatlantik" (bedeckt,
-rau); weitere Presets: klarer Tag, Sturm, Dämmerung, Nacht.
+25.000 × 25.000 Units offenes Wasser als **Endlos-Karte** (Torus: wer über
+eine Kante fährt, kommt nahtlos auf der Gegenseite herein), Wetterlage
+„Nordatlantik" (bedeckt, rau); weitere Presets: klarer Tag, Sturm,
+Dämmerung, Nacht.
 
 | Typ | ID | Position | Sonstiges |
 | --- | --- | --- | --- |
-| Spawn | `spawn-north` | 5.000 / 1.000 | Rotation 180° |
-| Spawn | `spawn-south` | 5.000 / 9.000 | Rotation 0° |
-| Extraktion | `exit-nw` | 2.000 / 2.000 | Radius 400, 6 Bojen |
-| Extraktion | `exit-ne` | 8.000 / 2.000 | Radius 400, 6 Bojen |
+| Spawn | `spawn-north` | 12.500 / 2.500 | Rotation 180° |
+| Spawn | `spawn-south` | 12.500 / 22.500 | Rotation 0° |
+| Extraktion | `exit-nw` | 6.250 / 6.250 | Radius 400, 6 Bojen |
+| Extraktion | `exit-se` | 18.750 / 18.750 | Radius 400, 6 Bojen |
 
-Die Zonen liegen bewusst nicht am Kartenrand: wer raus will, muss durchs
-offene Wasser.
+Die Zonen liegen diagonal versetzt im offenen Wasser: wer raus will, muss
+eine Fahrt quer über die Karte riskieren.
+
+Auf der Gegendiagonale verläuft die **Frachtroute** (auf der Minimap als
+gestrichelte Linie): eine sanfte S-Kurve von oben rechts nach unten links,
+auf dem Torus über die Kartenecke zur Schleife geschlossen. 14 Frachter
+(`tanker01`, 7 je Richtung) verkehren darauf unregelmäßig auf getrennten
+Spuren; ein versenkter Frachter läuft nach 5 Minuten am Routeneinstieg
+seiner Richtung wieder ein. Frachter spawnen ausschließlich über diese
+Route — der übrige Zufallsverkehr fährt keine Tanker.
 
 ## Vorbild
 

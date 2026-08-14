@@ -71,6 +71,8 @@ export const volumes = ref<VolumeSettings>({ effects: 1, ambient: 1 });
 export const keys = ref<KeyBindings>({ ...DEFAULT_KEYS });
 /** Deckkraft der Minimap (persönliche Vorliebe), 0,2..1. */
 export const minimapAlpha = ref(0.9);
+/** Planquadrat-Gitter (A1..) über der See — abschaltbar für freie Sicht. */
+export const gridEnabled = ref(true);
 
 /**
  * Offen, solange das Einstellungs-Panel angezeigt wird. Die Spiel-Handler
@@ -107,6 +109,7 @@ function load(): void {
     volumes?: Partial<VolumeSettings>;
     keys?: Partial<KeyBindings>;
     minimapAlpha?: unknown;
+    gridEnabled?: unknown;
   };
 
   const clamp = (value: unknown, fallback: number): number =>
@@ -116,6 +119,7 @@ function load(): void {
     ambient: clamp(data.volumes?.ambient, 1),
   };
   minimapAlpha.value = Math.max(clamp(data.minimapAlpha, 0.9), 0.2);
+  if (typeof data.gridEnabled === 'boolean') gridEnabled.value = data.gridEnabled;
 
   const next = { ...DEFAULT_KEYS };
   for (const action of Object.keys(DEFAULT_KEYS) as Array<keyof KeyBindings>) {
@@ -138,6 +142,7 @@ function save(): void {
         volumes: volumes.value,
         keys: keys.value,
         minimapAlpha: minimapAlpha.value,
+        gridEnabled: gridEnabled.value,
       }),
     );
   } catch {
@@ -164,6 +169,11 @@ export function setVolume(kind: keyof VolumeSettings, value: number): void {
 /** Minimap-Deckkraft setzen — geklemmt auf 0,2..1, damit sie nie „weg" ist. */
 export function setMinimapAlpha(value: number): void {
   minimapAlpha.value = Math.min(Math.max(value, 0.2), 1);
+  save();
+}
+
+export function setGridEnabled(value: boolean): void {
+  gridEnabled.value = value;
   save();
 }
 

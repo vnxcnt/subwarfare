@@ -17,6 +17,8 @@ export interface VesselInit {
   y: number;
   rotation: number;
   model?: VesselModel;
+  /** Spielstufe des Kommandanten — Standard 1 (NPCs, alte Gegenstellen). */
+  level?: number;
 }
 
 /**
@@ -33,6 +35,8 @@ export class Vessel implements VesselMotion {
   name: string;
   /** Schiffsmodell — rein visuell, die Fahrphysik hängt am Profil. */
   model: VesselModel;
+  /** Spielstufe des Kommandanten — rein informativ (Namensschild). */
+  level: number;
   x: number;
   y: number;
   rotation: number;
@@ -74,6 +78,7 @@ export class Vessel implements VesselMotion {
     this.id = init.id;
     this.name = init.name;
     this.model = init.model ?? DEFAULT_VESSEL_MODEL;
+    this.level = init.level ?? 1;
     this.x = init.x;
     this.y = init.y;
     this.rotation = init.rotation;
@@ -221,6 +226,7 @@ export class Vessel implements VesselMotion {
       depth: this.depth,
       periscope: this.periscope,
       smoke: this.smoke,
+      level: this.level,
     };
   }
 
@@ -238,6 +244,7 @@ export class Vessel implements VesselMotion {
     this.depth = state.depth;
     this.periscope = state.periscope;
     this.smoke = state.smoke ?? 0;
+    this.level = state.level ?? 1;
   }
 
   /**

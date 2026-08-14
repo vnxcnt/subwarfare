@@ -59,6 +59,7 @@ export async function signTicket(
     shipModel: claims.shipModel,
     armorItem: claims.armorItem,
     loadout: claims.loadout,
+    level: claims.level,
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.sub)

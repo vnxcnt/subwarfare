@@ -1,7 +1,16 @@
 import type { Container } from 'pixi.js';
+import { Graphics } from 'pixi.js';
 import type { CrateState, ProjectileState, Vessel } from '@subwarfare/shared';
-import { EXTRACTION_BUOYS, LOOT_CRATE_MODEL, angleDelta, norm360, torusDelta } from '@subwarfare/shared';
-import { VISION } from '../../config';
+import {
+  DEFAULT_VESSEL_MODEL,
+  EXTRACTION_BUOYS,
+  HULL_DIMENSIONS,
+  LOOT_CRATE_MODEL,
+  angleDelta,
+  norm360,
+  torusDelta,
+} from '@subwarfare/shared';
+import { HULL, VISION } from '../../config';
 import { ProjectileView } from './ProjectileView';
 import { PropView } from './PropView';
 import { VesselView } from './VesselView';
@@ -44,10 +53,26 @@ export class EntityLayer {
   private vision: VisionState | null = null;
   /** Kartenmaße für die Torus-Darstellung der Statiken (Bojen). */
   private mapSize = { width: 0, height: 0 };
+  /** Angeklicktes fremdes Schiff — bekommt den Auswahlring. */
+  private selectedId: string | null = null;
+  private readonly auswahl = new Graphics();
 
   constructor(waterLayer: Container, billboardLayer: Container) {
     this.waterLayer = waterLayer;
     this.billboardLayer = billboardLayer;
+    // In der Wasserebene, unter Ziellinie (999_999) und Wasser-Effekten.
+    this.auswahl.zIndex = 999_000;
+    waterLayer.addChild(this.auswahl);
+  }
+
+  setSelectedId(id: string | null): void {
+    this.selectedId = id;
+  }
+
+  /** Liegt das Fahrzeug optisch in Sicht (Kreis oder Periskop-Kegel)? */
+  sichtbar(id: string): boolean {
+    const model = this.get(id);
+    return !!model && this.inVision(model.x, model.y);
   }
 
   setMapSize(width: number, height: number): void {
@@ -241,9 +266,49 @@ export class EntityLayer {
       const by = anker && height > 0 ? anker.y + torusDelta(anker.y, buoy.y, height) : buoy.y;
       buoy.view.sync(bx, by, frameSeconds);
     }
+
+    this.drawAuswahl(zoom);
+  }
+
+  /**
+   * Gestrichelte Ellipse ums angeklickte Schiff — längs des Kurses, Maße aus
+   * dem Rumpf. Liegt in der Wasserebene: die Projektion kippt sie mit, wie
+   * beim Vorbild. Außerhalb der Sicht verschwindet sie mit dem Schiff.
+   */
+  private drawAuswahl(zoom: number): void {
+    const g = this.auswahl.clear();
+    const id = this.selectedId;
+    if (!id) return;
+    const entry = this.entries.get(id);
+    if (!entry || !this.inVision(entry.model.x, entry.model.y)) return;
+
+    const dims = HULL_DIMENSIONS[entry.model.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const rx = Math.max(dims.length * 0.62, 26 / zoom);
+    const ry = Math.max(dims.beam * 2.4, rx * 0.45);
+    const phi = (entry.model.rotation * Math.PI) / 180;
+    // Längsachse zeigt in Kursrichtung (0° = Norden = −y), Querachse senkrecht.
+    const ux = Math.sin(phi);
+    const uy = -Math.cos(phi);
+    const vx = Math.cos(phi);
+    const vy = Math.sin(phi);
+
+    const striche = 18;
+    for (let i = 0; i < striche; i += 1) {
+      const t0 = (i / striche) * Math.PI * 2;
+      const schritt = ((Math.PI * 2) / striche) * 0.55;
+      for (let s = 0; s <= 2; s += 1) {
+        const t = t0 + (schritt * s) / 2;
+        const px = entry.model.x + ux * rx * Math.cos(t) + vx * ry * Math.sin(t);
+        const py = entry.model.y + uy * rx * Math.cos(t) + vy * ry * Math.sin(t);
+        if (s === 0) g.moveTo(px, py);
+        else g.lineTo(px, py);
+      }
+    }
+    g.stroke({ color: HULL.markerColor, alpha: 0.85, pixelLine: true });
   }
 
   destroy(): void {
+    this.auswahl.destroy();
     for (const entry of this.entries.values()) entry.view.destroy();
     this.entries.clear();
     for (const entry of this.projectiles.values()) entry.view.destroy();

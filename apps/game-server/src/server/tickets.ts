@@ -69,10 +69,8 @@ export async function verifyTicket(raw: unknown): Promise<TicketResult> {
     return { ok: false, reason: 'Ticket ungültig oder abgelaufen.' };
   }
 
-  const { sub, name, mapId, jti, exp, role, shipModel, armorItem, loadout } = payload as Record<
-    string,
-    unknown
-  >;
+  const { sub, name, mapId, jti, exp, role, shipModel, armorItem, loadout, level } =
+    payload as Record<string, unknown>;
   if (typeof sub !== 'string' || typeof jti !== 'string' || typeof mapId !== 'string') {
     return { ok: false, reason: 'Ticket unvollständig.' };
   }
@@ -102,6 +100,8 @@ export async function verifyTicket(raw: unknown): Promise<TicketResult> {
       // wird nur noch geprüft, dass die Form stimmt — eine kaputte Zeile
       // bedeutet „diese Waffe nicht dabei", nicht „Ticket ungültig".
       loadout: Array.isArray(loadout) ? loadout.filter(istPosten) : [],
+      // Fehlt im Ticket (altes Backend): Stufe 1 — rein informativ.
+      level: typeof level === 'number' ? level : 1,
       jti,
     },
   };

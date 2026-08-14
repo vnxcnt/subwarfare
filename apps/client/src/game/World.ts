@@ -2,9 +2,11 @@ import type { GameMap, WeatherState } from '@subwarfare/shared';
 import { atmosphereFor } from '@subwarfare/shared';
 import { Container, Graphics, Matrix, Point, Sprite } from 'pixi.js';
 import { FALLBACK_MAP, FOLLOW, HULL, PEEK, VIEW, VISION } from '../config';
+import { gridEnabled } from '../state/settings';
 import { EntityLayer } from './entities/EntityLayer';
 import type { Vessel } from '@subwarfare/shared';
 import { explosionFrame, splashFrame } from './fx-textures';
+import { GridOverlay } from './GridOverlay';
 import { Ocean } from './Ocean';
 import { PROJECTION, getTilt, project } from './Projection';
 
@@ -94,6 +96,7 @@ export class World {
 
   private map: GameMap = FALLBACK_MAP;
   private ocean: Ocean | null = null;
+  private readonly grid: GridOverlay;
   private followTarget: Vessel | null = null;
   /**
    * Blickversatz zur Maus, in BILDSCHIRMPIXELN. `peek` ist der gezeigte Wert,
@@ -126,6 +129,8 @@ export class World {
     // Wegpunktgrafik in die Wasserebene, Richtungs-Billboards in die
     // aufrechte Ebene — siehe EntityLayer.
     this.entities = new EntityLayer(this.hullLayer, this.entityLayer);
+    // Planquadrat-Gitter: Linien in der Wasserebene, Kennungen aufrecht.
+    this.grid = new GridOverlay(this.hullLayer, this.entityLayer);
     // Feuerbälle über alle Billboards.
     this.fxUpright.zIndex = 1_000_000;
     this.entityLayer.addChild(this.fxUpright);
@@ -480,6 +485,24 @@ export class World {
     this.entityMatrix.identity().scale(zoom, zoom).translate(tx, ty);
     this.entityLayer.setFromMatrix(this.entityMatrix);
 
+    // Sichtbarer Weltausschnitt fürs Planquadrat-Gitter: die Matrix ist
+    // achsparallel (Projektion = y-Stauchung, keine Drehung), zwei Ecken
+    // genügen. `scratch` ist ab hier frei — `centre` wird nicht mehr gelesen.
+    const ecke = this.groundMatrix.applyInverse(this.scratch.set(0, 0), this.scratch);
+    const links = ecke.x;
+    const oben = ecke.y;
+    this.groundMatrix.applyInverse(this.scratch.set(viewportWidth, viewportHeight), this.scratch);
+    this.grid.update(
+      gridEnabled.value,
+      links,
+      oben,
+      this.scratch.x,
+      this.scratch.y,
+      this.map.width,
+      this.map.height,
+      zoom,
+    );
+
     // Der Schleier ist Bildschirmfläche — nur bei Größenwechsel neu zeichnen.
     if (
       this.underwaterSize.width !== viewportWidth ||
@@ -497,6 +520,7 @@ export class World {
 
   destroy(): void {
     this.entities.destroy();
+    this.grid.destroy();
     this.ocean?.destroy();
     this.ocean = null;
     // `context: true` ist nötig, sonst bleiben die GraphicsContexts der

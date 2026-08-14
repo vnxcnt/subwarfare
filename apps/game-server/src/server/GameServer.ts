@@ -56,6 +56,7 @@ import { ocean01, ocean01Weather } from '../maps/ocean01.js';
 import { AmmoCatalog } from '../sim/AmmoCatalog.js';
 import { ArmorCatalog } from '../sim/ArmorCatalog.js';
 import { Bots } from '../sim/Bots.js';
+import { Freighters } from '../sim/Freighters.js';
 import { ShipCatalog } from '../sim/ShipCatalog.js';
 import { World, type WorldEvents } from '../world/World.js';
 import { consumeTicket, redeemedTickets, verifyTicket } from './tickets.js';
@@ -102,6 +103,7 @@ export class GameServer {
    */
   private weatherSetAt = process.hrtime.bigint();
   private bots: Bots | null = null;
+  private freighters: Freighters | null = null;
 
   private http: HttpServer | null = null;
   private io: Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, GameSocketData> | null = null;
@@ -171,6 +173,7 @@ export class GameServer {
     // Seegang in die Welt: er streut jeden Schuss von rollendem Deck.
     this.world.setSeaState(this.weather.seaState);
     this.bots = new Bots(this.world, env.bots);
+    this.freighters = new Freighters(this.world);
 
     this.http = createServer((request, response) => this.handleHttp(request, response));
     this.io = new Server(this.http, {
@@ -276,6 +279,7 @@ export class GameServer {
     socket.data.shipModel = result.claims.shipModel;
     socket.data.armorItem = result.claims.armorItem;
     socket.data.loadout = result.claims.loadout;
+    socket.data.level = result.claims.level;
     next();
   }
 
@@ -318,6 +322,8 @@ export class GameServer {
       // löst der Katalog zu null auf — dann fährt das Boot ungepanzert.
       this.armor.get(socket.data.armorItem),
     );
+    // Level aus dem Ticket — läuft ab jetzt im Broadcast mit (Namensschild).
+    vessel.level = socket.data.level;
     this.loadAmmoFromTicket(socket);
     this.resetTubes(accountId, vessel.model);
     console.log(`[game-server] ${name} (${accountId}) verbunden — ${this.sockets.size} Spieler.`);
@@ -844,6 +850,7 @@ export class GameServer {
     while (this.accumulator >= SIM_STEP_SECONDS && steps < 5) {
       const before = this.ownSignatures();
       this.bots?.update(SIM_STEP_SECONDS);
+      this.freighters?.update(SIM_STEP_SECONDS);
       const events = this.world.update(SIM_STEP_SECONDS);
       this.handleCombatEvents(events);
       this.updateLootAndExtraction(SIM_STEP_SECONDS);
@@ -919,7 +926,9 @@ export class GameServer {
       } else {
         // NPC-Drop nach Beutetabelle; Modelle ohne Eintrag lassen nichts fallen.
         this.world.spawnCrate(wreck.x, wreck.y, NPC_LOOT[model] ?? 0);
+        // Beide prüfen selbst, ob die Id ihnen gehört — nur einer fühlt sich zuständig.
         this.bots?.notifyDestroyed(wreck.id);
+        this.freighters?.notifyDestroyed(wreck.id);
       }
       this.notifyLeft(wreck.id);
     }
@@ -998,6 +1007,7 @@ export class GameServer {
         pending.model,
         this.armor.get(socket.data.armorItem),
       );
+      vessel.level = socket.data.level;
       // KEIN Auffüllen der Munition: der Vorrat gilt für den ganzen Einsatz.
       // Er kommt aus dem Inventar und ist dort schon abgebucht — ein Respawn
       // wäre sonst der bequemste Weg, Torpedos aus dem Nichts zu bekommen.

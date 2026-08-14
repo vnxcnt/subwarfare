@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { wrapCoord } from '@subwarfare/shared';
+import { torusDelta, wrapCoord } from '@subwarfare/shared';
 import { computed } from 'vue';
+import { GRID_CELL_METRES } from '../game/GridOverlay';
 import { currentMapInfo, hud } from '../state/hud';
-import { minimapAlpha, setMinimapAlpha } from '../state/settings';
+import { gridEnabled, minimapAlpha, setMinimapAlpha } from '../state/settings';
 
 /**
  * Minimap als zentriertes Overlay (Taste M): die ganze Karte auf einen Blick,
@@ -32,6 +33,59 @@ const gitter = computed(() => {
   const linien: number[] = [];
   for (let schritt = 5000; schritt < map.width; schritt += 5000) linien.push(schritt);
   return linien;
+});
+
+/**
+ * Planquadrat-Kennungen am Rand (A.. oben, 1.. links) — dieselbe Zählung wie
+ * das Gitter über der See und deshalb an dieselbe Einstellung gekoppelt.
+ */
+const spalten = computed(() => {
+  const map = karte.value;
+  if (!map) return [];
+  return Array.from({ length: Math.round(map.width / GRID_CELL_METRES) }, (_, i) => ({
+    text: String.fromCharCode(65 + i),
+    x: (i + 0.5) * GRID_CELL_METRES,
+  }));
+});
+const zeilen = computed(() => {
+  const map = karte.value;
+  if (!map) return [];
+  return Array.from({ length: Math.round(map.height / GRID_CELL_METRES) }, (_, i) => ({
+    text: `${i + 1}`,
+    y: (i + 0.5) * GRID_CELL_METRES,
+  }));
+});
+
+/**
+ * Frachtroute als Linienzüge. Die Route ist auf dem Torus eine Schleife —
+ * der Schluss vom letzten zum ersten Punkt läuft über die Naht und wird als
+ * zwei Stummel gezeichnet: bis über den Rand hinaus und von der Gegenseite
+ * wieder herein (das SVG schneidet am viewBox-Rand ab).
+ */
+const routenZuege = computed(() => {
+  const map = karte.value;
+  const punkte = map?.route ?? [];
+  if (!map || punkte.length < 2) return [];
+
+  const zuege: string[] = [];
+  const erster = punkte[0] as { x: number; y: number };
+  let aktueller: string[] = [`${erster.x},${erster.y}`];
+  let vorher = erster;
+  for (let i = 1; i <= punkte.length; i += 1) {
+    const punkt = punkte[i % punkte.length] as { x: number; y: number };
+    const dx = torusDelta(vorher.x, punkt.x, map.width);
+    const dy = torusDelta(vorher.y, punkt.y, map.height);
+    if (Math.abs(vorher.x + dx - punkt.x) < 1 && Math.abs(vorher.y + dy - punkt.y) < 1) {
+      aktueller.push(`${punkt.x},${punkt.y}`);
+    } else {
+      aktueller.push(`${vorher.x + dx},${vorher.y + dy}`);
+      zuege.push(aktueller.join(' '));
+      aktueller = [`${punkt.x - dx},${punkt.y - dy}`, `${punkt.x},${punkt.y}`];
+    }
+    vorher = punkt;
+  }
+  zuege.push(aktueller.join(' '));
+  return zuege;
 });
 
 function onAlpha(event: Event): void {
@@ -73,6 +127,29 @@ const emit = defineEmits<{ close: [] }>();
           stroke-width="60"
           stroke-dasharray="400 300"
         />
+
+        <!-- Planquadrat-Kennungen — nur wenn das Gitter aktiv ist. -->
+        <g v-if="gridEnabled" class="minimap__gridlabel">
+          <text v-for="s in spalten" :key="`s${s.text}`" :x="s.x" y="640" text-anchor="middle">
+            {{ s.text }}
+          </text>
+          <text v-for="z in zeilen" :key="`z${z.text}`" x="220" :y="z.y + 170">
+            {{ z.text }}
+          </text>
+        </g>
+
+        <!-- Frachtroute: gestrichelte Seefahrtslinie, Schluss über die Ecke. -->
+        <g v-if="routenZuege.length" class="minimap__route">
+          <polyline v-for="(zug, i) in routenZuege" :key="`r${i}`" :points="zug" />
+          <text
+            :x="karte.width * 0.5 - 700"
+            :y="karte.height * 0.5 - 700"
+            text-anchor="middle"
+            :transform="`rotate(-45 ${karte.width * 0.5 - 700} ${karte.height * 0.5 - 700})`"
+          >
+            FRACHTROUTE
+          </text>
+        </g>
 
         <!-- Extraktionszonen: echter Radius plus ein gut sichtbarer Ring. -->
         <g v-for="exit in karte.exits" :key="exit.id">
@@ -190,6 +267,28 @@ const emit = defineEmits<{ close: [] }>();
   font-size: 560px;
   letter-spacing: 0.14em;
   fill: #6fd0bd;
+}
+
+.minimap__gridlabel text {
+  font-size: 460px;
+  font-weight: 600;
+  fill: #9fd4c8;
+  opacity: 0.45;
+}
+
+.minimap__route polyline {
+  fill: none;
+  stroke: #4f7d9e;
+  stroke-width: 45px;
+  stroke-dasharray: 420 260;
+  opacity: 0.9;
+}
+
+.minimap__route text {
+  font-size: 430px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  fill: #6f95b2;
 }
 
 .minimap__leer {
