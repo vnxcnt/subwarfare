@@ -19,12 +19,6 @@ const name = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
 
-/**
- * Der Entwickler-Zugang existiert ausschließlich im Dev-Build — Vite ersetzt
- * die Konstante zur Bauzeit, im Produktionsbundle fällt der ganze Zweig weg.
- */
-const IS_DEV_BUILD: boolean = import.meta.env.DEV;
-
 /* --- Google-Login (GIS-Button) ------------------------------------------ */
 
 /**
@@ -168,15 +162,16 @@ onMounted(() => {
       </template>
 
       <!--
-        Entwickler-Zugang NUR im Dev-Build (Vite ersetzt import.meta.env.DEV
-        zur Bauzeit — im Produktionsbundle existiert dieser Zweig nicht).
-        Lokal bleibt er das Werkzeug, um ohne Discord-Redirect zu arbeiten;
-        der Server lehnt ihn produktiv ohnehin ab (AUTH_DEV=0).
+        Entwickler-Zugang: allein der SERVER entscheidet (/auth/methods) — die
+        frühere Bauzeit-Sperre (import.meta.env.DEV) ist bewusst raus, damit
+        die Test-Umgebung den Namen-Login auch im Produktions-Build zeigt.
+        Abschalten heißt AUTH_DEV=disabled am Server; dann fehlt der Zweig hier
+        von selbst, und der Server lehnt Anfragen ohnehin ab.
       -->
-      <template v-if="IS_DEV_BUILD && authMethods?.dev">
+      <template v-if="authMethods?.dev">
         <div v-if="authMethods?.discord || authMethods?.google" class="login__divider login__divider--gap"><span>oder</span></div>
         <form class="login__form" @submit.prevent="submitDev">
-          <label class="login__label" for="login-name">Entwickler-Zugang (nur Dev-Build)</label>
+          <label class="login__label" for="login-name">Entwickler-Zugang</label>
           <input
             id="login-name"
             v-model="name"
