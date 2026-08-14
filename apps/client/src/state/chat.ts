@@ -7,7 +7,9 @@ import type {
 import { CHAT_MAX_LENGTH } from '@subwarfare/shared';
 import { io, type Socket } from 'socket.io-client';
 import { reactive, ref } from 'vue';
+import notifyUrl from '../assets/audio/chat_notify.mp3';
 import { API_URL, account, token } from './auth';
+import { volumes } from './settings';
 import { refreshFriends } from './social';
 
 type ChatSocket = Socket<LobbyServerToClientEvents, LobbyClientToServerEvents>;
@@ -51,6 +53,23 @@ const MAX_LINES = 80;
 
 let socket: ChatSocket | null = null;
 let nextId = 1;
+
+/**
+ * Benachrichtigungston für EINGEHENDE Zeilen in Flottille und Privat — der
+ * Hafen bleibt stumm (Dauerfunk aller Verbundenen wäre Dauerklingeln), und
+ * die eigenen Zeilen (Server-Echo) klingeln nicht. Läuft über den
+ * Effekte-Regler; scheitert das Abspielen (Autoplay vor der ersten Geste),
+ * fällt es still aus.
+ */
+const NOTIFY_VOLUME = 0.5;
+let notifySound: HTMLAudioElement | null = null;
+
+function playNotify(): void {
+  notifySound ??= new Audio(notifyUrl);
+  notifySound.volume = Math.min(1, NOTIFY_VOLUME * volumes.value.effects);
+  notifySound.currentTime = 0;
+  notifySound.play().catch(() => {});
+}
 
 export function threadLines(key: ThreadKey): ChatLine[] {
   return (threads[key] ??= []);
@@ -100,6 +119,7 @@ export function connectChat(): void {
       level: payload.level ?? 1,
       role: payload.role ?? 0,
     });
+    if (channel !== 'hafen' && payload.senderId !== account.value?.id) playNotify();
   });
   // Freundschafts-Stand hat sich drüben geändert — Liste nachziehen.
   socket.on('social:update', () => void refreshFriends());

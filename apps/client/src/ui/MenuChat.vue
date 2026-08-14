@@ -402,6 +402,10 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   width: min(23rem, calc(100vw - 2.5rem));
+  /* FESTE Gesamthöhe (= alte Hafen-Ansicht, 327px): die Reiter unterscheiden
+     sich im Innenleben (Eingabezeile, Gesprächskopf, Listen) — ohne feste
+     Höhe spränge das Panel bei jedem Wechsel. Der Inhalt füllt per flex. */
+  height: 20.4375rem;
   padding: 0.7rem 0.9rem 0.8rem;
 }
 
@@ -485,7 +489,9 @@ onMounted(() => {
 }
 
 .chat__zeilen {
-  height: 9.5rem;
+  /* Füllt den Rest der festen Panel-Höhe — in jeder Reiter-Ansicht. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 0.3rem;
   font-size: 0.8125rem;
@@ -499,7 +505,7 @@ onMounted(() => {
 }
 
 .chat__hinweis {
-  min-height: 9.5rem;
+  flex: 1;
 }
 
 .chat__zeile {
@@ -732,12 +738,8 @@ onMounted(() => {
 
 /* Auf sehr flachen Fenstern lieber weniger Funk als verdeckte Panels. */
 @media (max-height: 700px) {
-  .chat__zeilen {
-    height: 6rem;
-  }
-
-  .chat__hinweis {
-    min-height: 6rem;
+  .chat {
+    height: 15rem;
   }
 }
 </style>
