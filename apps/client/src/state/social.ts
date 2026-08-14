@@ -1,4 +1,4 @@
-import type { FriendsPayload, PlayerProfile } from '@subwarfare/shared';
+import type { FriendEntry, FriendsPayload, PlayerProfile } from '@subwarfare/shared';
 import { ref } from 'vue';
 import { API_URL, token } from './auth';
 
@@ -21,6 +21,10 @@ export const friendsLoaded = ref(false);
 /** Geöffnetes Spieler-Profil — null = keine Karte offen. */
 export const profil = ref<PlayerProfile | null>(null);
 export const profilBusy = ref(false);
+
+/** Spielersuche im Freunde-Reiter. */
+export const searchResults = ref<FriendEntry[]>([]);
+export const searchDone = ref(false);
 
 async function api(path: string, body?: unknown): Promise<Response> {
   const headers = new Headers();
@@ -76,6 +80,36 @@ export function cancelRequest(accountId: string): Promise<void> {
 
 export function removeFriend(accountId: string): Promise<void> {
   return friendAction('/social/friends/remove', accountId);
+}
+
+/** Sucht Spieler nach Namen (Teiltreffer, ab zwei Zeichen). */
+export async function searchPlayers(query: string): Promise<void> {
+  const q = query.trim();
+  if (q.length < 2) {
+    searchResults.value = [];
+    searchDone.value = false;
+    return;
+  }
+  try {
+    const response = await api(`/social/search?q=${encodeURIComponent(q)}`);
+    if (!response.ok) return;
+    const data = (await response.json()) as { players: FriendEntry[] };
+    searchResults.value = data.players;
+    searchDone.value = true;
+  } catch {
+    // Suche zeigt dann schlicht nichts Neues.
+  }
+}
+
+/**
+ * Beziehung zu einem Konto aus der geladenen Freundes-Nutzlast — steuert die
+ * Knöpfe an Suchtreffern, ohne je Ergebnis ein Profil zu laden.
+ */
+export function beziehungZu(accountId: string): 'friends' | 'incoming' | 'outgoing' | 'none' {
+  if (friends.value.friends.some((e) => e.accountId === accountId)) return 'friends';
+  if (friends.value.incoming.some((e) => e.accountId === accountId)) return 'incoming';
+  if (friends.value.outgoing.some((e) => e.accountId === accountId)) return 'outgoing';
+  return 'none';
 }
 
 /** Öffnet die Profilkarte eines Spielers (Klick auf einen Namen). */

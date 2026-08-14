@@ -22,12 +22,17 @@ import {
   friends,
   friendsLoaded,
   acceptFriend,
+  beziehungZu,
   cancelRequest,
   declineFriend,
   openConversation,
   openProfile,
   refreshFriends,
   removeFriend,
+  requestFriend,
+  searchDone,
+  searchPlayers,
+  searchResults,
   socialTab,
 } from '../state/social';
 import { rankIconUrl } from './rankIcons';
@@ -100,6 +105,29 @@ function gespraechOeffnen(accountId: string): void {
 
 function zurueckZurListe(): void {
   dmPartner.value = null;
+}
+
+/* --- Spielersuche (Freunde-Reiter) --------------------------------------- */
+
+const suchbegriff = ref('');
+
+function suchen(): void {
+  void searchPlayers(suchbegriff.value);
+}
+
+/** Beschriftung des Aktions-Knopfs am Suchtreffer, je nach Beziehung. */
+function suchAktion(accountId: string): { label: string; aktiv: boolean } {
+  const stand = beziehungZu(accountId);
+  if (stand === 'friends') return { label: 'Freund', aktiv: false };
+  if (stand === 'outgoing') return { label: 'Angefragt', aktiv: false };
+  if (stand === 'incoming') return { label: 'Annehmen', aktiv: true };
+  return { label: 'Anfrage', aktiv: true };
+}
+
+function suchAktionAusfuehren(accountId: string): void {
+  const stand = beziehungZu(accountId);
+  if (stand === 'incoming') void acceptFriend(accountId);
+  else if (stand === 'none') void requestFriend(accountId);
 }
 
 // Geschichte nachladen, sobald ein gespeicherter Faden sichtbar wird —
@@ -240,8 +268,48 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- Freunde: Anfragen + Liste -->
+    <!-- Freunde: Suche + Anfragen + Liste -->
     <div v-else class="chat__zeilen social__liste">
+      <form class="social__suche" @submit.prevent="suchen">
+        <input
+          v-model="suchbegriff"
+          type="text"
+          maxlength="24"
+          placeholder="Spieler suchen …"
+          autocomplete="off"
+        />
+        <button type="submit" :disabled="suchbegriff.trim().length < 2">Suchen</button>
+      </form>
+
+      <template v-if="searchDone">
+        <p class="social__abschnitt">Suchergebnisse</p>
+        <p v-if="searchResults.length === 0" class="chat__leer">
+          Kein Spieler mit diesem Namen gefunden.
+        </p>
+        <div v-for="treffer in searchResults" :key="treffer.accountId" class="social__eintrag">
+          <span class="social__punkt" :class="{ 'social__punkt--online': treffer.online }"></span>
+          <span
+            class="social__name"
+            role="button"
+            tabindex="0"
+            @click="openProfile(treffer.accountId)"
+            @keydown.enter="openProfile(treffer.accountId)"
+          >{{ treffer.displayName }}</span>
+          <span class="social__meta hud__num">Lvl {{ treffer.level }}</span>
+          <span class="social__aktionen">
+            <button
+              type="button"
+              class="social__knopf"
+              :class="{ 'social__knopf--leise': !suchAktion(treffer.accountId).aktiv }"
+              :disabled="!suchAktion(treffer.accountId).aktiv"
+              @click="suchAktionAusfuehren(treffer.accountId)"
+            >
+              {{ suchAktion(treffer.accountId).label }}
+            </button>
+          </span>
+        </div>
+      </template>
+
       <template v-if="friends.incoming.length > 0">
         <p class="social__abschnitt">Anfragen</p>
         <div v-for="anfrage in friends.incoming" :key="anfrage.accountId" class="social__eintrag">
@@ -526,6 +594,54 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+/* Spielersuche — gleiche Formsprache wie die Chat-Eingabe, nur kompakter. */
+.social__suche {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.social__suche input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--gold-border);
+  background: rgb(0 0 0 / 35%);
+  color: #e9e2cd;
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.social__suche input::placeholder {
+  color: #e9e2cd;
+  opacity: 0.35;
+}
+
+.social__suche button {
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--gold);
+  background: var(--gold-faint);
+  color: var(--gold);
+  font: inherit;
+  font-size: 0.5625rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.social__suche button:hover:not(:disabled) {
+  background: rgb(230 207 120 / 22%);
+}
+
+.social__suche button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.social__knopf:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .social__abschnitt {

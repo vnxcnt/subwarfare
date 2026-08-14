@@ -48,6 +48,11 @@ export interface AccountStore {
   /** Entwickler-Login: Konto am Anzeigenamen festgemacht. */
   upsertDev(displayName: string): Promise<Account>;
   byId(id: string): Promise<Account | null>;
+  /**
+   * Namenssuche (Teiltreffer, Groß-/Kleinschreibung egal) — die Spielersuche
+   * im Funkraum. Liefert höchstens `limit` Konten, alphabetisch.
+   */
+  searchByName(query: string, limit: number): Promise<Account[]>;
   touchLogin(id: string): Promise<void>;
   /**
    * Zieht Coins ab, aber nur wenn das Guthaben reicht — Prüfung und Abzug in

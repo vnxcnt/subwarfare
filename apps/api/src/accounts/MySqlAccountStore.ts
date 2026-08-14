@@ -165,6 +165,17 @@ export class MySqlAccountStore implements AccountStore {
     return row ? toAccount(row) : null;
   }
 
+  async searchByName(query: string, limit: number): Promise<Account[]> {
+    // LIKE-Jokerzeichen im Suchtext entschärfen — „%" soll ein Prozentzeichen
+    // im Namen treffen, nicht alles. Injektion ist durch execute ohnehin aus.
+    const muster = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
+    const [rows] = await this.pool.execute<AccountRow[]>(
+      `${SELECT} WHERE display_name LIKE ? ORDER BY display_name ASC LIMIT ${clampLimit(limit)}`,
+      [muster],
+    );
+    return rows.map(toAccount);
+  }
+
   async touchLogin(id: string): Promise<void> {
     await this.pool.execute('UPDATE accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?', [
       id,

@@ -88,6 +88,14 @@ export class MemoryAccountStore implements AccountStore {
     return this.byIdMap.get(id) ?? null;
   }
 
+  async searchByName(query: string, limit: number): Promise<Account[]> {
+    const needle = query.toLowerCase();
+    return [...this.byIdMap.values()]
+      .filter((account) => account.displayName.toLowerCase().includes(needle))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName))
+      .slice(0, Math.max(1, Math.trunc(limit)));
+  }
+
   async touchLogin(id: string): Promise<void> {
     const account = this.byIdMap.get(id);
     if (account) account.lastLoginAt = new Date().toISOString();

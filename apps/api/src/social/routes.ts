@@ -73,6 +73,30 @@ export function registerSocialRoutes(
     return payloadFor(account.id);
   });
 
+  /*
+   * Spielersuche für den Freunde-Reiter: Teiltreffer auf den Anzeigenamen.
+   * Ab zwei Zeichen — eine Ein-Buchstaben-Suche wäre nur ein Konten-Dump mit
+   * Umweg. Das eigene Konto fällt raus (sich selbst findet man nicht).
+   */
+  app.get('/social/search', async (request, reply) => {
+    const account = await accountFromRequest(request, accounts);
+    if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
+    const { q } = (request.query ?? {}) as Partial<{ q: string }>;
+    const query = typeof q === 'string' ? q.trim().slice(0, 24) : '';
+    if (query.length < 2) return { players: [] };
+    const treffer = await accounts.searchByName(query, 20);
+    const players: FriendEntry[] = treffer
+      .filter((konto) => konto.id !== account.id)
+      .map((konto) => ({
+        accountId: konto.id,
+        displayName: konto.displayName,
+        avatarUrl: konto.avatarUrl,
+        level: progressionFromXp(konto.xp).level,
+        online: hooks.online(konto.id),
+      }));
+    return { players };
+  });
+
   app.post('/social/friends/request', async (request, reply) => {
     const account = await accountFromRequest(request, accounts);
     if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
