@@ -34,11 +34,16 @@ export const env = {
   sessionDays: num('SESSION_DAYS', 7),
 
   /**
-   * Entwickler-Login ohne Google. Bewusst ein eigenes Flag statt NODE_ENV:
-   * auf dem VPS wird zuerst ohne Google getestet, das ist dann eine bewusste
-   * Entscheidung und kein Nebeneffekt der Betriebsart.
+   * Name-Login (Entwickler-Login ohne OAuth). Auf Betreiber-Entscheidung vom
+   * 2026-08-14 STANDARDMÄSSIG AKTIV — die Test-Umgebung dev.subwarfare.com
+   * liegt komplett hinter Basic Auth, und zum Testen soll ein bloßer Name
+   * zum Verbinden reichen. Abgeschaltet wird ausdrücklich, nicht per
+   * Weglassen: NUR `AUTH_DEV=disabled` deaktiviert den Weg (vor einem echten
+   * Produktivbetrieb setzen!). Das frühere `AUTH_DEV=0/1` gilt bewusst nicht
+   * mehr — auf dem VPS steht noch ein historisches `AUTH_DEV=0` im
+   * systemd-Env, das sonst jede Freischaltung stumm übersteuern würde.
    */
-  authDev: process.env['AUTH_DEV'] === '1',
+  authDev: process.env['AUTH_DEV'] !== 'disabled',
   googleClientId: process.env['GOOGLE_CLIENT_ID'] ?? '',
 
   /**
