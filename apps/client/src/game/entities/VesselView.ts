@@ -3,7 +3,8 @@ import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { HULL, WAKE } from '../../config';
 import { foamTexture, smokeTexture } from '../fx-textures';
 import { RENDER_ELEVATION, getTilt, screenAxisAngle } from '../Projection';
-import { directionFrame, hasVesselTextures, periscopeFrame } from '../textures';
+import { directionFrame, directionFramePair, hasVesselTextures, periscopeFrame } from '../textures';
+import { HullBlendMesh } from './HullBlendMesh';
 import type { Vessel } from '@subwarfare/shared';
 
 const HALF = HULL.length / 2;
@@ -55,22 +56,16 @@ function restwinkel(frameKurs: number, echterKurs: number): number {
 }
 
 /**
- * Dauer der Überblendung beim Framewechsel. Kurz genug, um bei 8°/s Drehrate
- * (ein Wechsel alle ~2,8 s) längst fertig zu sein, bevor der nächste kommt —
- * lang genug, dass der Perspektivsprung nicht mehr als Blitz wahrgenommen wird.
- */
-const CROSSFADE_SECONDS = 0.13;
-
-/**
- * Die sichtbare Seite eines Fahrzeugs — seit fregatte01 ein
- * **16-Richtungs-Billboard** (bewusste Design-Entscheidung des Users am
- * 2026-08-10), seit dem Smoothing-Umbau mit **stufenloser Drehung**:
+ * Die sichtbare Seite eines Fahrzeugs — ein Richtungs-Billboard (64 Ansichten
+ * je Modell), seit dem Blend-Umbau mit **kontinuierlichem Übergang**:
  *
- * Pro Kurs wird der nächstliegende Frame (`dir-00..15`) gewählt und das
- * Sprite um den RESTWINKEL zum echten Kurs nachgedreht (±11,25° maximal).
- * Die Fahrtrichtung ändert sich damit kontinuierlich — am Framewechsel
- * springt nur die Perspektive minimal, nie der Kurs. Dass die Optik der
- * gedrehten Frames nicht exakt stimmt, ist die abgesprochene Abwägung.
+ * Zu jedem Kurs liegen die beiden NACHBAR-Ansichten übereinander — die untere
+ * voll deckend, die obere mit dem Winkelanteil als Deckkraft — und beide sind
+ * um ihren Restwinkel exakt auf den echten Kurs gedreht. An der Rastergrenze
+ * ist die obere exakt voll deckend und übernimmt als neue untere: es gibt
+ * keinen Umschaltmoment mehr. (Der frühere zeitgesteuerte Geist-Crossfade von
+ * 130 ms kaschierte den Perspektivsprung nur — beim Drehen blieb ein
+ * sichtbares Pulsieren im Takt der Rasterwechsel.)
  *
  * Deshalb lebt das Billboard in der AUFRECHTEN `entityLayer`: dort ist die
  * Restdrehung eine echte Bildschirmdrehung. In der gekippten Wasserebene
@@ -83,7 +78,7 @@ const CROSSFADE_SECONDS = 0.13;
  */
 export class VesselView {
   private readonly root = new Container();
-  private readonly hull: Sprite | Graphics;
+  private readonly hull: HullBlendMesh | Graphics;
   private readonly order = new Graphics();
 
   /**
@@ -114,19 +109,6 @@ export class VesselView {
   private sprayPhase = 0;
   /** Umriss des Kontaktschattens, wiederverwendet — das läuft jeden Frame. */
   private readonly shadowPoints = new Array<number>(SHADOW_SEGMENTS * 2).fill(0);
-
-  /**
-   * Überblendung beim Framewechsel: der ALTE Frame liegt kurz über dem neuen
-   * und blendet aus. Ohne das wechselt die Perspektive als sichtbarer Blitz —
-   * mit 130 ms Übergang löst sich das eine Foto ins nächste auf.
-   */
-  private readonly ghost: Sprite | null = null;
-  private ghostAngle = 0;
-  private ghostFade = 0;
-  /** Maßstab des zuletzt gezeigten Frames — der Geist braucht den ALTEN. */
-  private currentMetresPerPx = 1;
-  /** Rasterkurs des aktuell gezeigten Frames; null vor dem ersten sync. */
-  private currentAngle: number | null = null;
 
   /** Periskop — sichtbar nur, wenn das Modell eines gesetzt hat (depth+periscope). */
   private readonly periscope: Sprite | null = null;
@@ -160,12 +142,7 @@ export class VesselView {
     this.hull = createHull();
     this.root.addChild(this.hull);
 
-    if (this.hull instanceof Sprite) {
-      this.ghost = new Sprite({ texture: this.hull.texture, anchor: 0.5, visible: false });
-      // Über dem Rumpf: der alte Frame verdeckt den neuen und gibt ihn beim
-      // Ausblenden frei.
-      this.root.addChild(this.ghost);
-
+    if (this.hull instanceof HullBlendMesh) {
       const frame = periscopeFrame(0);
       if (frame) {
         this.periscope = new Sprite({ texture: frame.texture, anchor: frame.anchor, visible: false });
@@ -232,54 +209,35 @@ export class VesselView {
     // aber ganzzahliges Welt-y ist stabiler gegen Rundungsflattern.
     this.root.zIndex = Math.round(model.y);
 
-    if (this.hull instanceof Sprite) {
-      const frame = directionFrame(model.model, model.rotation);
-      if (frame) {
-        const metresPerPx = frame.metresPerPx;
+    // Tauch-Darstellung vorziehen — Tint und Deckkraft gehen mit ins Mesh.
+    const depth = Math.min(Math.max(model.depth, 0), 1);
+    const hullAlpha = 1 - depth * (isOwn ? 0.45 : 1);
 
-        if (this.hull.texture !== frame.texture) {
-          // Framewechsel: der bisherige Frame wird zum Geist und blendet aus.
-          // Beim allerersten sync (currentAngle noch null) gibt es nichts zu
-          // überblenden — das wäre ein Aufblitzen des 0°-Platzhalters.
-          if (this.ghost && this.currentAngle !== null) {
-            this.ghost.texture = this.hull.texture;
-            // Der Geist übernimmt auch den ANKER des alten Frames — jedes
-            // Frame hat seinen eigenen Pivot aus den Metadaten. Und den ALTEN
-            // Maßstab: bei einem Modellwechsel unterscheiden sich die beiden.
-            this.ghost.anchor.copyFrom(this.hull.anchor);
-            this.ghostAngle = this.currentAngle;
-            this.ghostFade = CROSSFADE_SECONDS;
-            this.ghost.visible = true;
-            this.ghost.width = this.hull.texture.width * this.currentMetresPerPx;
-            this.ghost.height = this.hull.texture.height * this.currentMetresPerPx;
-          }
-          this.hull.texture = frame.texture;
-          this.hull.anchor.set(frame.anchor.x, frame.anchor.y);
-        }
-        this.currentAngle = frame.angleDegrees;
-        this.currentMetresPerPx = metresPerPx;
-
-        // Stufenlos: der Frame zeigt seinen Rasterkurs, der Restwinkel dreht
-        // das Bild exakt auf den echten Kurs. Bildschirmdrehung — die Ebene
-        // ist uniform skaliert, hier schert nichts.
-        this.hull.rotation = restwinkel(frame.angleDegrees, model.rotation);
-
-        // Weltmaßstab direkt — keine 1/tilt-Gegenskalierung mehr nötig, die
-        // aufrechte Ebene staucht ja nicht.
-        this.hull.width = frame.texture.width * metresPerPx;
-        this.hull.height = frame.texture.height * metresPerPx;
-      }
-
-      if (this.ghost && this.ghost.visible) {
-        this.ghostFade -= frameSeconds;
-        if (this.ghostFade <= 0) {
-          this.ghost.visible = false;
-        } else {
-          this.ghost.alpha = this.ghostFade / CROSSFADE_SECONDS;
-          // Auch der Geist zeigt auf den ECHTEN Kurs — beide Bilder derselben
-          // Fahrt, nur aus zwei Perspektiven.
-          this.ghost.rotation = restwinkel(this.ghostAngle, model.rotation);
-        }
+    if (this.hull instanceof HullBlendMesh) {
+      const paar = directionFramePair(model.model, model.rotation);
+      if (paar) {
+        const { unter, ueber, anteil } = paar;
+        /*
+         * Smoothstep statt linearer Rampe: die lineare Blende hat an den
+         * Rasterenden harte KNICKE in der Änderungsrate — sichtbar als kurzes
+         * „Einrasten" in die reine Ansicht. Mit weichem Ein- und Auslauf ruht
+         * die Perspektive an den Enden und überblendet in der Mitte flotter.
+         */
+        const weich = anteil * anteil * (3 - 2 * anteil);
+        /*
+         * Beide Ansichten zeigen per Restwinkel auf den ECHTEN Kurs; gemischt
+         * wird PRO PIXEL im Shader — siehe HullBlendMesh, warum zwei Sprites
+         * das nicht sauber können.
+         */
+        this.hull.setPair(
+          unter,
+          ueber,
+          weich,
+          restwinkel(unter.angleDegrees, model.rotation),
+          restwinkel(ueber.angleDegrees, model.rotation),
+          tintForDepth(depth),
+          hullAlpha,
+        );
       }
     } else {
       // Fallback-Polygon dreht klassisch mit dem Kurs. In der aufrechten
@@ -290,16 +248,10 @@ export class VesselView {
     // Tauch-Darstellung: getauchte Boote rutschen optisch unter die
     // Wasseroberfläche — dunkler getönt und durchscheinend. Fremde
     // verschwinden bei voller Tiefe GANZ (sichtbar bleibt höchstens ihr
-    // Periskop), das eigene bleibt als Schemen lesbar. Tint/Alpha liegen am
-    // RUMPF, nicht am Root — das Periskop ragt über Wasser und bleibt klar.
-    const depth = Math.min(Math.max(model.depth, 0), 1);
-    const hullAlpha = 1 - depth * (isOwn ? 0.45 : 1);
-    this.hull.alpha = hullAlpha;
-    if (this.hull instanceof Sprite) this.hull.tint = tintForDepth(depth);
-    if (this.ghost) {
-      this.ghost.tint = tintForDepth(depth);
-      if (this.ghost.visible) this.ghost.alpha = Math.min(this.ghost.alpha, hullAlpha);
-    }
+    // Periskop), das eigene bleibt als Schemen lesbar. Tint/Alpha stecken im
+    // Mesh (oben mitgegeben), NICHT am Root — das Periskop ragt über Wasser
+    // und bleibt klar. Nur das Fallback-Polygon braucht die Deckkraft hier.
+    if (!(this.hull instanceof HullBlendMesh)) this.hull.alpha = hullAlpha;
 
     // Periskop: erscheint mit dem Ausfahren, wächst mit dem Ausfahrstand und
     // ist nur relevant, wenn das Boot (teilweise) unter Wasser liegt.
@@ -667,14 +619,14 @@ export function tintForDepth(depth: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
-function createHull(): Sprite | Graphics {
+function createHull(): HullBlendMesh | Graphics {
   if (hasVesselTextures()) {
     const frame = directionFrame(DEFAULT_VESSEL_MODEL, 0);
     if (frame) {
-      // Anker = Modell-Pivot des Frames (aus den Meshy-Metadaten): alle
-      // Frames sitzen damit exakt auf demselben Weltpunkt, und die
-      // Restwinkel-Drehung dreht um den Rumpf statt um die Bildmitte.
-      return new Sprite({ texture: frame.texture, anchor: frame.anchor });
+      // Die Anker (Modell-Pivots aus den Meshy-Metadaten) verrechnet das
+      // Mesh je Frame selbst — alle Ansichten sitzen exakt auf demselben
+      // Weltpunkt, gedreht wird um den Rumpf statt um die Bildmitte.
+      return new HullBlendMesh(frame.texture);
     }
   }
 

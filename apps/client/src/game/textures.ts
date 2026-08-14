@@ -320,6 +320,43 @@ export function directionFrame(model: string, courseDegrees: number): DirectionF
   return direction ? { ...direction, metresPerPx: entry.metresPerPx } : null;
 }
 
+/** Die beiden Nachbar-Ansichten eines Kurses samt Mischanteil. */
+export interface DirectionFramePair {
+  /** Ansicht UNTER dem Kurs (voll deckend gezeichnet). */
+  unter: DirectionFrame;
+  /** Nächste Ansicht im Uhrzeigersinn (mit `anteil` darübergelegt). */
+  ueber: DirectionFrame;
+  /** Winkelposition zwischen beiden, 0..1 — die Deckkraft der oberen. */
+  anteil: number;
+}
+
+/**
+ * Beide Nachbar-Frames zum Kurs — für den KONTINUIERLICHEN Winkel-Blend der
+ * Schiffe: statt beim Rasterwechsel umzuschalten (und den Perspektivsprung
+ * mit einer Zeitblende zu kaschieren), liegen immer beide Nachbarn
+ * übereinander, und `anteil` wandert stetig mit dem Kurs. An der Rastergrenze
+ * ist die obere Ansicht exakt voll deckend und übernimmt als neue untere —
+ * es gibt keinen Umschaltmoment mehr, den man sehen könnte.
+ */
+export function directionFramePair(
+  model: string,
+  courseDegrees: number,
+): DirectionFramePair | null {
+  const entry = loaded.get(model) ?? loaded.get(DEFAULT_VESSEL_MODEL);
+  if (!entry) return null;
+  const position = (((courseDegrees % 360) + 360) % 360) / entry.degreesPerFrame;
+  const index = Math.floor(position) % entry.directions.length;
+  const naechster = (index + 1) % entry.directions.length;
+  const a = entry.directions[index];
+  const b = entry.directions[naechster];
+  if (!a || !b) return null;
+  return {
+    unter: { ...a, metresPerPx: entry.metresPerPx },
+    ueber: { ...b, metresPerPx: entry.metresPerPx },
+    anteil: position - Math.floor(position),
+  };
+}
+
 export function hasVesselTextures(): boolean {
   return loaded.size > 0;
 }
