@@ -13,6 +13,7 @@ import FlottillePanel from '../ui/menu/FlottillePanel.vue';
 import MenuNav from '../ui/menu/MenuNav.vue';
 import NeuigkeitenPanel from '../ui/menu/NeuigkeitenPanel.vue';
 import PlayerBadge from '../ui/menu/PlayerBadge.vue';
+import StatistikPanel from '../ui/menu/StatistikPanel.vue';
 import WerftPanel from '../ui/menu/WerftPanel.vue';
 import type { MenuSection } from '../ui/menu/sections';
 import MenuChat from '../ui/MenuChat.vue';
@@ -178,6 +179,7 @@ onBeforeUnmount(() => {
       <AuslaufenPanel v-if="section === 'auslaufen'" />
       <WerftPanel v-else-if="section === 'werft'" />
       <FlottillePanel v-else-if="section === 'flottille'" />
+      <StatistikPanel v-else-if="section === 'statistiken'" />
       <NeuigkeitenPanel v-else-if="section === 'neuigkeiten'" />
     </div>
 

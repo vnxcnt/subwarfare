@@ -15,6 +15,7 @@ import { MemoryInventoryStore, type InventoryStore } from './economy/store.js';
 import { registerFleetRoutes } from './fleet/routes.js';
 import { MySqlFleetStore } from './fleet/MySqlFleetStore.js';
 import { MemoryFleetStore, type FleetStore } from './fleet/store.js';
+import { registerStatsRoutes } from './stats/routes.js';
 import { migrate } from './db/migrate.js';
 import { env, warnAboutDefaults } from './env.js';
 import { fetchGameServerStatus } from './gameserver/status.js';
@@ -70,6 +71,7 @@ await app.register(
     registerAuthRoutes(scope, accounts, inventory);
     registerEconomyRoutes(scope, accounts, inventory);
     registerFleetRoutes(scope, accounts, fleets);
+    registerStatsRoutes(scope, accounts);
 
     // Interner Kanal für den Spielserver — derselbe Schlüssel wie dessen
     // /status. Von außen kommt man über Caddy zwar an die URL, aber ohne

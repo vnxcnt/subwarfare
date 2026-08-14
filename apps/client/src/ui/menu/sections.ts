@@ -3,7 +3,7 @@
  * `<script setup>` erlaubt keine Modul-Exporte, und Shell wie Nav brauchen
  * denselben Typ.
  */
-export type MenuSection = 'auslaufen' | 'werft' | 'flottille' | 'neuigkeiten';
+export type MenuSection = 'auslaufen' | 'werft' | 'flottille' | 'statistiken' | 'neuigkeiten';
 
 /** Die drei großen Menüpunkte der linken Spalte, in Anzeige-Reihenfolge. */
 export const MAIN_SECTIONS: ReadonlyArray<{

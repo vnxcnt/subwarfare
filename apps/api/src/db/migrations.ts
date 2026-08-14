@@ -284,4 +284,15 @@ export const MIGRATIONS: readonly Migration[] = [
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     ],
   },
+  {
+    id: 14,
+    name: 'statistik',
+    statements: [
+      // PvP-Zaehler. NUR Spieler-gegen-Spieler — NPC-Abschuesse zaehlen hier
+      // nicht (die geben nur XP). Das Level wird weiterhin NIE gespeichert,
+      // es leitet sich aus dem xp-Stand ab (siehe meta/progression.ts).
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS kills INT UNSIGNED NOT NULL DEFAULT 0`,
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deaths INT UNSIGNED NOT NULL DEFAULT 0`,
+    ],
+  },
 ];

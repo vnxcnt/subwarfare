@@ -7,6 +7,7 @@ import artAuslaufen from '../../assets/ui/menu/auslaufen.webp';
 import artFlottille from '../../assets/ui/menu/flottille.webp';
 import artLogout from '../../assets/ui/menu/logout.webp';
 import artNeuigkeiten from '../../assets/ui/menu/neuigkeiten.webp';
+import artStatistiken from '../../assets/ui/menu/statistiken.webp';
 import artWerft from '../../assets/ui/menu/werft.webp';
 import seperatorUrl from '../../assets/ui/menu/seperator_menu.webp';
 import { account, logout, progression } from '../../state/auth';
@@ -29,6 +30,7 @@ const NAV_ART: Record<MenuSection, string> = {
   auslaufen: artAuslaufen,
   werft: artWerft,
   flottille: artFlottille,
+  statistiken: artStatistiken,
   neuigkeiten: artNeuigkeiten,
 };
 
@@ -94,6 +96,16 @@ function signOut(): void {
       <span class="nav__trenner-linie nav__trenner-linie--rechts"></span>
     </div>
 
+    <button
+      type="button"
+      class="nav__item nav__item--small"
+      :class="{ 'nav__item--active': section === 'statistiken' }"
+      data-section="statistiken"
+      :style="artStyle(NAV_ART.statistiken)"
+      @click="wechsle('statistiken')"
+    >
+      <span class="nav__item-label">Statistiken</span>
+    </button>
     <button
       type="button"
       class="nav__item nav__item--small"

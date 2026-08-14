@@ -1,4 +1,4 @@
-import type { AccountProfile } from '@subwarfare/shared';
+import type { AccountProfile, PvpLeaderboardEntry, XpLeaderboardEntry } from '@subwarfare/shared';
 
 /**
  * Konto, wie es intern vorliegt — mit Feldern, die nie nach außen gehen.
@@ -14,6 +14,9 @@ export interface Account extends Omit<AccountProfile, 'hasGoogle' | 'hasDiscord'
   /** Kontorolle: 0 Spieler, 1 Moderator, 2 Gamemaster, 3 Entwickler. */
   role: number;
   lastLoginAt: string;
+  /** PvP-Zähler — nur Spieler-gegen-Spieler, NPC-Abschüsse zählen nicht. */
+  kills: number;
+  deaths: number;
 }
 
 export interface GoogleIdentity {
@@ -54,6 +57,20 @@ export interface AccountStore {
   spendCoins(id: string, amount: number): Promise<boolean>;
   /** Schreibt Coins gut — Erstattungen und (später) Belohnungen. */
   addCoins(id: string, amount: number): Promise<void>;
+  /** Schreibt XP gut — Abzug gibt es nicht, XP sind monoton. */
+  addXp(id: string, amount: number): Promise<void>;
+  /** PvP-Abschuss des Kontos (+1 kills). Nur Spieler-gegen-Spieler. */
+  recordPvpKill(id: string): Promise<void>;
+  /** PvP-Untergang des Kontos (+1 deaths). Nur wenn der Killer ein Spieler war. */
+  recordPvpDeath(id: string): Promise<void>;
+  /**
+   * Bestenlisten, absteigend sortiert (PvP nach Kills, XP nach Stand) und
+   * bereits als Wire-Typen inklusive abgeleitetem Level. Konten ohne
+   * Gefechtsberührung bzw. ohne XP tauchen nicht auf — eine Bestenliste aus
+   * Nullzeilen sagt nichts und leakt nebenbei die komplette Kontoliste.
+   */
+  topPvp(limit: number): Promise<PvpLeaderboardEntry[]>;
+  topXp(limit: number): Promise<XpLeaderboardEntry[]>;
   /**
    * Löscht das Konto endgültig — samt allem, was daran hängt (Inventar,
    * Ausrüstung, Dev-Verknüpfung; in MariaDB über die CASCADE-Fremdschlüssel).

@@ -1,5 +1,7 @@
 import type { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
+import type { PvpLeaderboardEntry, XpLeaderboardEntry } from '@subwarfare/shared';
+import { progressionFromXp } from '@subwarfare/shared';
 import { closePool, getPool } from '../db/pool.js';
 import type {
   Account,
@@ -22,6 +24,8 @@ interface AccountRow extends RowDataPacket {
   role: number;
   created_at: string;
   last_login_at: string;
+  kills: number;
+  deaths: number;
 }
 
 function toAccount(row: AccountRow): Account {
@@ -38,12 +42,23 @@ function toAccount(row: AccountRow): Account {
     role: row.role,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at,
+    kills: row.kills,
+    deaths: row.deaths,
   };
 }
 
 const SELECT = `SELECT id, google_sub, discord_id, email, display_name, avatar_url, is_dev,
-                       coins, xp, role, created_at, last_login_at
+                       coins, xp, role, created_at, last_login_at, kills, deaths
                   FROM accounts`;
+
+/**
+ * LIMIT inline statt als Platzhalter: vorbereitete Anweisungen mit `LIMIT ?`
+ * lehnt MariaDB je nach Treiber-Modus ab (gleiches Muster wie im
+ * MySqlFleetStore). Die Klemmung macht den Wert garantiert zur harmlosen Zahl.
+ */
+function clampLimit(limit: number): number {
+  return Math.max(1, Math.min(50, Math.trunc(limit)));
+}
 
 /**
  * Konten in MariaDB.
@@ -169,6 +184,51 @@ export class MySqlAccountStore implements AccountStore {
 
   async addCoins(id: string, amount: number): Promise<void> {
     await this.pool.execute('UPDATE accounts SET coins = coins + ? WHERE id = ?', [amount, id]);
+  }
+
+  async addXp(id: string, amount: number): Promise<void> {
+    await this.pool.execute('UPDATE accounts SET xp = xp + ? WHERE id = ?', [amount, id]);
+  }
+
+  async recordPvpKill(id: string): Promise<void> {
+    await this.pool.execute('UPDATE accounts SET kills = kills + 1 WHERE id = ?', [id]);
+  }
+
+  async recordPvpDeath(id: string): Promise<void> {
+    await this.pool.execute('UPDATE accounts SET deaths = deaths + 1 WHERE id = ?', [id]);
+  }
+
+  async topPvp(limit: number): Promise<PvpLeaderboardEntry[]> {
+    // deaths ASC als Tie-Break = bessere Quote zuerst; display_name macht die
+    // Reihenfolge deterministisch.
+    const [rows] = await this.pool.execute<AccountRow[]>(
+      `SELECT id, display_name, xp, kills, deaths FROM accounts
+        WHERE kills > 0 OR deaths > 0
+        ORDER BY kills DESC, deaths ASC, display_name ASC
+        LIMIT ${clampLimit(limit)}`,
+    );
+    return rows.map((row) => ({
+      accountId: row.id,
+      displayName: row.display_name,
+      level: progressionFromXp(Number(row.xp)).level,
+      kills: row.kills,
+      deaths: row.deaths,
+    }));
+  }
+
+  async topXp(limit: number): Promise<XpLeaderboardEntry[]> {
+    const [rows] = await this.pool.execute<AccountRow[]>(
+      `SELECT id, display_name, xp FROM accounts
+        WHERE xp > 0
+        ORDER BY xp DESC, display_name ASC
+        LIMIT ${clampLimit(limit)}`,
+    );
+    return rows.map((row) => ({
+      accountId: row.id,
+      displayName: row.display_name,
+      level: progressionFromXp(Number(row.xp)).level,
+      xp: Number(row.xp),
+    }));
   }
 
   async linkGoogle(id: string, identity: GoogleIdentity): Promise<LinkResult> {

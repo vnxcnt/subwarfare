@@ -45,9 +45,9 @@ export const XP_BASE = 500;
  *
  * 1,35 hält die Spanne fahrbar: Der letzte Aufstieg (19 → 20) kostet damit
  * 110.912 XP (das ~222-Fache des ersten), der Gesamtweg bis Level 20 liegt
- * bei 426.374 XP. Eine reine Stellschraube — solange es keine XP-Vergabe
- * gibt, ist sie folgenlos änderbar, danach nur noch mit Neuberechnung der
- * Spielstände.
+ * bei 426.374 XP. Seit es XP-Vergabe gibt (XP_REWARDS in meta/stats.ts),
+ * ist das keine freie Stellschraube mehr: eine Kurven-Änderung verschiebt
+ * die Level aller Bestandskonten und braucht eine bewusste Entscheidung.
  */
 export const XP_GROWTH = 1.35;
 

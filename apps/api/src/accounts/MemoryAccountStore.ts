@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import type { PvpLeaderboardEntry, XpLeaderboardEntry } from '@subwarfare/shared';
+import { progressionFromXp } from '@subwarfare/shared';
 import type {
   Account,
   AccountStore,
@@ -103,6 +105,54 @@ export class MemoryAccountStore implements AccountStore {
     if (account) account.coins += amount;
   }
 
+  async addXp(id: string, amount: number): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (account) account.xp += amount;
+  }
+
+  async recordPvpKill(id: string): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (account) account.kills += 1;
+  }
+
+  async recordPvpDeath(id: string): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (account) account.deaths += 1;
+  }
+
+  async topPvp(limit: number): Promise<PvpLeaderboardEntry[]> {
+    // Identische Filter- und Sortierlogik wie im MySqlAccountStore.
+    return [...this.byIdMap.values()]
+      .filter((account) => account.kills > 0 || account.deaths > 0)
+      .sort(
+        (a, b) =>
+          b.kills - a.kills ||
+          a.deaths - b.deaths ||
+          a.displayName.localeCompare(b.displayName),
+      )
+      .slice(0, Math.max(1, Math.trunc(limit)))
+      .map((account) => ({
+        accountId: account.id,
+        displayName: account.displayName,
+        level: progressionFromXp(account.xp).level,
+        kills: account.kills,
+        deaths: account.deaths,
+      }));
+  }
+
+  async topXp(limit: number): Promise<XpLeaderboardEntry[]> {
+    return [...this.byIdMap.values()]
+      .filter((account) => account.xp > 0)
+      .sort((a, b) => b.xp - a.xp || a.displayName.localeCompare(b.displayName))
+      .slice(0, Math.max(1, Math.trunc(limit)))
+      .map((account) => ({
+        accountId: account.id,
+        displayName: account.displayName,
+        level: progressionFromXp(account.xp).level,
+        xp: account.xp,
+      }));
+  }
+
   async linkGoogle(id: string, identity: GoogleIdentity): Promise<LinkResult> {
     const account = this.byIdMap.get(id);
     if (!account) return 'conflict';
@@ -144,7 +194,10 @@ export class MemoryAccountStore implements AccountStore {
   }
 
   private create(
-    fields: Omit<Account, 'id' | 'createdAt' | 'lastLoginAt' | 'coins' | 'xp' | 'role'>,
+    fields: Omit<
+      Account,
+      'id' | 'createdAt' | 'lastLoginAt' | 'coins' | 'xp' | 'role' | 'kills' | 'deaths'
+    >,
   ): Account {
     const now = new Date().toISOString();
     const account: Account = {
@@ -154,6 +207,8 @@ export class MemoryAccountStore implements AccountStore {
       coins: 0,
       xp: 0,
       role: 0,
+      kills: 0,
+      deaths: 0,
       createdAt: now,
       lastLoginAt: now,
     };

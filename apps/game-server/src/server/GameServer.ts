@@ -34,6 +34,7 @@ import {
 } from '@subwarfare/shared';
 import type {
   LoadoutEntryStack,
+  StatsEvent,
   TubePosition,
   TubeState,
   WeaponId,
@@ -811,6 +812,24 @@ export class GameServer {
     });
   }
 
+  /**
+   * Meldet Kampf-/Fortschritts-Ereignisse ans Backend (XP, Kills/Tode).
+   * Fire-and-forget wie reportSortieEnd — aber bewusst ein EIGENER Endpoint:
+   * sortie-end kehrt bei leerer Nutzlast früh um und wird beim Disconnect
+   * absichtlich nicht gerufen; Kills dürfen an beidem nicht hängen.
+   */
+  private reportStats(events: StatsEvent[]): void {
+    if (events.length === 0) return;
+    fetch(`${env.apiInternalUrl}/api/internal/stats`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-internal-key': env.internalKey },
+      body: JSON.stringify({ events }),
+      signal: AbortSignal.timeout(3000),
+    }).catch((error) => {
+      console.warn('[game-server] Statistik-Meldung fehlgeschlagen:', error);
+    });
+  }
+
   private sendOwn(socket: GameSocket, vessel: Vessel): void {
     const accountId = socket.data.accountId;
     const ammo = this.ammo.get(accountId);
@@ -881,6 +900,10 @@ export class GameServer {
   private handleCombatEvents(events: WorldEvents): void {
     for (const impact of events.impacts) this.emitFx('impact', impact.x, impact.y);
 
+    // Statistik-Ereignisse des Schritts, gesammelt und in EINER Meldung ans
+    // Backend — eine Salve oder beidseitiges Rammen versenkt mehrere auf einmal.
+    const stats: StatsEvent[] = [];
+
     for (const wreck of events.destroyed) {
       // fx VOR dem Entfernen — der Betroffene selbst ist noch Beobachter und
       // soll seinen eigenen Untergang sehen.
@@ -903,7 +926,20 @@ export class GameServer {
       this.world.remove(wreck.id);
 
       const socket = this.sockets.get(wreck.id);
+      // Killer-Prüfung über die sockets-Map, NICHT über die Welt: der
+      // Versenker kann im selben Schritt selbst versenkt worden sein
+      // (beidseitiges Rammen) — sein Socket lebt aber noch, und genau deshalb
+      // zählt der Ramm-Tausch für beide. Selbst-Kill (eigene Wasserbombe)
+      // ist ausgenommen.
+      const killerSocket =
+        wreck.killerId && wreck.killerId !== wreck.id
+          ? this.sockets.get(wreck.killerId)
+          : undefined;
       if (socket) {
+        // Kill und Death aus DEMSELBEN Ereignis — Death nur bei Spieler-Killer.
+        if (killerSocket) {
+          stats.push({ type: 'pvp_kill', killerId: wreck.killerId!, victimId: wreck.id });
+        }
         /*
          * Spieler-Drop: Einsatzgebühr des TICKET-Schiffs (nur beim ersten
          * Untergang — sie wurde einmal bezahlt) plus alles, was er trug.
@@ -924,6 +960,11 @@ export class GameServer {
         socket.emit('destroyed', { respawnSeconds: RESPAWN_SECONDS });
         console.log(`[game-server] ${socket.data.name} versenkt — Respawn in ${RESPAWN_SECONDS} s.`);
       } else {
+        // Versenkter NPC gibt dem Spieler-Killer XP (weniger als ein Spieler,
+        // und ohne K/D-Wirkung — die zählt nur Spieler gegen Spieler).
+        if (killerSocket) {
+          stats.push({ type: 'npc_kill', accountId: wreck.killerId! });
+        }
         // NPC-Drop nach Beutetabelle; Modelle ohne Eintrag lassen nichts fallen.
         this.world.spawnCrate(wreck.x, wreck.y, NPC_LOOT[model] ?? 0);
         // Beide prüfen selbst, ob die Id ihnen gehört — nur einer fühlt sich zuständig.
@@ -932,6 +973,8 @@ export class GameServer {
       }
       this.notifyLeft(wreck.id);
     }
+
+    this.reportStats(stats);
   }
 
   /**
@@ -981,6 +1024,9 @@ export class GameServer {
     // Abrechnung JETZT, solange Vorrat und Rohre noch stehen — der
     // Disconnect-Handler räumt sie gleich weg.
     this.reportSortieEnd(accountId, socket.data.loadout, coins);
+    // Extraktions-XP nur HIER, nicht beim Server-Shutdown: der rechnet zwar
+    // Loot ab, ist aber keine erspielte Extraktion.
+    this.reportStats([{ type: 'extraction', accountId }]);
     socket.emit('extracted', { coins });
     console.log(`[game-server] ${socket.data.name} extrahiert — ${coins} Coins gesichert.`);
     // Trennung leicht verzögert, damit das extracted-Paket sicher rausgeht —
