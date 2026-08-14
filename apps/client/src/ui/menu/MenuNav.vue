@@ -4,6 +4,7 @@ import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import logoUrl from '../../assets/ui/logo_main_white_login.png';
 import artAuslaufen from '../../assets/ui/menu/auslaufen.webp';
+import artEinstellungen from '../../assets/ui/menu/einstellungen.webp';
 import artFlottille from '../../assets/ui/menu/flottille.webp';
 import artLogout from '../../assets/ui/menu/logout.webp';
 import artNeuigkeiten from '../../assets/ui/menu/neuigkeiten.webp';
@@ -25,6 +26,13 @@ import { MAIN_SECTIONS, type MenuSection } from './sections';
  * Klick auf den aktiven Punkt schließt zurück zum Landing (nur Hafenbild).
  */
 const section = defineModel<MenuSection | null>({ required: true });
+
+/**
+ * Einstellungen sind KEIN Bereich, sondern ein Overlay über allem (auch im
+ * Spiel nutzbar) — der Knopf meldet deshalb nur nach oben, statt `section`
+ * zu schalten. Die Shell öffnet dann das SettingsPanel.
+ */
+const emit = defineEmits<{ settings: [] }>();
 
 const NAV_ART: Record<MenuSection, string> = {
   auslaufen: artAuslaufen,
@@ -115,6 +123,15 @@ function signOut(): void {
       @click="wechsle('neuigkeiten')"
     >
       <span class="nav__item-label">Neuigkeiten</span>
+    </button>
+    <button
+      type="button"
+      class="nav__item nav__item--small"
+      data-action="einstellungen"
+      :style="artStyle(artEinstellungen)"
+      @click="emit('settings')"
+    >
+      <span class="nav__item-label">Einstellungen</span>
     </button>
     <button
       type="button"

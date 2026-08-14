@@ -7,11 +7,9 @@ import { rankIconUrl } from '../rankIcons';
  * Spieler-Plakette oben rechts — Identität, Rang, XP und Coins auf einen
  * Blick (AoE2-Vorbild). Der middlemenu-Rahmen ist der einzige 9-Slice mit
  * gefülltem Grund und deckt damit den hellen Himmel des Hafenbilds ab.
- * Das Zahnrad öffnet die Einstellungen — die linke Menüspalte bleibt frei
- * für die Spiel-Bereiche.
+ * Die Einstellungen öffnet der eigene Menüpunkt in der linken Spalte —
+ * die Plakette zeigt nur an.
  */
-const emit = defineEmits<{ settings: [] }>();
-
 const coinsFormat = new Intl.NumberFormat('de-DE');
 const coins = computed(() => coinsFormat.format(account.value?.coins ?? 0));
 const rankIcon = computed(() => rankIconUrl(progression.value.level));
@@ -59,16 +57,6 @@ const rankIcon = computed(() => rankIconUrl(progression.value.level));
       <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
       <span class="badge__coins-amount hud__num">{{ coins }}</span>
     </div>
-
-    <button
-      class="badge__settings"
-      type="button"
-      title="Einstellungen"
-      aria-label="Einstellungen"
-      @click="emit('settings')"
-    >
-      <span class="material-symbols-outlined">settings</span>
-    </button>
   </section>
 </template>
 
@@ -187,25 +175,6 @@ const rankIcon = computed(() => rankIconUrl(progression.value.level));
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--gold-bright);
-}
-
-.badge__settings {
-  display: inline-flex;
-  align-self: flex-start;
-  padding: 0.1rem;
-  border: none;
-  background: none;
-  color: var(--gold);
-  opacity: 0.65;
-  cursor: pointer;
-}
-
-.badge__settings:hover {
-  opacity: 1;
-}
-
-.badge__settings .material-symbols-outlined {
-  font-size: 18px;
 }
 
 /* Schmale Fenster: die Plakette verliert Rang-Details, bleibt aber lesbar. */

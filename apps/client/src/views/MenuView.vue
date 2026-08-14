@@ -172,7 +172,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="menu game-cursor">
-    <MenuNav v-model="section" />
+    <MenuNav v-model="section" @settings="settingsOpen = true" />
 
     <div class="menu__content">
       <p v-if="menuNotice" class="menu__notice">{{ menuNotice }}</p>
@@ -183,7 +183,7 @@ onBeforeUnmount(() => {
       <NeuigkeitenPanel v-else-if="section === 'neuigkeiten'" />
     </div>
 
-    <PlayerBadge @settings="settingsOpen = true" />
+    <PlayerBadge />
 
     <span class="menu__version hud__num">v{{ GAME_VERSION }}</span>
 
