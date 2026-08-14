@@ -10,6 +10,15 @@
   --ui-border: rgb(111 208 189 / 22%);
   --ui-gap: 12px;
   /*
+   * Gold-Palette der Menüwelt — global statt nur auf .gold-panel, weil das
+   * AoE2-Hauptmenü Gold auch AUSSERHALB von Panels trägt (Nav-Spalte,
+   * Spieler-Plakette). Werte stammen aus der Zierlinie des Rahmenbilds.
+   */
+  --gold: #e6cf78;
+  --gold-bright: #fee584;
+  --gold-border: rgb(230 207 120 / 28%);
+  --gold-faint: rgb(230 207 120 / 10%);
+  /*
    * Nur nach unten skalieren. Hochskalieren würde den Flächenverbrauch bei
    * großen Fenstern unnötig treiben, ohne dass etwas besser lesbar wird.
    *
@@ -79,11 +88,6 @@
  * 1231×1012-Grafik ab (~70 px), die Bänder (36–48 px) dehnen sich mit.
  */
 .gold-panel {
-  --gold: #e6cf78;
-  --gold-bright: #fee584;
-  --gold-border: rgb(230 207 120 / 28%);
-  --gold-faint: rgb(230 207 120 / 10%);
-
   box-sizing: border-box;
   border: 26px solid transparent;
   border-image: url('../assets/ui/login-frame.png') 80 / 26px stretch;

@@ -1,0 +1,40 @@
+/*
+ * Geteilte Klassen der Menü-Bildschirme — global wie panel.css, weil sie von
+ * MEHREREN Komponenten getragen werden (Shell, Auslaufen, Werft, Platzhalter).
+ * Scoped dupliziert hieße: vier Kopien, die still auseinanderlaufen.
+ */
+
+.menu__panel {
+  position: relative;
+  padding: 0.9rem 1.1rem 1rem;
+}
+
+.menu__notice {
+  margin: 0 0 0.8rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid rgb(226 180 90 / 40%);
+  color: #e2b45a;
+}
+
+.menu__error {
+  margin: 0.8rem 0 0;
+  color: #f4b3b5;
+}
+
+.menu__soon {
+  margin: 0;
+  opacity: 0.5;
+  line-height: 1.45;
+}
+
+.menu__coin {
+  width: 18px;
+  height: 18px;
+  color: var(--gold-bright);
+}
+
+.menu__coin--small {
+  width: 13px;
+  height: 13px;
+  vertical-align: -2px;
+}

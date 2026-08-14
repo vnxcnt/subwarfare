@@ -1,5 +1,6 @@
 import type { AccountProfile, AuthResponse } from '@subwarfare/shared';
-import { ref } from 'vue';
+import { progressionFromXp } from '@subwarfare/shared';
+import { computed, ref } from 'vue';
 
 /**
  * Anmeldezustand.
@@ -21,6 +22,9 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? '';
 
 export const token = ref<string | null>(readStoredToken());
 export const account = ref<AccountProfile | null>(null);
+
+/** Level, Rang und Fortschritt — abgeleitet aus dem XP-Stand des Kontos. */
+export const progression = computed(() => progressionFromXp(account.value?.xp ?? 0));
 
 /** Welche Anmeldewege der Server anbietet. Null, solange nicht geladen. */
 export const authMethods = ref<{ google: boolean; discord: boolean; dev: boolean } | null>(null);

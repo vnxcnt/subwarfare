@@ -3,5 +3,6 @@ import App from './App.vue';
 import { router } from './router';
 import './style.css';
 import './ui/panel.css';
+import './ui/menu/menu-shared.css';
 
 createApp(App).use(router).mount('#app');

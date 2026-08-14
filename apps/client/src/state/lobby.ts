@@ -20,6 +20,14 @@ export const queueError = ref<string | null>(null);
  */
 export const lastEndReason = ref<string | null>(null);
 
+/**
+ * Hinweiszeile der Menü-Shell — gespeist aus `lastEndReason`, der
+ * Discord-Verknüpfung und gelöscht beim Auslaufen. Liegt hier statt lokal in
+ * einer Komponente, weil Shell (Anzeige) und Auslaufen-Panel (Reset in play())
+ * beide zugreifen — ein Prop-Faden quer durchs Menü wäre der schlechtere Weg.
+ */
+export const menuNotice = ref<string | null>(null);
+
 let socket: LobbySocket | null = null;
 
 /**

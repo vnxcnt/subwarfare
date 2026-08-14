@@ -72,14 +72,14 @@ watch(
 
 <style scoped>
 /*
- * Fest unten links, über dem Menü-Raster: der Funk gehört zur Kulisse des
- * Hafens, nicht in den Spaltenfluss — bei schmalen Fenstern rutschte er
- * sonst ans Seitenende unter den Shop.
+ * Fest unten RECHTS, über dem Menü: der Funk gehört zur Kulisse des Hafens,
+ * nicht in den Spaltenfluss. Links steht seit dem AoE2-Umbau die Menüspalte —
+ * dort würde er die Knöpfe verdecken.
  */
 .chat {
   position: fixed;
   bottom: 1rem;
-  left: 1.25rem;
+  right: 1.25rem;
   z-index: 5;
   display: flex;
   flex-direction: column;
