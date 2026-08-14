@@ -34,16 +34,12 @@ export const env = {
   sessionDays: num('SESSION_DAYS', 7),
 
   /**
-   * Name-Login (Entwickler-Login ohne OAuth). Auf Betreiber-Entscheidung vom
-   * 2026-08-14 STANDARDMÄSSIG AKTIV — die Test-Umgebung dev.subwarfare.com
-   * liegt komplett hinter Basic Auth, und zum Testen soll ein bloßer Name
-   * zum Verbinden reichen. Abgeschaltet wird ausdrücklich, nicht per
-   * Weglassen: NUR `AUTH_DEV=disabled` deaktiviert den Weg (vor einem echten
-   * Produktivbetrieb setzen!). Das frühere `AUTH_DEV=0/1` gilt bewusst nicht
-   * mehr — auf dem VPS steht noch ein historisches `AUTH_DEV=0` im
-   * systemd-Env, das sonst jede Freischaltung stumm übersteuern würde.
+   * Name-Login (Entwickler-Login ohne OAuth). Opt-in per `AUTH_DEV=1` —
+   * lokal steht das in der .env, auf dem VPS steht AUTH_DEV=0 und der Weg
+   * ist zu. (Zur F&F-Testphase am 2026-08-14 war er kurzzeitig
+   * standardmäßig offen; auf Betreiber-Entscheidung wieder Opt-in.)
    */
-  authDev: process.env['AUTH_DEV'] !== 'disabled',
+  authDev: process.env['AUTH_DEV'] === '1',
   googleClientId: process.env['GOOGLE_CLIENT_ID'] ?? '',
 
   /**
