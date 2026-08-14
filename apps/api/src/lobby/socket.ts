@@ -176,10 +176,23 @@ export class LobbyGateway {
       const jetzt = Date.now();
       if (jetzt - letzteNachricht < 1000) return;
       letzteNachricht = jetzt;
-      this.io.of('/lobby').emit('chat:message', {
-        name: socket.data.name,
-        text: text.slice(0, CHAT_MAX_LENGTH),
-      });
+      void (async () => {
+        // Rolle und Level FRISCH vom Konto — beides kann sich seit dem Login
+        // ändern, und der Session-Token trägt sie bewusst nicht. Eine
+        // DB-Störung schluckt die Werte, nicht die Nachricht.
+        let konto = null;
+        try {
+          konto = await this.accounts.byId(socket.data.accountId);
+        } catch {
+          // Standardwerte unten.
+        }
+        this.io.of('/lobby').emit('chat:message', {
+          name: socket.data.name,
+          text: text.slice(0, CHAT_MAX_LENGTH),
+          level: progressionFromXp(konto?.xp ?? 0).level,
+          role: konto?.role ?? 0,
+        });
+      })();
     });
 
     socket.on('disconnect', () => {

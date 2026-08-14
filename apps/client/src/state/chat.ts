@@ -13,6 +13,10 @@ export interface ChatLine {
   id: number;
   name: string;
   text: string;
+  /** Spielstufe des Absenders — fürs Rang-Abzeichen vor dem Namen. */
+  level: number;
+  /** Kontorolle des Absenders — färbt den Namen (Dev/GM/Mod). */
+  role: number;
 }
 
 /**
@@ -55,7 +59,13 @@ export function connectChat(): void {
     chatConnected.value = false;
   });
   socket.on('chat:message', (payload) => {
-    chatLines.value.push({ id: nextId++, name: payload.name, text: payload.text });
+    chatLines.value.push({
+      id: nextId++,
+      name: payload.name,
+      text: payload.text,
+      level: payload.level ?? 1,
+      role: payload.role ?? 0,
+    });
     if (chatLines.value.length > MAX_LINES) {
       chatLines.value.splice(0, chatLines.value.length - MAX_LINES);
     }

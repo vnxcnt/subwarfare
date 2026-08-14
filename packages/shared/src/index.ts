@@ -93,3 +93,10 @@ export * from './sim/torus.js';
  *     Namensschild beim Anklicken fremder Schiffe (Rang + Name, keine HP).
  */
 export const PROTOCOL_VERSION = 18;
+
+/**
+ * Sichtbare Spielversion (Patch-Stand) — unten im Hauptmenü eingeblendet und
+ * Überschrift der Patch-Notizen. Unabhängig vom Wire-Protokoll: die Version
+ * erzählt den Spielern etwas, PROTOCOL_VERSION den Maschinen.
+ */
+export const GAME_VERSION = '0.0.0.1';

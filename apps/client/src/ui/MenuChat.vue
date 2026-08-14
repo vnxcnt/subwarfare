@@ -1,8 +1,15 @@
 <script setup lang="ts">
-import { CHAT_MAX_LENGTH } from '@subwarfare/shared';
+import {
+  CHAT_MAX_LENGTH,
+  RANKS,
+  ROLE_DEVELOPER,
+  ROLE_GAMEMASTER,
+  ROLE_MODERATOR,
+} from '@subwarfare/shared';
 import { nextTick, ref, watch } from 'vue';
 import { account } from '../state/auth';
 import { chatConnected, chatLines, sendChat } from '../state/chat';
+import { rankIconUrl } from './rankIcons';
 
 /**
  * Hafen-Funk unten links im Hauptmenü.
@@ -18,6 +25,18 @@ const liste = ref<HTMLElement | null>(null);
 function abschicken(): void {
   sendChat(entwurf.value);
   entwurf.value = '';
+}
+
+function rangName(level: number): string {
+  return RANKS[level - 1] ?? 'Decksmann';
+}
+
+/** Namensfarbe nach Kontorolle — Dev lila, Gamemaster rot, Moderator grün. */
+function rollenKlasse(role: number): string | null {
+  if (role === ROLE_DEVELOPER) return 'chat__name--dev';
+  if (role === ROLE_GAMEMASTER) return 'chat__name--gm';
+  if (role === ROLE_MODERATOR) return 'chat__name--mod';
+  return null;
 }
 
 // Ans Ende rollen, sobald Zeilen dazukommen — wie jedes Chatfenster. Wer
@@ -46,9 +65,17 @@ watch(
         Niemand funkt — schreib die erste Nachricht.
       </p>
       <p v-for="zeile in chatLines" :key="zeile.id" class="chat__zeile">
+        <img
+          v-if="rankIconUrl(zeile.level)"
+          class="chat__rang"
+          :src="rankIconUrl(zeile.level)!"
+          :title="rangName(zeile.level)"
+          alt=""
+          draggable="false"
+        />
         <span
           class="chat__name"
-          :class="{ 'chat__name--ich': zeile.name === account?.displayName }"
+          :class="[rollenKlasse(zeile.role), { 'chat__name--ich': zeile.name === account?.displayName }]"
         >{{ zeile.name }}:</span>
         {{ zeile.text }}
       </p>
@@ -120,6 +147,16 @@ watch(
   overflow-wrap: anywhere;
 }
 
+/* Rang-Abzeichen des Absenders — klein vor dem Namen, mittig zur Zeile. */
+.chat__rang {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  margin-right: 0.25rem;
+  image-rendering: -webkit-optimize-contrast;
+  -webkit-user-drag: none;
+}
+
 .chat__name {
   color: var(--gold);
   font-weight: 600;
@@ -127,6 +164,20 @@ watch(
 
 .chat__name--ich {
   color: var(--gold-bright);
+}
+
+/* Rollenfarben NACH --ich definiert: die Rolle sticht die Eigen-Markierung —
+   ein Dev bleibt auch in den eigenen Zeilen lila. */
+.chat__name--mod {
+  color: #6fd08c;
+}
+
+.chat__name--gm {
+  color: #f26d6d;
+}
+
+.chat__name--dev {
+  color: #c58cf2;
 }
 
 .chat__eingabe {

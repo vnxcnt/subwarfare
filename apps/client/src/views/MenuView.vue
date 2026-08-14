@@ -7,10 +7,11 @@ import { refreshInventory } from '../state/economy';
 import { lastEndReason, leaveQueue, menuNotice, queueState } from '../state/lobby';
 import { refreshMapStatus } from '../state/maps';
 import { volumes } from '../state/settings';
+import { GAME_VERSION } from '@subwarfare/shared';
 import AuslaufenPanel from '../ui/menu/AuslaufenPanel.vue';
 import FlottillePanel from '../ui/menu/FlottillePanel.vue';
 import MenuNav from '../ui/menu/MenuNav.vue';
-import PlatzhalterPanel from '../ui/menu/PlatzhalterPanel.vue';
+import NeuigkeitenPanel from '../ui/menu/NeuigkeitenPanel.vue';
 import PlayerBadge from '../ui/menu/PlayerBadge.vue';
 import WerftPanel from '../ui/menu/WerftPanel.vue';
 import type { MenuSection } from '../ui/menu/sections';
@@ -177,14 +178,12 @@ onBeforeUnmount(() => {
       <AuslaufenPanel v-if="section === 'auslaufen'" />
       <WerftPanel v-else-if="section === 'werft'" />
       <FlottillePanel v-else-if="section === 'flottille'" />
-      <PlatzhalterPanel
-        v-else-if="section === 'neuigkeiten'"
-        title="Neuigkeiten"
-        text="Hier erscheinen bald Ankündigungen und Patch-Notizen aus der Werft."
-      />
+      <NeuigkeitenPanel v-else-if="section === 'neuigkeiten'" />
     </div>
 
     <PlayerBadge @settings="settingsOpen = true" />
+
+    <span class="menu__version hud__num">v{{ GAME_VERSION }}</span>
 
     <MenuChat />
 
@@ -226,6 +225,21 @@ onBeforeUnmount(() => {
 
 .menu__content > * {
   max-width: 34rem;
+}
+
+/* Patch-Stand unten mittig — dezent wie beim Vorbild, aber lesbar auf See. */
+.menu__version {
+  position: absolute;
+  bottom: 0.55rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  color: #fff;
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  opacity: 0.8;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 75%);
+  pointer-events: none;
 }
 
 @media (max-width: 980px) {

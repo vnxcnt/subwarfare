@@ -142,6 +142,10 @@ export interface QueueErrorPayload {
 export interface ChatMessagePayload {
   name: string;
   text: string;
+  /** Spielstufe des Absenders — der Client zeigt das Rang-Abzeichen. */
+  level: number;
+  /** Kontorolle (ROLE_*) — färbt den Namen: Dev lila, GM rot, Mod grün. */
+  role: number;
 }
 
 export interface ChatSendRequest {
