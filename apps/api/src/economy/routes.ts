@@ -6,6 +6,7 @@ import type {
 } from '@subwarfare/shared';
 import {
   DEFAULT_SHIP_STATS,
+  SHOP_BUY_MAX,
   equipSlotsForArmament,
   isItemId,
   isPlayableModel,
@@ -43,7 +44,7 @@ export function registerEconomyRoutes(
     const account = await accountFromRequest(request, accounts);
     if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
 
-    const { itemId } = (request.body ?? {}) as Partial<ShopBuyRequest>;
+    const { itemId, quantity } = (request.body ?? {}) as Partial<ShopBuyRequest>;
     if (!isItemId(itemId)) return reply.code(400).send({ error: 'Unbekanntes Item.' });
 
     const definition = itemById(itemId);
@@ -51,7 +52,17 @@ export function registerEconomyRoutes(
       return reply.code(400).send({ error: 'Dieses Item ist nicht käuflich.' });
     }
 
-    const result = await inventory.purchase(account.id, itemId, definition.shopPrice);
+    // Mengenkauf: fehlende Angabe heißt 1 (alte Clients). Alles andere muss
+    // eine ehrliche Stückzahl sein — der Preis wird NIE vom Client gerechnet.
+    let menge = 1;
+    if (quantity !== undefined && quantity !== null) {
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > SHOP_BUY_MAX) {
+        return reply.code(400).send({ error: `Stückzahl: 1 bis ${SHOP_BUY_MAX}.` });
+      }
+      menge = quantity;
+    }
+
+    const result = await inventory.purchase(account.id, itemId, definition.shopPrice, menge);
     if (result === 'poor') {
       return reply.code(409).send({ error: 'Nicht genug Coins.' });
     }

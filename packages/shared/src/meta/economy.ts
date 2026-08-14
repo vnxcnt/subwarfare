@@ -24,6 +24,25 @@ export type ItemCategory =
   | 'munition'
   | 'panzerung';
 
+/**
+ * Obergrenze je Kauf-Anfrage. Schützt vor Tippfehlern und Überlauf-Spielen —
+ * wer mehr will, kauft zweimal. Client (Eingabe-Klemme) und api (Validierung)
+ * nutzen DENSELBEN Wert.
+ */
+export const SHOP_BUY_MAX = 999;
+
+/**
+ * Kategorien, die es im Shop als Mengenkauf gibt: Verbrauchsgüter. Panzerung
+ * bleibt Stückkauf — sie wird pro Einsatz als EIN Stück getragen und der
+ * Stepper wäre dort nur eine Falle für Fehlkäufe.
+ */
+export const BULK_CATEGORIES: readonly ItemCategory[] = [
+  'torpedo',
+  'wasserbombe',
+  'taeuschkoerper',
+  'munition',
+];
+
 export interface ItemDefinition {
   id: ItemId;
   /** Anzeigename. Umlaute sind hier erlaubt — nur die `id` muss ASCII sein. */

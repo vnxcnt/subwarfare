@@ -67,17 +67,24 @@ export class MySqlInventoryStore implements InventoryStore {
     );
   }
 
-  async purchase(accountId: string, itemId: ItemId, price: number): Promise<'ok' | 'poor'> {
+  async purchase(
+    accountId: string,
+    itemId: ItemId,
+    price: number,
+    quantity: number,
+  ): Promise<'ok' | 'poor'> {
     // Abzug und Gutschrift in EINER Transaktion. Das bedingte UPDATE prüft das
     // Guthaben im selben Schritt, in dem es abzieht — zwei gleichzeitige Käufe
     // können dasselbe Guthaben nie doppelt ausgeben, und ein Absturz zwischen
-    // den Schritten hinterlässt keinen Abzug ohne Item.
+    // den Schritten hinterlässt keinen Abzug ohne Item. Beim Mengenkauf gilt
+    // ganz oder gar nicht: der Gesamtpreis muss gedeckt sein.
+    const total = price * quantity;
     const connection = await this.pool.getConnection();
     try {
       await connection.beginTransaction();
       const [debit] = await connection.execute<ResultSetHeader>(
         'UPDATE accounts SET coins = coins - ? WHERE id = ? AND coins >= ?',
-        [price, accountId, price],
+        [total, accountId, total],
       );
       if (debit.affectedRows !== 1) {
         await connection.rollback();
@@ -85,9 +92,9 @@ export class MySqlInventoryStore implements InventoryStore {
       }
       await connection.execute(
         `INSERT INTO account_items (account_id, item_id, quantity)
-         VALUES (?, ?, 1)
-         ON DUPLICATE KEY UPDATE quantity = quantity + 1`,
-        [accountId, itemId],
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)`,
+        [accountId, itemId, quantity],
       );
       await connection.commit();
       return 'ok';

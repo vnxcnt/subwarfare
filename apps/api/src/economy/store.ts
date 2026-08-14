@@ -27,8 +27,17 @@ export interface InventoryStore {
     itemId: ItemId | null,
     count?: number | null,
   ): Promise<void>;
-  /** Kauf: Coins abziehen + 1 Stück gutschreiben. 'poor' = Guthaben reicht nicht. */
-  purchase(accountId: string, itemId: ItemId, price: number): Promise<'ok' | 'poor'>;
+  /**
+   * Kauf: Stückpreis × Menge abziehen + Menge gutschreiben — beides EINE
+   * Operation (siehe oben). 'poor' = Guthaben reicht für die GANZE Menge
+   * nicht; Teilkäufe gibt es nicht.
+   */
+  purchase(
+    accountId: string,
+    itemId: ItemId,
+    price: number,
+    quantity: number,
+  ): Promise<'ok' | 'poor'>;
   /**
    * Nimmt bis zu `limit` Stück eines Items aus dem Inventar (bei `null` den
    * ganzen Bestand) und liefert, wie viel tatsächlich ging. Damit geht die
@@ -101,14 +110,19 @@ export class MemoryInventoryStore implements InventoryStore {
     else map.set(key, { itemId, count });
   }
 
-  async purchase(accountId: string, itemId: ItemId, price: number): Promise<'ok' | 'poor'> {
-    if (!(await this.accounts.spendCoins(accountId, price))) return 'poor';
+  async purchase(
+    accountId: string,
+    itemId: ItemId,
+    price: number,
+    quantity: number,
+  ): Promise<'ok' | 'poor'> {
+    if (!(await this.accounts.spendCoins(accountId, price * quantity))) return 'poor';
     let map = this.owned.get(accountId);
     if (!map) {
       map = new Map();
       this.owned.set(accountId, map);
     }
-    map.set(itemId, (map.get(itemId) ?? 0) + 1);
+    map.set(itemId, (map.get(itemId) ?? 0) + quantity);
     return 'ok';
   }
 

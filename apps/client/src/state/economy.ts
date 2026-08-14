@@ -60,13 +60,16 @@ export async function refreshInventory(): Promise<void> {
   }
 }
 
-/** Kauft ein Item. Liefert null bei Erfolg, sonst die Fehlermeldung. */
-export async function buyItem(itemId: ItemId): Promise<string | null> {
+/** Kauft ein Item (optional im Bund). Liefert null bei Erfolg, sonst die Fehlermeldung. */
+export async function buyItem(itemId: ItemId, quantity = 1): Promise<string | null> {
   if (economyBusy.value) return null;
   economyBusy.value = true;
   economyError.value = null;
   try {
-    const response = await api('/shop/buy', { method: 'POST', body: JSON.stringify({ itemId }) });
+    const response = await api('/shop/buy', {
+      method: 'POST',
+      body: JSON.stringify({ itemId, quantity }),
+    });
     const body = (await response.json().catch(() => null)) as
       | (ShopBuyResponse & { error?: string })
       | null;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { ItemId } from '@subwarfare/shared';
-import { ITEMS } from '@subwarfare/shared';
-import { computed, ref } from 'vue';
+import type { ItemCategory, ItemId } from '@subwarfare/shared';
+import { BULK_CATEGORIES, ITEMS, SHOP_BUY_MAX } from '@subwarfare/shared';
+import { computed, reactive, ref } from 'vue';
 import { account } from '../../state/auth';
 import { buyItem, economyBusy, economyError, ownedQuantity } from '../../state/economy';
 import { itemIconUrl } from '../itemIcons';
@@ -24,8 +24,47 @@ const ownedList = computed(() =>
 
 const rawCoins = computed(() => account.value?.coins ?? 0);
 
+/**
+ * Mengenkauf für Verbrauchsgüter (Munition aller Art): gewählte Stückzahl je
+ * Item, Start 1. Die ±-Knöpfe springen aufs 5er-Raster (1 → 5 → 10 → …),
+ * die Eingabe nimmt jede Zahl bis SHOP_BUY_MAX — die api validiert dasselbe.
+ */
+const mengen = reactive<Partial<Record<ItemId, number>>>({});
+
+function mengeVon(itemId: ItemId): number {
+  return mengen[itemId] ?? 1;
+}
+
+function istMengenkauf(category: ItemCategory): boolean {
+  return BULK_CATEGORIES.includes(category);
+}
+
+/** ±5 als Raster, nicht als Addition: von 1 geht es auf 5, von 7 runter auf 5. */
+function stufe(itemId: ItemId, richtung: 1 | -1): void {
+  const aktuell = mengeVon(itemId);
+  mengen[itemId] =
+    richtung > 0
+      ? Math.min(SHOP_BUY_MAX, Math.floor(aktuell / 5) * 5 + 5)
+      : Math.max(1, Math.ceil(aktuell / 5) * 5 - 5);
+}
+
+/** Freie Eingabe: ganzzahlig geklemmt; Unsinn fällt auf 1 zurück. */
+function mengeEingabe(itemId: ItemId, event: Event): void {
+  const feld = event.target as HTMLInputElement;
+  const roh = Number.parseInt(feld.value, 10);
+  const wert = Number.isFinite(roh) ? Math.min(SHOP_BUY_MAX, Math.max(1, roh)) : 1;
+  mengen[itemId] = wert;
+  // Zurückschreiben, damit „abc" oder „0" sichtbar zur echten Menge wird.
+  feld.value = String(wert);
+}
+
+/** Gesamtpreis der gewählten Menge — das steht auch auf dem Preisschild. */
+function gesamt(item: (typeof shopItems)[number]): number {
+  return (item.shopPrice ?? 0) * mengeVon(item.id);
+}
+
 async function buy(itemId: ItemId): Promise<void> {
-  await buyItem(itemId);
+  await buyItem(itemId, mengeVon(itemId));
 }
 </script>
 
@@ -80,14 +119,40 @@ async function buy(itemId: ItemId): Promise<void> {
             alt=""
           />
           <span class="menu__item-name">{{ item.name }}</span>
+          <span v-if="istMengenkauf(item.category)" class="menu__menge">
+            <button
+              type="button"
+              class="menu__menge-knopf"
+              aria-label="5 weniger"
+              @click="stufe(item.id, -1)"
+            >
+              −
+            </button>
+            <input
+              class="menu__menge-eingabe hud__num"
+              type="text"
+              inputmode="numeric"
+              :value="mengeVon(item.id)"
+              :aria-label="`Stückzahl ${item.name}`"
+              @change="mengeEingabe(item.id, $event)"
+            />
+            <button
+              type="button"
+              class="menu__menge-knopf"
+              aria-label="5 mehr"
+              @click="stufe(item.id, 1)"
+            >
+              +
+            </button>
+          </span>
           <span class="menu__item-price hud__num">
             <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
-            {{ item.shopPrice }}
+            {{ gesamt(item) }}
           </span>
           <button
             type="button"
             class="menu__buy"
-            :disabled="economyBusy || rawCoins < (item.shopPrice ?? 0)"
+            :disabled="economyBusy || rawCoins < gesamt(item)"
             @click="buy(item.id)"
           >
             Kaufen
@@ -107,7 +172,9 @@ async function buy(itemId: ItemId): Promise<void> {
  */
 .werft {
   max-width: none !important;
-  width: min(58rem, 100%);
+  /* Seit dem Mengen-Stepper tragen Shop-Zeilen mehr — etwas breiter, damit
+     zwei Spalten mit vollen Item-Namen nebeneinander atmen. */
+  width: min(62rem, 100%);
 }
 
 .menu__tabs {
@@ -141,7 +208,7 @@ async function buy(itemId: ItemId): Promise<void> {
   list-style: none;
   display: grid;
   /* Nutzt die Breite: zwei Spalten, bei schmalem Fenster automatisch eine. */
-  grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(26rem, 1fr));
   gap: 0.35rem 0.6rem;
 }
 
@@ -166,6 +233,50 @@ async function buy(itemId: ItemId): Promise<void> {
 
 .menu__item-name {
   flex: 1;
+  /* Darf schrumpfen (und umbrechen), sonst drückt der Stepper die Zeile auf. */
+  min-width: 0;
+}
+
+/* --- Mengen-Stepper (nur Verbrauchsgüter) -------------------------------- */
+
+.menu__menge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex: 0 0 auto;
+}
+
+.menu__menge-knopf {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--gold-border);
+  background: rgb(0 0 0 / 25%);
+  color: var(--gold);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.menu__menge-knopf:hover {
+  border-color: var(--gold);
+  background: var(--gold-faint);
+}
+
+.menu__menge-eingabe {
+  width: 2.6rem;
+  padding: 0.22rem 0.15rem;
+  border: 1px solid var(--gold-border);
+  background: rgb(0 0 0 / 30%);
+  color: inherit;
+  font: inherit;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.menu__menge-eingabe:focus {
+  outline: none;
+  border-color: var(--gold);
 }
 
 .menu__item-qty {
