@@ -30,7 +30,7 @@ async function buy(itemId: ItemId): Promise<void> {
 </script>
 
 <template>
-  <section class="gold-panel menu__panel" aria-label="Inventar und Shop">
+  <section class="gold-panel menu__panel werft" aria-label="Inventar und Shop">
     <div class="menu__tabs" role="tablist">
       <button
         type="button"
@@ -100,6 +100,16 @@ async function buy(itemId: ItemId): Promise<void> {
 </template>
 
 <style scoped>
+/*
+ * Die Werft braucht Fläche: Item-Zeilen tragen Icon + Name + Preis + Knopf.
+ * Deutlich breiter als die 34-rem-Vorgabe der Shell, die Listen laufen dann
+ * zweispaltig — eine gestreckte Einzelspalte sähe nur leer aus.
+ */
+.werft {
+  max-width: none !important;
+  width: min(58rem, 100%);
+}
+
 .menu__tabs {
   display: flex;
   gap: 0.4rem;
@@ -130,7 +140,9 @@ async function buy(itemId: ItemId): Promise<void> {
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 0.35rem;
+  /* Nutzt die Breite: zwei Spalten, bei schmalem Fenster automatisch eine. */
+  grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+  gap: 0.35rem 0.6rem;
 }
 
 .menu__item {

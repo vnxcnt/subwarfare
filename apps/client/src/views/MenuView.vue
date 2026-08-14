@@ -8,6 +8,7 @@ import { lastEndReason, leaveQueue, menuNotice, queueState } from '../state/lobb
 import { refreshMapStatus } from '../state/maps';
 import { volumes } from '../state/settings';
 import AuslaufenPanel from '../ui/menu/AuslaufenPanel.vue';
+import FlottillePanel from '../ui/menu/FlottillePanel.vue';
 import MenuNav from '../ui/menu/MenuNav.vue';
 import PlatzhalterPanel from '../ui/menu/PlatzhalterPanel.vue';
 import PlayerBadge from '../ui/menu/PlayerBadge.vue';
@@ -175,11 +176,7 @@ onBeforeUnmount(() => {
       <p v-if="menuNotice" class="menu__notice">{{ menuNotice }}</p>
       <AuslaufenPanel v-if="section === 'auslaufen'" />
       <WerftPanel v-else-if="section === 'werft'" />
-      <PlatzhalterPanel
-        v-else-if="section === 'flottille'"
-        title="Flottille"
-        text="Schließe dich später mit anderen Kapitänen zu Flottillen zusammen — gemeinsame Einsätze, gemeinsamer Ruhm."
-      />
+      <FlottillePanel v-else-if="section === 'flottille'" />
       <PlatzhalterPanel
         v-else-if="section === 'neuigkeiten'"
         title="Neuigkeiten"
@@ -222,8 +219,9 @@ onBeforeUnmount(() => {
   /* Grid-Kind darf schrumpfen — sonst scrollt hier nichts. */
   min-height: 0;
   overflow-y: auto;
-  /* Oben Platz für die Spieler-Plakette, unten für den Hafen-Funk. */
-  padding: 5rem 2rem 13rem;
+  /* Oben Platz für die Spieler-Plakette (breite Bereiche wie Auslaufen
+     reichen bis unter sie), unten für den Hafen-Funk. */
+  padding: 7rem 2rem 13rem;
 }
 
 .menu__content > * {

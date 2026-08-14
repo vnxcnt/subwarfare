@@ -452,6 +452,10 @@ export const FALLBACK_MAP: GameMap = {
  */
 export const MAP_LABELS: Record<string, string> = {
   ocean01: 'Nordatlantik',
+  ocean02: 'Nordsee',
+  ocean03: 'Persischer Golf',
+  ocean04: 'Mittelmeer',
+  ocean05: 'Barentssee',
 };
 
 /** Anzeigename einer Karte; unbekannte Kennungen zeigen sich selbst. */

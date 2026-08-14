@@ -13,5 +13,5 @@ export const MAIN_SECTIONS: ReadonlyArray<{
 }> = [
   { id: 'auslaufen', label: 'Auslaufen', detail: 'Einsatz · Schiff · Ausrüstung' },
   { id: 'werft', label: 'Werft', detail: 'Inventar · Shop' },
-  { id: 'flottille', label: 'Flottille', detail: 'Bald verfügbar' },
+  { id: 'flottille', label: 'Flottille', detail: 'Kameraden · Ränge · Kasse' },
 ];

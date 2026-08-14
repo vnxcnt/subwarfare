@@ -35,6 +35,9 @@ export * from './meta/tubes.js';
 // Sonnenstand, Himmelsfarben und Wellenhöhe ableitet.
 export * from './meta/weather.js';
 
+// Flottillen (Clans): Ränge, Rechte-Helfer, Namensregeln, Wire-Typen.
+export * from './meta/fleet.js';
+
 // Fahrmodell. Liegt hier, damit Client und Server denselben Code fahren —
 // der Server rechnet damit autoritativ, der Client rendert das Ergebnis und
 // nutzt es nur im Offline-Demobetrieb selbst.

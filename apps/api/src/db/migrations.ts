@@ -252,4 +252,36 @@ export const MIGRATIONS: readonly Migration[] = [
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     ],
   },
+  {
+    id: 13,
+    name: 'flottillen',
+    statements: [
+      // name_key = kleingeschriebener Name als Unique-Schluessel — zwei
+      // Flottillen, die sich nur in Gross-/Kleinschreibung unterscheiden,
+      // waeren im Spiel nicht auseinanderzuhalten.
+      `CREATE TABLE IF NOT EXISTS fleets (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         name VARCHAR(30) NOT NULL,
+         name_key VARCHAR(30) NOT NULL,
+         description VARCHAR(200) NULL,
+         treasury INT UNSIGNED NOT NULL DEFAULT 0,
+         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         UNIQUE KEY uq_fleets_name_key (name_key)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+      // account_id als PRIMARY KEY erzwingt: hoechstens EINE Flottille je
+      // Konto. Spalte heisst rang, nicht rank — RANK ist in MariaDB ein
+      // Schluesselwort (Window-Funktion) und braeuchte ueberall Backticks.
+      `CREATE TABLE IF NOT EXISTS fleet_members (
+         account_id CHAR(36) NOT NULL PRIMARY KEY,
+         fleet_id CHAR(36) NOT NULL,
+         rang TINYINT UNSIGNED NOT NULL DEFAULT 5,
+         joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         KEY idx_fleet_members_fleet (fleet_id),
+         CONSTRAINT fk_fleet_members_fleet FOREIGN KEY (fleet_id)
+           REFERENCES fleets (id) ON DELETE CASCADE,
+         CONSTRAINT fk_fleet_members_account FOREIGN KEY (account_id)
+           REFERENCES accounts (id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    ],
+  },
 ];

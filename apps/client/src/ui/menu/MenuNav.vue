@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { FLEET_MIN_LEVEL } from '@subwarfare/shared';
+import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import logoUrl from '../../assets/ui/logo_main_white_login.png';
 import artAuslaufen from '../../assets/ui/menu/auslaufen.webp';
@@ -6,7 +8,8 @@ import artFlottille from '../../assets/ui/menu/flottille.webp';
 import artLogout from '../../assets/ui/menu/logout.webp';
 import artNeuigkeiten from '../../assets/ui/menu/neuigkeiten.webp';
 import artWerft from '../../assets/ui/menu/werft.webp';
-import { logout } from '../../state/auth';
+import seperatorUrl from '../../assets/ui/menu/seperator_menu.webp';
+import { account, logout, progression } from '../../state/auth';
 import { leaveQueue } from '../../state/lobby';
 import { MAIN_SECTIONS, type MenuSection } from './sections';
 
@@ -35,7 +38,25 @@ function artStyle(bild: string): Record<string, string> {
 
 const router = useRouter();
 
+/**
+ * Flottillen erst ab FLEET_MIN_LEVEL — Dev-Konten ausgenommen (ohne
+ * XP-Vergabe wäre der Punkt sonst für alle zu). Dieselbe Regel setzt die
+ * api durch; der gesperrte Punkt ist nur die ehrliche Anzeige davon.
+ */
+const flottilleGesperrt = computed(
+  () => !account.value?.isDev && progression.value.level < FLEET_MIN_LEVEL,
+);
+
+function gesperrt(ziel: MenuSection): boolean {
+  return ziel === 'flottille' && flottilleGesperrt.value;
+}
+
+function detailFuer(eintrag: { id: MenuSection; detail: string }): string {
+  return gesperrt(eintrag.id) ? `Ab Level ${FLEET_MIN_LEVEL}` : eintrag.detail;
+}
+
 function wechsle(ziel: MenuSection): void {
+  if (gesperrt(ziel)) return;
   section.value = section.value === ziel ? null : ziel;
 }
 
@@ -55,16 +76,23 @@ function signOut(): void {
       :key="eintrag.id"
       type="button"
       class="nav__item"
-      :class="{ 'nav__item--active': section === eintrag.id }"
+      :class="{
+        'nav__item--active': section === eintrag.id,
+        'nav__item--locked': gesperrt(eintrag.id),
+      }"
       :data-section="eintrag.id"
       :style="artStyle(NAV_ART[eintrag.id])"
       @click="wechsle(eintrag.id)"
     >
       <span class="nav__item-label">{{ eintrag.label }}</span>
-      <span class="nav__item-detail">{{ eintrag.detail }}</span>
+      <span class="nav__item-detail">{{ detailFuer(eintrag) }}</span>
     </button>
 
-    <div class="nav__strip" aria-hidden="true"></div>
+    <div class="nav__trenner" aria-hidden="true">
+      <span class="nav__trenner-linie"></span>
+      <img class="nav__trenner-bild" :src="seperatorUrl" alt="" draggable="false" />
+      <span class="nav__trenner-linie nav__trenner-linie--rechts"></span>
+    </div>
 
     <button
       type="button"
@@ -135,6 +163,10 @@ function signOut(): void {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
+  /* Bis unter die Rahmenkante füllen: Standard ist padding-box — `cover`
+     rechnete dann zu klein und ließ oben/unten helle Streifen frei. */
+  background-origin: border-box;
+  background-clip: border-box;
   color: #e9e2cd;
   font: inherit;
   text-align: left;
@@ -147,10 +179,22 @@ function signOut(): void {
   filter: brightness(1.15);
 }
 
-/* Aktiv: goldener Balken links + Goldrand — der Punkt „brennt". */
+/* Aktiv: nur der goldene Balken links — ein Rahmen um den Rahmen wirkte
+   wie eine Fehlermarkierung. */
 .nav__item--active {
   color: var(--gold-bright);
-  box-shadow: inset 0 0 0 1px var(--gold);
+}
+
+/* Gesperrt (Levelschranke): ausgegraut, Klick läuft ins Leere. */
+.nav__item--locked {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+  cursor: default;
+}
+
+.nav__item--locked:hover {
+  color: #e9e2cd;
+  filter: grayscale(0.6);
 }
 
 .nav__item--active::before {
@@ -178,11 +222,31 @@ function signOut(): void {
   text-shadow: 0 1px 2px rgb(0 0 0 / 85%);
 }
 
-.nav__strip {
-  height: 13px;
-  margin: 0.8rem 0;
-  background: url('../../assets/ui/menu-strip.png') center / 100% 100% no-repeat;
-  opacity: 0.7;
+/* Trenner: das weiße Ornament mittig, links und rechts eine feine weiße
+   Akzentlinie, die zum Ornament hin aufleuchtet und nach außen ausläuft. */
+.nav__trenner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.7rem 0.2rem;
+}
+
+.nav__trenner-linie {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 70%));
+}
+
+.nav__trenner-linie--rechts {
+  background: linear-gradient(90deg, rgb(255 255 255 / 70%), transparent);
+}
+
+.nav__trenner-bild {
+  height: 26px;
+  width: auto;
+  opacity: 0.9;
+  filter: drop-shadow(0 1px 3px rgb(0 0 0 / 55%));
+  -webkit-user-drag: none;
 }
 
 .nav__item--small {

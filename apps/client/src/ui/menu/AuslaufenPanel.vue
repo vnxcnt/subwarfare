@@ -44,15 +44,44 @@ import { itemIconUrl } from '../itemIcons';
 const router = useRouter();
 
 /**
- * Wählbare Karten. Solange es genau eine gibt, ist das eine Liste mit einem
- * Eintrag — die Auswahl-Mechanik steht damit trotzdem schon. Muss zu
- * KNOWN_MAPS des Backends passen, sonst antwortet die Lobby „Unbekannte Karte".
+ * Kartenliste des Einsatz-Panels. Spielbare Karten müssen zu KNOWN_MAPS des
+ * Backends passen, sonst antwortet die Lobby „Unbekannte Karte" — die
+ * `comingSoon`-Einträge sind reine Schaufenster (nicht wählbar) und zeigen
+ * schon einmal, wohin die Reise geht.
  */
 const MAPS = [
-  { id: 'ocean01', label: mapLabel('ocean01'), detail: '25 × 25 km · offene See · endlos' },
+  {
+    id: 'ocean01',
+    label: mapLabel('ocean01'),
+    detail: '25 × 25 km · offene See · endlos',
+    comingSoon: false,
+  },
+  { id: 'ocean02', label: mapLabel('ocean02'), detail: 'PVP · PVE', comingSoon: true },
+  {
+    id: 'ocean03',
+    label: mapLabel('ocean03'),
+    detail: 'PVP · PVE · Gruppenevents',
+    comingSoon: true,
+  },
+  { id: 'ocean04', label: mapLabel('ocean04'), detail: 'PVE', comingSoon: true },
+  { id: 'ocean05', label: mapLabel('ocean05'), detail: 'Flottillen-PVP', comingSoon: true },
 ] as const;
 
 const selectedMap = ref<string>(MAPS[0].id);
+
+/**
+ * Karten-Cover, Dateiname = Karten-ID — wie bei den Schiffs-Previews über
+ * `import.meta.glob`: eine neue Karte braucht nur ihre Datei.
+ */
+const MAP_COVERS = import.meta.glob('../../assets/maps/*.webp', {
+  eager: true,
+  import: 'default',
+}) as Record<string, string>;
+
+function mapCoverStyle(id: string): Record<string, string> {
+  const bild = MAP_COVERS[`../../assets/maps/${id}.webp`];
+  return bild ? { '--cover': `url(${bild})` } : {};
+}
 
 const rawCoins = computed(() => account.value?.coins ?? 0);
 const waiting = computed(() => queueState.value === 'waiting' || queueState.value === 'connecting');
@@ -214,6 +243,7 @@ function cancel(): void {
 
 <template>
   <div class="auslaufen">
+    <div class="auslaufen__links">
     <section class="gold-panel menu__panel" aria-label="Einsatz">
       <h2 class="gold-panel__title">Einsatz</h2>
 
@@ -222,13 +252,18 @@ function cancel(): void {
           <button
             type="button"
             class="menu__map"
-            :class="{ 'menu__map--selected': selectedMap === map.id }"
-            :disabled="waiting"
+            :class="{
+              'menu__map--selected': selectedMap === map.id,
+              'menu__map--soon': map.comingSoon,
+            }"
+            :style="mapCoverStyle(map.id)"
+            :disabled="waiting || map.comingSoon"
             @click="selectedMap = map.id"
           >
             <span class="menu__map-name">{{ map.label }}</span>
             <span class="menu__map-detail">{{ map.detail }}</span>
-            <span v-if="mapStatus[map.id]" class="menu__map-players">
+            <span v-if="map.comingSoon" class="menu__map-players">Bald verfügbar</span>
+            <span v-else-if="mapStatus[map.id]" class="menu__map-players">
               {{ mapStatus[map.id]!.players }} / {{ mapStatus[map.id]!.capacity }} Spieler an Bord
             </span>
           </button>
@@ -257,6 +292,17 @@ function cancel(): void {
       </p>
       <p v-if="queueError" class="menu__error">{{ queueError }}</p>
     </section>
+
+    <section class="gold-panel menu__panel" aria-label="Perks">
+      <h2 class="gold-panel__title">Perks</h2>
+      <div class="menu__perkslots">
+        <div v-for="slot in PERK_SLOTS" :key="slot" class="menu__perkslot" aria-hidden="true">
+          <span>+</span>
+        </div>
+      </div>
+      <p class="menu__soon">Perks folgen — später ziehst du sie aus dem Inventar hierher.</p>
+    </section>
+    </div>
 
     <section class="gold-panel menu__panel" aria-label="Ausrüstung">
       <h2 class="gold-panel__title">Ausrüstung</h2>
@@ -393,23 +439,34 @@ function cancel(): void {
            womöglich gar nicht sichtbar. -->
       <p v-if="economyError" class="menu__error">{{ economyError }}</p>
     </section>
-
-    <section class="gold-panel menu__panel" aria-label="Perks">
-      <h2 class="gold-panel__title">Perks</h2>
-      <div class="menu__perkslots">
-        <div v-for="slot in PERK_SLOTS" :key="slot" class="menu__perkslot" aria-hidden="true">
-          <span>+</span>
-        </div>
-      </div>
-      <p class="menu__soon">Perks folgen — später ziehst du sie aus dem Inventar hierher.</p>
-    </section>
   </div>
 </template>
 
 <style scoped>
+/*
+ * Zwei Spalten: links der Weg aufs Wasser (Einsatz + Perks), rechts die
+ * Ausrüstung — beides gleichzeitig im Blick statt untereinander gestapelt.
+ * Die 34-rem-Vorgabe der Shell wird hier bewusst übersteuert.
+ */
 .auslaufen {
+  max-width: none !important;
+  width: min(72rem, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.auslaufen__links {
   display: grid;
   gap: 1rem;
+}
+
+@media (max-width: 1250px) {
+  .auslaufen {
+    grid-template-columns: 1fr;
+    width: min(34rem, 100%);
+  }
 }
 
 /* --- Einsatz / Warteschlange ------------------------------------------- */
@@ -422,27 +479,55 @@ function cancel(): void {
   gap: 0.5rem;
 }
 
+/*
+ * Karten-Kachel mit Cover-Artwork: Bild unterm seitlichen Dunkel-Verlauf,
+ * Text links satt lesbar, rechts bleibt die Szene sichtbar — dasselbe
+ * Rezept wie bei den Menüpunkten der Nav-Spalte.
+ */
 .menu__map {
   width: 100%;
   display: grid;
   gap: 0.15rem;
+  align-content: center;
+  box-sizing: border-box;
+  min-height: 76px;
   padding: 0.7rem 0.8rem;
   border: 1px solid var(--gold-border);
-  background: rgb(0 0 0 / 25%);
+  background-color: rgb(0 0 0 / 25%);
+  background-image:
+    linear-gradient(90deg, rgb(10 9 7 / 74%) 0%, rgb(10 9 7 / 36%) 55%, rgb(10 9 7 / 10%) 100%),
+    var(--cover);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-origin: border-box;
+  background-clip: border-box;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
+.menu__map-name,
+.menu__map-detail,
+.menu__map-players {
+  text-shadow: 0 1px 3px rgb(0 0 0 / 85%);
+}
+
 .menu__map:hover:not(:disabled) {
-  background: var(--gold-faint);
+  filter: brightness(1.12);
 }
 
 .menu__map--selected {
   border-color: var(--gold);
-  background: var(--gold-faint);
   box-shadow: inset 0 0 0 1px var(--gold);
+}
+
+/* Schaufenster-Karten: sichtbar, aber erkennbar noch nicht befahrbar. */
+.menu__map--soon {
+  opacity: 0.75;
+  filter: grayscale(0.45);
+  cursor: default;
 }
 
 .menu__map-name {
@@ -461,25 +546,39 @@ function cancel(): void {
   opacity: 0.85;
 }
 
+/* Auslauf-Knopf mit eigenem Artwork (480×43, exakt die Zielgröße) — der
+   Text liegt zentriert auf einem leichten Dunkel-Schleier darüber. */
 .menu__go {
   width: 100%;
+  box-sizing: border-box;
+  min-height: 45px;
   margin-top: 0.9rem;
   padding: 0.7rem 0.65rem;
   border: 1px solid var(--gold);
-  background: var(--gold-faint);
-  color: var(--gold);
+  background-color: var(--gold-faint);
+  background-image:
+    linear-gradient(rgb(10 9 7 / 38%), rgb(10 9 7 / 38%)),
+    url('../../assets/ui/menu/button_auslaufen.webp');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-origin: border-box;
+  background-clip: border-box;
+  color: var(--gold-bright);
   font: inherit;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 85%);
   cursor: pointer;
 }
 
 .menu__go:hover:not(:disabled) {
-  background: rgb(230 207 120 / 22%);
+  filter: brightness(1.15);
 }
 
 .menu__go:disabled {
   opacity: 0.75;
+  filter: grayscale(0.35);
   cursor: default;
 }
 
@@ -505,26 +604,40 @@ function cancel(): void {
   gap: 0.5rem;
 }
 
+/*
+ * Die Schiffe liegen auf dem echten Wasser des Spiels: dieselbe nahtlose
+ * Kachel wie im Ozean-Shader, gekachelt und unter einem leichten
+ * Dunkel-Verlauf, damit Name und Status unten lesbar bleiben.
+ */
 .menu__ship {
   width: 100%;
   display: grid;
   gap: 0.2rem;
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--gold-border);
-  background: rgb(0 0 0 / 25%);
+  background-color: rgb(0 0 0 / 25%);
+  background-image:
+    linear-gradient(180deg, rgb(4 14 22 / 30%) 0%, rgb(4 14 22 / 62%) 100%),
+    url('../../assets/fx/ocean_water.webp');
+  background-size: auto, 280px;
+  background-repeat: no-repeat, repeat;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
+.menu__ship-name,
+.menu__ship-status {
+  text-shadow: 0 1px 3px rgb(0 0 0 / 85%);
+}
+
 .menu__ship:hover:not(:disabled) {
-  background: var(--gold-faint);
+  filter: brightness(1.1);
 }
 
 .menu__ship--selected {
   border-color: var(--gold);
-  background: var(--gold-faint);
   box-shadow: inset 0 0 0 1px var(--gold);
 }
 
@@ -542,6 +655,26 @@ function cancel(): void {
   justify-self: center;
   filter: drop-shadow(0 3px 5px rgb(0 0 0 / 45%));
   -webkit-user-drag: none;
+  /* Drehpunkt unter der Wasserlinie — so wiegt es statt zu kippeln. */
+  transform-origin: 50% 85%;
+}
+
+/*
+ * Beim Überfahren wiegt sich das Schiff minimal in der Dünung: kleine
+ * Rollbewegung mit leichtem Heben, hin und zurück. Bewusst dezent —
+ * Kulisse, kein Karussell.
+ */
+@keyframes schaukeln {
+  0% {
+    transform: rotate(-1.4deg) translateY(0.6px);
+  }
+  100% {
+    transform: rotate(1.4deg) translateY(-0.6px);
+  }
+}
+
+.menu__ship:hover:not(:disabled) .menu__ship-img {
+  animation: schaukeln 1.7s ease-in-out infinite alternate;
 }
 
 .menu__ship-name {

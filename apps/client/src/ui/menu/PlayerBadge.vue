@@ -39,25 +39,25 @@ const rankIcon = computed(() => rankIconUrl(progression.value.level));
       <img v-if="rankIcon" class="badge__rank-icon" :src="rankIcon" alt="" />
       <div class="badge__rank-text">
         <span class="badge__rank-name">{{ progression.rank }}</span>
+        <!-- Die XP-Leiste gehört ZUM Level — direkt über der Level-Zeile,
+             nicht drüben bei den Coins. -->
+        <div
+          class="badge__xp-bar"
+          :title="
+            progression.xpForNext > 0
+              ? `${coinsFormat.format(progression.xpIntoLevel)} / ${coinsFormat.format(progression.xpForNext)} XP`
+              : 'Höchstrang erreicht'
+          "
+        >
+          <div :style="{ width: `${Math.round(progression.progress * 100)}%` }"></div>
+        </div>
         <span class="badge__rank-level hud__num">Level {{ progression.level }}</span>
       </div>
     </div>
 
-    <div class="badge__progress">
-      <div
-        class="badge__xp-bar"
-        :title="
-          progression.xpForNext > 0
-            ? `${coinsFormat.format(progression.xpIntoLevel)} / ${coinsFormat.format(progression.xpForNext)} XP`
-            : 'Höchstrang erreicht'
-        "
-      >
-        <div :style="{ width: `${Math.round(progression.progress * 100)}%` }"></div>
-      </div>
-      <div class="badge__coins">
-        <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
-        <span class="badge__coins-amount hud__num">{{ coins }}</span>
-      </div>
+    <div class="badge__coins">
+      <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
+      <span class="badge__coins-amount hud__num">{{ coins }}</span>
     </div>
 
     <button
@@ -145,6 +145,8 @@ const rankIcon = computed(() => rankIconUrl(progression.value.level));
 
 .badge__rank-text {
   display: grid;
+  gap: 0.2rem;
+  min-width: 7rem;
   line-height: 1.25;
 }
 
@@ -163,14 +165,6 @@ const rankIcon = computed(() => rankIconUrl(progression.value.level));
   opacity: 0.85;
 }
 
-.badge__progress {
-  display: grid;
-  gap: 0.3rem;
-  min-width: 7rem;
-  padding-left: 0.8rem;
-  border-left: 1px solid var(--gold-border);
-}
-
 .badge__xp-bar {
   height: 4px;
   background: var(--gold-faint);
@@ -185,6 +179,8 @@ const rankIcon = computed(() => rankIconUrl(progression.value.level));
   display: flex;
   align-items: center;
   gap: 0.35rem;
+  padding-left: 0.8rem;
+  border-left: 1px solid var(--gold-border);
 }
 
 .badge__coins-amount {
@@ -214,8 +210,7 @@ const rankIcon = computed(() => rankIconUrl(progression.value.level));
 
 /* Schmale Fenster: die Plakette verliert Rang-Details, bleibt aber lesbar. */
 @media (max-width: 980px) {
-  .badge__rank,
-  .badge__progress {
+  .badge__rank {
     display: none;
   }
 }
