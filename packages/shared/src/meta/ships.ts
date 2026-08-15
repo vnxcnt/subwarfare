@@ -38,6 +38,22 @@ export interface ShipStats {
    * der EIGENEN Höchstfahrt.
    */
   speedFactor: number;
+  /**
+   * Kaufpreis in Coins (ships.price). OPTIONAL, weil die Code-Defaults hier
+   * die Werte nicht doppeln dürfen — sie leben in SHIP_PRICES (economy.ts),
+   * und ein Import von dort wäre zirkulär. Die api füllt das Feld beim Laden
+   * (DB-Spalte bzw. SHIP_PRICES im Memory-Betrieb); NPC-Modelle: 0.
+   */
+  price?: number;
+  /** Perk-Slots je Instanz (ships.perk_slots) — gleiche Regel wie price;
+   *  Code-Default ist PERK_SLOTS_BY_MODEL (werft.ts). NPC-Modelle: 0. */
+  perkSlots?: number;
+  /**
+   * Größenfaktor (ships.size) relativ zur Klassen-Basis (fregatte01 bzw.
+   * submarine01 = 1). Skaliert Kollision UND Darstellung — siehe scaledHull
+   * (combat.ts). Code-Default: DEFAULT_SHIP_SIZES; NPC-Modelle: 1.
+   */
+  size?: number;
 }
 
 export const DEFAULT_SHIP_STATS: Record<VesselModel, ShipStats> = {
@@ -109,6 +125,34 @@ export const DEFAULT_SHIP_STATS: Record<VesselModel, ShipStats> = {
     type: SHIP_TYPE_VESSEL,
     armament: ['torpedo', 'wasserbombe', 'taeuschkoerper', 'geschuetz'],
     speedFactor: 1.15,
+  },
+  /**
+   * Zwischenstufe der Zerstörer (trägt die Grafik, die bis Protokoll 19
+   * fälschlich als fregatte02 fuhr — fregatte02 hat seither ihren echten
+   * Atlas).
+   */
+  destroyer03: {
+    model: 'destroyer03',
+    hp: 700,
+    type: SHIP_TYPE_VESSEL,
+    armament: ['torpedo', 'wasserbombe', 'taeuschkoerper', 'geschuetz'],
+    speedFactor: 1.12,
+  },
+  /** Endgame-Boot: großes Atom-U-Boot — zäh und teuer, dafür träge. */
+  submarine03: {
+    model: 'submarine03',
+    hp: 600,
+    type: SHIP_TYPE_SUBMARINE,
+    armament: ['torpedo', 'taeuschkoerper'],
+    speedFactor: 0.6,
+  },
+  /** Flinker Jäger: klassisches WK2-Boot — schnellstes U-Boot, dünnhäutig. */
+  submarine04: {
+    model: 'submarine04',
+    hp: 380,
+    type: SHIP_TYPE_SUBMARINE,
+    armament: ['torpedo', 'taeuschkoerper'],
+    speedFactor: 0.75,
   },
 };
 

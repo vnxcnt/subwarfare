@@ -371,4 +371,69 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS banned_at DATETIME NULL`,
     ],
   },
+  {
+    id: 18,
+    name: 'werft-katalog',
+    statements: [
+      // Kaufpreis und Perk-Slots ziehen aus dem Code (SHIP_PRICES,
+      // PERK_SLOTS_BY_MODEL) in die ships-Tabelle — damit sind sie im
+      // Admin-DB-Editor stellbar. Der Seed spiegelt die Code-Werte beim
+      // Anlegen; danach fuehrt wie immer die DB (Aenderungen greifen mit dem
+      // naechsten Dienst-Neustart). NPC-Modelle bleiben 0/0 — kaufbar ist
+      // ohnehin nur, was isPlayableModel kennt.
+      `ALTER TABLE ships ADD COLUMN IF NOT EXISTS price INT UNSIGNED NOT NULL DEFAULT 0`,
+      `ALTER TABLE ships ADD COLUMN IF NOT EXISTS perk_slots TINYINT UNSIGNED NOT NULL DEFAULT 0`,
+      `UPDATE ships SET price = 0,     perk_slots = 1 WHERE model = 'fregatte01'`,
+      `UPDATE ships SET price = 2750,  perk_slots = 2 WHERE model = 'fregatte02'`,
+      `UPDATE ships SET price = 0,     perk_slots = 1 WHERE model = 'submarine01'`,
+      `UPDATE ships SET price = 5650,  perk_slots = 3 WHERE model = 'submarine02'`,
+      `UPDATE ships SET price = 12550, perk_slots = 3 WHERE model = 'destroyer01'`,
+      `UPDATE ships SET price = 37500, perk_slots = 5 WHERE model = 'destroyer02'`,
+    ],
+  },
+  {
+    id: 19,
+    name: 'destroyer03',
+    statements: [
+      // Zwischenstufe der Zerstoerer — traegt die Grafik, die bis Protokoll 19
+      // faelschlich als fregatte02 fuhr (fregatte02 hat seither ihren echten
+      // Atlas; ihre Werte hier bleiben unveraendert). Seed wie immer =
+      // Code-Katalog beim Anlegen, danach fuehrt die DB.
+      `INSERT INTO ships (model, hp, type, armament, speed, price, perk_slots) VALUES
+         ('destroyer03', 700, 3, '["torpedo","wasserbombe","taeuschkoerper","geschuetz"]', 1.12, 22500, 4)
+       ON DUPLICATE KEY UPDATE model = model`,
+    ],
+  },
+  {
+    id: 20,
+    name: 'uboote-drei-vier',
+    statements: [
+      // submarine03 = Endgame-Boot (zaeh, teuer, traege), submarine04 =
+      // Flinker Jaeger (schnellstes U-Boot, duennhaeutig, guenstig). Seed =
+      // Code-Katalog beim Anlegen, danach fuehrt die DB.
+      `INSERT INTO ships (model, hp, type, armament, speed, price, perk_slots) VALUES
+         ('submarine03', 600, 2, '["torpedo","taeuschkoerper"]', 0.60, 28000, 4),
+         ('submarine04', 380, 2, '["torpedo","taeuschkoerper"]', 0.75, 8500, 3)
+       ON DUPLICATE KEY UPDATE model = model`,
+    ],
+  },
+  {
+    id: 21,
+    name: 'schiffsgroesse',
+    statements: [
+      // Groessenfaktor relativ zur KLASSEN-Basis (fregatte01 bzw. submarine01
+      // = 1; Ueberwasser-Basis 140/25 m, U-Boot-Basis 110/13 m). Skaliert
+      // Kollision UND Darstellung (scaledHull in shared). Seed = Code-Default
+      // (DEFAULT_SHIP_SIZES); danach fuehrt die DB. NPC-Modelle bleiben 1 und
+      // behalten ihre eigenen Basis-Masse.
+      `ALTER TABLE ships ADD COLUMN IF NOT EXISTS size DECIMAL(3,2) NOT NULL DEFAULT 1.00`,
+      `UPDATE ships SET size = 1.10 WHERE model = 'fregatte02'`,
+      `UPDATE ships SET size = 1.30 WHERE model = 'submarine02'`,
+      `UPDATE ships SET size = 1.40 WHERE model = 'submarine03'`,
+      `UPDATE ships SET size = 1.60 WHERE model = 'submarine04'`,
+      `UPDATE ships SET size = 1.30 WHERE model = 'destroyer01'`,
+      `UPDATE ships SET size = 1.90 WHERE model = 'destroyer02'`,
+      `UPDATE ships SET size = 1.50 WHERE model = 'destroyer03'`,
+    ],
+  },
 ];

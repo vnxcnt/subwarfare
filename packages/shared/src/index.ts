@@ -107,8 +107,18 @@ export * from './sim/torus.js';
  *     `shipId`, `perks` und `startHp`; `welcome.perks` fürs eigene Profil;
  *     `destroyed` ohne respawnSeconds (Versenkung beendet die Runde, der
  *     Server trennt); `queue:join` verlangt `shipId` statt `shipModel`.
+ * 20: Neues Modell `destroyer03` (die bisherige fregatte02-Grafik; fregatte02
+ *     bekam ihren echten Atlas). Alte Clients kennen den destroyer03-Atlas
+ *     nicht und würden ihn als Fregatte zeichnen — der Versions-Gate zwingt
+ *     zum Neuladen.
+ * 21: Neue Modelle `submarine03` (Endgame-Boot) und `submarine04` (Flinker
+ *     Jäger) — gleiche Lage wie bei 20: alte Clients haben die Atlanten
+ *     nicht.
+ * 22: Schiffsgröße aus der DB (ships.size × Klassen-Basis) — `welcome.ships`
+ *     trägt `size`, Kollision und Billboards skalieren damit. Alte Clients
+ *     zeichneten die Schiffe kleiner, als der Server kollidiert.
  */
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 22;
 
 /**
  * Sichtbare Spielversion (Patch-Stand) — unten im Hauptmenü eingeblendet und

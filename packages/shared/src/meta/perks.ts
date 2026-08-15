@@ -133,11 +133,17 @@ export function tubeReloadFactor(perkIds: readonly string[]): number {
 /**
  * Prüft eine Perk-Auswahl für ein Schiff: nur gültige Ids, höchstens so viele
  * wie das Modell Slots hat, und je TYP höchstens ein Perk. api (durchsetzen)
- * und Client (Knöpfe zeigen) nutzen DIESELBE Funktion.
+ * und Client (Knöpfe zeigen) nutzen DIESELBE Funktion. Die Slot-Zahl kommt
+ * seit Migration 18 aus der ships-Tabelle (perk_slots) — der Aufrufer reicht
+ * sie durch, der Default deckt den Betrieb ohne Katalog.
  */
-export function validatePerkSet(model: PlayableModel, perks: unknown): perks is PerkId[] {
+export function validatePerkSet(
+  model: PlayableModel,
+  perks: unknown,
+  slots: number = PERK_SLOTS_BY_MODEL[model],
+): perks is PerkId[] {
   if (!Array.isArray(perks)) return false;
-  if (perks.length > PERK_SLOTS_BY_MODEL[model]) return false;
+  if (perks.length > slots) return false;
   const typen = new Set<PerkType>();
   for (const id of perks) {
     if (!isPerkId(id)) return false;

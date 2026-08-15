@@ -26,7 +26,6 @@ import {
   DEFAULT_VESSEL_MODEL,
   DESTROYER,
   GUN,
-  HULL_DIMENSIONS,
   SHIP_TYPE_SUBMARINE,
   DEPTH_CHARGE,
   SIDE_LAUNCH_HALF_ANGLE_DEG,
@@ -37,6 +36,7 @@ import {
   clampStep,
   norm360,
   profileForShip,
+  scaledHull,
   torusDelta,
 } from '@subwarfare/shared';
 import type { ExitPoint, RoutePoint } from '@subwarfare/shared';
@@ -46,7 +46,7 @@ import { fxTextureCount, loadFxTextures } from './fx-textures';
 import { preloadUiImages, uiImageCount } from './preload';
 import { getTilt, setTilt } from './Projection';
 import { GameAudio } from './sound';
-import { loadVesselTextures, vesselAtlasCount } from './textures';
+import { loadVesselTextures, setModelSizes, vesselAtlasCount } from './textures';
 import { World } from './World';
 import { isTextEntry } from '../ui/dom';
 
@@ -293,7 +293,9 @@ export class Game {
     for (const model of world.entities.models()) {
       if (model.id === this.selfId) continue;
       if (!world.entities.sichtbar(model.id)) continue;
-      const dims = HULL_DIMENSIONS[model.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+      // Effektive Größe (ships.size) — derselbe Maßstab wie Billboard und
+      // Server-Kollision.
+      const dims = scaledHull(model.model, this.shipCatalog.get(model.model)?.size);
       // Klickradius: halbe Rumpflänge plus Griffweite — herausgezoomt hält
       // eine Mindestgröße in Bildschirmpixeln das Schiff treffbar.
       const radius = Math.max(dims.length * 0.62, 22 / zoom);
@@ -574,6 +576,9 @@ export class Game {
         // Eigene Perks — ensureProfile spiegelt damit das Server-Fahrprofil.
         this.ownPerks = payload.perks ?? [];
         for (const ship of payload.ships) this.shipCatalog.set(ship.model, ship);
+        // Größenfaktoren an die Billboards — dieselben Werte, mit denen der
+        // Server kollidiert.
+        setModelSizes(payload.ships);
         world.setMap(payload.map);
         // Extraktionszonen sichtbar machen: je Kreis ein Ring aus Bojen.
         world.entities.setBuoys(payload.map.exitPoints);

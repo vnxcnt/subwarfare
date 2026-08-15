@@ -46,11 +46,26 @@ export interface ModHooks {
  */
 const DB_TABLES: Record<
   string,
-  { pk: string; columns: Record<string, { min: number; max: number }> }
+  { pk: string; columns: Record<string, { min: number; max: number; ganzzahl?: boolean }> }
 > = {
-  ships: { pk: 'model', columns: { hp: { min: 1, max: 100_000 }, speed: { min: 0.05, max: 10 } } },
-  armor: { pk: 'item_id', columns: { level: { min: 1, max: 99 }, absorb: { min: 0, max: 0.95 } } },
-  weapon_items: { pk: 'item_id', columns: { damage: { min: 1, max: 50_000 } } },
+  ships: {
+    pk: 'model',
+    columns: {
+      hp: { min: 1, max: 100_000, ganzzahl: true },
+      speed: { min: 0.05, max: 10 },
+      price: { min: 0, max: 1_000_000, ganzzahl: true },
+      perk_slots: { min: 0, max: 10, ganzzahl: true },
+      size: { min: 0.2, max: 5 },
+    },
+  },
+  armor: {
+    pk: 'item_id',
+    columns: { level: { min: 1, max: 99, ganzzahl: true }, absorb: { min: 0, max: 0.95 } },
+  },
+  weapon_items: {
+    pk: 'item_id',
+    columns: { damage: { min: 1, max: 50_000, ganzzahl: true } },
+  },
 };
 
 /**
@@ -508,6 +523,11 @@ export function registerModRoutes(
     }
     if (typeof value !== 'number' || !Number.isFinite(value) || value < grenzen.min || value > grenzen.max) {
       return reply.code(400).send({ error: `Wert: ${grenzen.min} bis ${grenzen.max}.` });
+    }
+    // Integer-Spalten (INT/TINYINT) verlangen ganze Zahlen — MariaDB würde
+    // Bruchwerte sonst STILL runden und die Anzeige löge gegenüber der DB.
+    if (grenzen.ganzzahl && !Number.isInteger(value)) {
+      return reply.code(400).send({ error: 'Wert: eine ganze Zahl.' });
     }
     await getPool().execute(`UPDATE ${table} SET ${column} = ? WHERE ${schema.pk} = ?`, [
       value,

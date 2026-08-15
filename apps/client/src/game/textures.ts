@@ -1,4 +1,4 @@
-import { DEFAULT_VESSEL_MODEL, HULL_DIMENSIONS } from '@subwarfare/shared';
+import { DEFAULT_SHIP_SIZES, DEFAULT_VESSEL_MODEL, HULL_DIMENSIONS } from '@subwarfare/shared';
 import { Assets, Spritesheet, Texture, type SpritesheetData } from 'pixi.js';
 import type { LoadStep } from './preload';
 
@@ -6,6 +6,8 @@ import destroyerData from '../assets/vessels/destroyer01/atlas.json';
 import destroyerUrl from '../assets/vessels/destroyer01/atlas.webp';
 import destroyer2Data from '../assets/vessels/destroyer02/atlas.json';
 import destroyer2Url from '../assets/vessels/destroyer02/atlas.webp';
+import destroyer3Data from '../assets/vessels/destroyer03/atlas.json';
+import destroyer3Url from '../assets/vessels/destroyer03/atlas.webp';
 import fregatteData from '../assets/vessels/fregatte01/atlas.json';
 import fregatteUrl from '../assets/vessels/fregatte01/atlas.webp';
 import fregatte2Data from '../assets/vessels/fregatte02/atlas.json';
@@ -18,6 +20,10 @@ import submarineData from '../assets/vessels/submarine01/atlas.json';
 import submarineUrl from '../assets/vessels/submarine01/atlas.webp';
 import submarine2Data from '../assets/vessels/submarine02/atlas.json';
 import submarine2Url from '../assets/vessels/submarine02/atlas.webp';
+import submarine3Data from '../assets/vessels/submarine03/atlas.json';
+import submarine3Url from '../assets/vessels/submarine03/atlas.webp';
+import submarine4Data from '../assets/vessels/submarine04/atlas.json';
+import submarine4Url from '../assets/vessels/submarine04/atlas.webp';
 import tankerData from '../assets/vessels/tanker01/atlas.json';
 import tankerUrl from '../assets/vessels/tanker01/atlas.webp';
 import shellData from '../assets/vessels/he_round01/atlas.json';
@@ -97,7 +103,7 @@ const DEFINITIONS: Record<string, ModelDefinition> = {
     data: fregatte2Data as unknown as SpritesheetData,
     url: fregatte2Url,
     lengthMetres: HULL_DIMENSIONS.fregatte02.length,
-    sideProfilePx: 748,
+    sideProfilePx: 736,
   },
   submarine02: {
     data: submarine2Data as unknown as SpritesheetData,
@@ -109,13 +115,33 @@ const DEFINITIONS: Record<string, ModelDefinition> = {
     data: destroyerData as unknown as SpritesheetData,
     url: destroyerUrl,
     lengthMetres: HULL_DIMENSIONS.destroyer01.length,
-    sideProfilePx: 394,
+    sideProfilePx: 789,
   },
   destroyer02: {
     data: destroyer2Data as unknown as SpritesheetData,
     url: destroyer2Url,
     lengthMetres: HULL_DIMENSIONS.destroyer02.length,
     sideProfilePx: 754,
+  },
+  // destroyer03 fährt den Atlas, der bis Protokoll 19 fälschlich fregatte02
+  // war — daher auch dessen Seitenprofil (748 px).
+  destroyer03: {
+    data: destroyer3Data as unknown as SpritesheetData,
+    url: destroyer3Url,
+    lengthMetres: HULL_DIMENSIONS.destroyer03.length,
+    sideProfilePx: 748,
+  },
+  submarine03: {
+    data: submarine3Data as unknown as SpritesheetData,
+    url: submarine3Url,
+    lengthMetres: HULL_DIMENSIONS.submarine03.length,
+    sideProfilePx: 772,
+  },
+  submarine04: {
+    data: submarine4Data as unknown as SpritesheetData,
+    url: submarine4Url,
+    lengthMetres: HULL_DIMENSIONS.submarine04.length,
+    sideProfilePx: 804,
   },
   // Projektile: gleiche Atlas-Pipeline, nur kein fahrbares Schiff. Länge ist
   // Spielsichtbarkeit (echte Torpedos wären auf Kartenzoom unsichtbar klein).
@@ -182,6 +208,31 @@ interface LoadedModel {
 }
 
 const loaded = new Map<string, LoadedModel>();
+
+/**
+ * Größenfaktoren je Modell (ships.size × Klassen-Basis, siehe scaledHull in
+ * shared). Start = Code-Defaults; `setModelSizes` übernimmt beim `welcome`
+ * die Katalogwerte des Servers — mit DENSELBEN Faktoren kollidiert er.
+ * Projektile/Requisiten stehen nicht in der Map und fahren Faktor 1.
+ */
+const sizeFactors = new Map<string, number>(
+  Object.entries(DEFAULT_SHIP_SIZES).filter(
+    (eintrag): eintrag is [string, number] => typeof eintrag[1] === 'number',
+  ),
+);
+
+/** Übernimmt die Größenfaktoren aus dem Server-Katalog (welcome.ships). */
+export function setModelSizes(
+  ships: ReadonlyArray<{ model: string; size?: number }>,
+): void {
+  for (const ship of ships) {
+    if (typeof ship.size === 'number' && ship.size > 0) sizeFactors.set(ship.model, ship.size);
+  }
+}
+
+function sizeFactor(model: string): number {
+  return sizeFactors.get(model) ?? 1;
+}
 
 /**
  * Das Periskop ist KEIN Schiffsmodell, sondern ein Anbauteil mit eigenem
@@ -311,13 +362,16 @@ export function periscopeFrame(courseDegrees: number): DirectionFrame | null {
  * Client nicht leert.
  */
 export function directionFrame(model: string, courseDegrees: number): DirectionFrame | null {
-  const entry = loaded.get(model) ?? loaded.get(DEFAULT_VESSEL_MODEL);
+  const usedModel = loaded.has(model) ? model : DEFAULT_VESSEL_MODEL;
+  const entry = loaded.get(usedModel);
   if (!entry) return null;
   const index =
     Math.round((((courseDegrees % 360) + 360) % 360) / entry.degreesPerFrame) %
     entry.directions.length;
   const direction = entry.directions[index];
-  return direction ? { ...direction, metresPerPx: entry.metresPerPx } : null;
+  return direction
+    ? { ...direction, metresPerPx: entry.metresPerPx * sizeFactor(usedModel) }
+    : null;
 }
 
 /** Die beiden Nachbar-Ansichten eines Kurses samt Mischanteil. */
@@ -342,8 +396,10 @@ export function directionFramePair(
   model: string,
   courseDegrees: number,
 ): DirectionFramePair | null {
-  const entry = loaded.get(model) ?? loaded.get(DEFAULT_VESSEL_MODEL);
+  const usedModel = loaded.has(model) ? model : DEFAULT_VESSEL_MODEL;
+  const entry = loaded.get(usedModel);
   if (!entry) return null;
+  const metresPerPx = entry.metresPerPx * sizeFactor(usedModel);
   const position = (((courseDegrees % 360) + 360) % 360) / entry.degreesPerFrame;
   const index = Math.floor(position) % entry.directions.length;
   const naechster = (index + 1) % entry.directions.length;
@@ -351,8 +407,8 @@ export function directionFramePair(
   const b = entry.directions[naechster];
   if (!a || !b) return null;
   return {
-    unter: { ...a, metresPerPx: entry.metresPerPx },
-    ueber: { ...b, metresPerPx: entry.metresPerPx },
+    unter: { ...a, metresPerPx },
+    ueber: { ...b, metresPerPx },
     anteil: position - Math.floor(position),
   };
 }

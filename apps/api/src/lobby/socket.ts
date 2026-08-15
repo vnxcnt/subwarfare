@@ -12,6 +12,7 @@ import {
   CHAT_MAX_LENGTH,
   WEAPON_FOR_CATEGORY,
   isItemId,
+  isPlayableModel,
   progressionFromXp,
 } from '@subwarfare/shared';
 import type { Server, Socket } from 'socket.io';
@@ -566,7 +567,12 @@ export class LobbyGateway {
       // Die Instanz selbst: Ziel der Schadensmeldung, Perks für die Wirkung,
       // Rest-HP als Start-HP — alles api-signiert, nichts davon fälschbar.
       shipId: ship.id,
-      perks: ship.perks,
+      // Auf die Slot-Zahl des Katalogs gekappt: senkt ein Entwickler
+      // ships.perk_slots unter eine Bestands-Beladung, fährt der Überhang
+      // NICHT mit — die Werft zeigt ihn als Überzahl zum Ausbauen an.
+      perks: isPlayableModel(ship.model)
+        ? ship.perks.slice(0, this.werft.perkSlots(ship.model))
+        : ship.perks,
       startHp: ship.hp,
     });
 

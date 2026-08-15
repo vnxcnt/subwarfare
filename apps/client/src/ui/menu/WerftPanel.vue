@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type { PlayableModel, WerftShip } from '@subwarfare/shared';
 import {
+  DEFAULT_SHIP_STATS,
   ITEMS,
-  PERK_SLOTS_BY_MODEL,
   PLAYABLE_MODELS,
-  SHIP_PRICES,
+  SHIP_TYPE_SUBMARINE,
   isPerkId,
   isPlayableModel,
   perkById,
@@ -16,6 +16,9 @@ import { account } from '../../state/auth';
 import { ownedQuantity, refreshInventory } from '../../state/economy';
 import {
   buyShip,
+  catalogEntry,
+  catalogPerkSlots,
+  catalogPrice,
   refreshWerft,
   repairRemaining,
   repairShip,
@@ -33,8 +36,9 @@ import { SHIP_LABELS } from './shipLabels';
 /**
  * Werft: die Schiffsbasis. Sechs Slots je Konto — jede Karte ist eine
  * INSTANZ mit eigener HP, eigenem Reparatur-Timer und eigenen Perks. Unten
- * die Kaufwerft: Modelle mit Preisen, solange Slots frei sind. Formeln und
- * Regeln kommen aus shared; die api prüft alles erneut.
+ * der Schiffskauf in zwei Kategorien (Schiffe / Uboote) mit Stats beim
+ * Hover. Preise, Perk-Slots und Basiswerte kommen aus dem Katalog der api
+ * (ships-Tabelle); die Formeln aus shared. Die api prüft alles erneut.
  */
 const SHIP_PREVIEWS = import.meta.glob('../../assets/ships/*.webp', {
   eager: true,
@@ -82,7 +86,9 @@ function hpKlasse(ship: WerftShip): string {
 }
 
 function kosten(ship: WerftShip): number {
-  return isPlayableModel(ship.model) ? repairCost(ship.model, ship.hp, ship.maxHp) : 0;
+  return isPlayableModel(ship.model)
+    ? repairCost(ship.model, ship.hp, ship.maxHp, catalogPrice(ship.model))
+    : 0;
 }
 
 /** Restzeit als h:mm:ss bzw. mm:ss — destroyer02 repariert 80 Minuten. */
@@ -115,8 +121,19 @@ function togglePerkSlot(ship: WerftShip, index: number): void {
   aktiverPerkSlot.value = perkSlotOffen(ship, index) ? null : { shipId: ship.shipId, index };
 }
 
+/**
+ * Gerenderte Perk-Fächer: mindestens die Katalog-Slots, aber nie weniger als
+ * VERBAUT ist — senkt ein Entwickler ships.perk_slots unter eine
+ * Bestands-Beladung, bleibt der Überhang sichtbar und ausbaubar (die api
+ * erlaubt über dem Limit nur noch Schrumpfen).
+ */
 function perkSlots(ship: WerftShip): number {
-  return isPlayableModel(ship.model) ? PERK_SLOTS_BY_MODEL[ship.model] : 0;
+  return Math.max(catalogPerkSlots(ship.model), ship.perks.length);
+}
+
+/** Liegt dieser Fächer-Index über dem Katalog-Limit (Überzahl)? */
+function perkSlotUeberzahl(ship: WerftShip, index: number): boolean {
+  return index >= catalogPerkSlots(ship.model);
 }
 
 function perkImSlot(ship: WerftShip, index: number): string | null {
@@ -190,16 +207,57 @@ async function abwracken(): Promise<void> {
   if (fehler === null) abwrackDialogSchliessen();
 }
 
-/* --- Kaufwerft ------------------------------------------------------------ */
+/* --- Werft (Schiffskauf) -------------------------------------------------- */
 
 const flotteVoll = computed(() => werftShips.value.length >= werftSlots.value);
 
 function preis(model: PlayableModel): number {
-  return SHIP_PRICES[model];
+  return catalogPrice(model);
 }
 
 async function kaufen(model: PlayableModel): Promise<void> {
   await buyShip(model);
+}
+
+/** Basiswerte eines Modells: Katalog der api, sonst Code-Katalog. */
+function modellStats(model: PlayableModel): {
+  hp: number;
+  speedFactor: number;
+  type: number;
+  armament: readonly string[];
+} {
+  return catalogEntry(model) ?? DEFAULT_SHIP_STATS[model];
+}
+
+/** Kaufangebot in zwei Kategorien: Überwasser-Schiffe und U-Boote. */
+const angebotsGruppen = computed(() => {
+  const uboot = (model: PlayableModel): boolean =>
+    modellStats(model).type === SHIP_TYPE_SUBMARINE;
+  return [
+    { titel: 'Schiffe', modelle: PLAYABLE_MODELS.filter((model) => !uboot(model)) },
+    { titel: 'Uboote', modelle: PLAYABLE_MODELS.filter(uboot) },
+  ];
+});
+
+const WAFFEN_LABEL: Record<string, string> = {
+  torpedo: 'Torpedos',
+  wasserbombe: 'Wasserbomben',
+  taeuschkoerper: 'Täuschkörper',
+  geschuetz: 'Geschütz',
+};
+
+/** Stats-Zeilen fürs Hover-Fenster einer Kaufkarte. */
+function statsZeilen(model: PlayableModel): Array<{ name: string; wert: string }> {
+  const stats = modellStats(model);
+  const bewaffnung = stats.armament
+    .map((waffe) => WAFFEN_LABEL[waffe] ?? waffe)
+    .join(' · ');
+  return [
+    { name: 'Struktur', wert: `${stats.hp} HP` },
+    { name: 'Tempo', wert: `${Math.round(stats.speedFactor * 100)} %` },
+    { name: 'Bewaffnung', wert: bewaffnung.length > 0 ? bewaffnung : '—' },
+    { name: 'Perk-Slots', wert: String(catalogPerkSlots(model)) },
+  ];
 }
 
 onMounted(() => {
@@ -284,11 +342,20 @@ onMounted(() => {
               :key="index"
               type="button"
               class="werft__perkslot"
-              :class="{ 'werft__perkslot--offen': perkSlotOffen(ship, index - 1) }"
+              :class="{
+                'werft__perkslot--offen': perkSlotOffen(ship, index - 1),
+                'werft__perkslot--ueberzahl': perkSlotUeberzahl(ship, index - 1),
+              }"
               :title="
-                perkImSlot(ship, index - 1)
-                  ? perkTooltip(perkImSlot(ship, index - 1)!)
-                  : 'Perk verbauen'
+                perkSlotUeberzahl(ship, index - 1)
+                  ? `Über dem Slot-Limit — fährt nicht mit, bitte ausbauen${
+                      perkImSlot(ship, index - 1)
+                        ? `: ${perkTooltip(perkImSlot(ship, index - 1)!)}`
+                        : ''
+                    }`
+                  : perkImSlot(ship, index - 1)
+                    ? perkTooltip(perkImSlot(ship, index - 1)!)
+                    : 'Perk verbauen'
               "
               @click="togglePerkSlot(ship, index - 1)"
             >
@@ -316,8 +383,12 @@ onMounted(() => {
             >
               — Perk ausbauen —
             </button>
+            <!-- In Überzahl-Fächer darf NICHTS Neues — die api erlaubt über
+                 dem Limit nur Schrumpfen; hier gibt es nur „ausbauen". -->
             <button
-              v-for="option in perkOptionen(ship, aktiverPerkSlot.index)"
+              v-for="option in perkSlotUeberzahl(ship, aktiverPerkSlot.index)
+                ? []
+                : perkOptionen(ship, aktiverPerkSlot.index)"
               :key="option"
               type="button"
               class="werft__perk-option"
@@ -388,38 +459,52 @@ onMounted(() => {
     </div>
 
     <section class="gold-panel menu__panel" aria-label="Schiffskauf">
-      <h2 class="gold-panel__title">Kaufwerft</h2>
+      <h2 class="gold-panel__title">Werft</h2>
       <p v-if="flotteVoll" class="menu__soon">
         Alle {{ werftSlots }} Slots sind belegt — für ein neues Schiff muss erst Platz sein.
       </p>
-      <ul class="werft__angebote">
-        <li v-for="model in PLAYABLE_MODELS" :key="model" class="werft__angebot">
-          <div class="werft__bild werft__bild--klein">
-            <img
-              v-if="shipPreviewUrl(model)"
-              :src="shipPreviewUrl(model)!"
-              alt=""
-              draggable="false"
-            />
-          </div>
-          <span class="werft__angebot-name">{{ label(model) }}</span>
-          <span class="werft__angebot-preis hud__num">
-            <template v-if="preis(model) > 0">
-              <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
-              {{ preis(model) }}
-            </template>
-            <template v-else>Kostenlos</template>
-          </span>
-          <button
-            type="button"
-            class="werft__knopf"
-            :disabled="werftBusy || flotteVoll || rawCoins < preis(model)"
-            @click="kaufen(model)"
-          >
-            Kaufen
-          </button>
-        </li>
-      </ul>
+      <template v-for="gruppe in angebotsGruppen" :key="gruppe.titel">
+        <h3 class="werft__kategorie">{{ gruppe.titel }}</h3>
+        <ul class="werft__angebote">
+          <li v-for="model in gruppe.modelle" :key="model" class="werft__angebot">
+            <div class="werft__bild werft__bild--klein">
+              <img
+                v-if="shipPreviewUrl(model)"
+                :src="shipPreviewUrl(model)!"
+                alt=""
+                draggable="false"
+              />
+            </div>
+            <span class="werft__angebot-name">{{ label(model) }}</span>
+            <span class="werft__angebot-preis hud__num">
+              <template v-if="preis(model) > 0">
+                <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
+                {{ preis(model) }}
+              </template>
+              <template v-else>Kostenlos</template>
+            </span>
+            <button
+              type="button"
+              class="werft__knopf"
+              :disabled="werftBusy || flotteVoll || rawCoins < preis(model)"
+              @click="kaufen(model)"
+            >
+              Kaufen
+            </button>
+
+            <!-- Stats beim Hover: Basiswerte aus dem Katalog der api. -->
+            <div class="werft__stats" role="tooltip">
+              <p class="werft__stats-titel">{{ label(model) }}</p>
+              <dl class="werft__stats-liste">
+                <div v-for="zeile in statsZeilen(model)" :key="zeile.name" class="werft__stat">
+                  <dt>{{ zeile.name }}</dt>
+                  <dd class="hud__num">{{ zeile.wert }}</dd>
+                </div>
+              </dl>
+            </div>
+          </li>
+        </ul>
+      </template>
     </section>
   </div>
 </template>
@@ -681,6 +766,11 @@ onMounted(() => {
   border-style: solid;
 }
 
+/* Überzahl (Slot-Limit gesenkt): rot markiert, Perk fährt nicht mit. */
+.werft__perkslot--ueberzahl {
+  border-color: #f26d6d;
+}
+
 .werft__perk-optionen {
   display: grid;
   gap: 0.25rem;
@@ -731,7 +821,16 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-/* --- Kaufwerft ------------------------------------------------------------ */
+/* --- Werft (Schiffskauf) -------------------------------------------------- */
+
+.werft__kategorie {
+  margin: 0.6rem 0 0.4rem;
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold);
+  opacity: 0.85;
+}
 
 .werft__angebote {
   margin: 0;
@@ -743,12 +842,68 @@ onMounted(() => {
 }
 
 .werft__angebot {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.6rem;
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--gold-border);
   background: rgb(0 0 0 / 20%);
+}
+
+/* Stats-Fenster beim Hover — über der Karte, damit es nie unterm nächsten
+   Panel verschwindet. Kein JS: reines :hover, im CEF unproblematisch. */
+.werft__stats {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 0.35rem);
+  z-index: 20;
+  min-width: 15rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--gold);
+  background: rgb(6 18 27 / 96%);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 55%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.werft__angebot:hover .werft__stats {
+  opacity: 1;
+  visibility: visible;
+}
+
+.werft__stats-titel {
+  margin: 0 0 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--gold-bright);
+}
+
+.werft__stats-liste {
+  margin: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.werft__stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.6875rem;
+}
+
+.werft__stat dt {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.werft__stat dd {
+  margin: 0;
+  text-align: right;
 }
 
 .werft__bild--klein {

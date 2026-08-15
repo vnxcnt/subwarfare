@@ -158,6 +158,9 @@ export const SHIP_PRICES = {
   submarine02: 5650,
   destroyer01: 12550,
   destroyer02: 37500,
+  destroyer03: 22500,
+  submarine03: 28000,
+  submarine04: 8500,
 } as const satisfies Partial<Record<VesselModel, number>>;
 
 export type PlayableModel = keyof typeof SHIP_PRICES;
@@ -168,7 +171,13 @@ export const PLAYABLE_MODELS: readonly PlayableModel[] = [
   'fregatte02',
   'submarine01',
   'submarine02',
+  // Innerhalb der Klasse zählt der PREIS, nicht die Modellnummer: submarine04
+  // (8500) ist die Stufe über U-Boot II, submarine03 (28000) das Endgame-Boot
+  // — gleiche Regel wie destroyer03 (22500) vor destroyer02 unten.
+  'submarine04',
+  'submarine03',
   'destroyer01',
+  'destroyer03',
   'destroyer02',
 ];
 

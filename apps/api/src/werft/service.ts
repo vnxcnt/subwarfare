@@ -1,6 +1,8 @@
-import type { PlayableModel, ShipStats } from '@subwarfare/shared';
+import type { PlayableModel, ShipStats, WerftCatalogEntry } from '@subwarfare/shared';
 import {
   DEFAULT_SHIP_STATS,
+  PERK_SLOTS_BY_MODEL,
+  PLAYABLE_MODELS,
   SHIP_PRICES,
   SHIP_SLOTS,
   repairCost,
@@ -21,6 +23,7 @@ const STARTER_MODELS: readonly PlayableModel[] = ['fregatte01', 'submarine01'];
  */
 export class WerftService {
   private readonly maxHpByModel = new Map<string, number>();
+  private readonly statsByModel = new Map<string, ShipStats>();
   private readonly locks = new Map<string, Promise<unknown>>();
 
   constructor(
@@ -28,13 +31,48 @@ export class WerftService {
     private readonly accounts: AccountStore,
     shipStats: readonly ShipStats[],
   ) {
-    // maxHp aus der beim Start geladenen ships-Tabelle — wie beim game-server
-    // greifen DB-Änderungen erst mit Neustart. Fallback: Code-Katalog.
-    for (const stats of shipStats) this.maxHpByModel.set(stats.model, stats.hp);
+    // Katalog aus der beim Start geladenen ships-Tabelle — wie beim
+    // game-server greifen DB-Änderungen erst mit Neustart. Fallback für
+    // fehlende Zeilen/Felder: Code-Katalog.
+    for (const stats of shipStats) {
+      this.maxHpByModel.set(stats.model, stats.hp);
+      this.statsByModel.set(stats.model, stats);
+    }
   }
 
   maxHp(model: PlayableModel): number {
     return this.maxHpByModel.get(model) ?? DEFAULT_SHIP_STATS[model].hp;
+  }
+
+  /** Kaufpreis aus der ships-Tabelle; Fallback: Code-Katalog. */
+  price(model: PlayableModel): number {
+    return this.statsByModel.get(model)?.price ?? SHIP_PRICES[model];
+  }
+
+  /** Perk-Slots aus der ships-Tabelle; Fallback: Code-Katalog. */
+  perkSlots(model: PlayableModel): number {
+    return this.statsByModel.get(model)?.perkSlots ?? PERK_SLOTS_BY_MODEL[model];
+  }
+
+  /**
+   * Kaufbare Modelle in fester Anzeige-Reihenfolge — die Wire-Sicht des
+   * Katalogs fürs Menü (Kaufkarten, Hover-Stats, Perk-Fächer). Modelle ohne
+   * DB-Zeile fallen auf den Code-Katalog zurück, damit die Werft nie Löcher
+   * zeigt, nur weil eine Zeile fehlt.
+   */
+  catalog(): WerftCatalogEntry[] {
+    return PLAYABLE_MODELS.map((model) => {
+      const stats = this.statsByModel.get(model) ?? DEFAULT_SHIP_STATS[model];
+      return {
+        model,
+        price: this.price(model),
+        perkSlots: this.perkSlots(model),
+        hp: stats.hp,
+        speedFactor: stats.speedFactor,
+        type: stats.type,
+        armament: [...stats.armament],
+      };
+    });
   }
 
   /**
@@ -56,7 +94,7 @@ export class WerftService {
       const ships = await this.listLocked(accountId);
       if (ships.length >= SHIP_SLOTS) return 'full';
 
-      const price = SHIP_PRICES[model];
+      const price = this.price(model);
       if (price > 0 && !(await this.accounts.spendCoins(accountId, price))) return 'poor';
       try {
         await this.store.add(accountId, model, this.maxHp(model));
@@ -96,7 +134,7 @@ export class WerftService {
         // Status unerreichbar — zulassen.
       }
 
-      const cost = repairCost(ship.model, ship.hp, maxHp);
+      const cost = repairCost(ship.model, ship.hp, maxHp, this.price(ship.model));
       if (cost > 0 && !(await this.accounts.spendCoins(accountId, cost))) return 'poor';
       const seconds = repairSeconds(ship.model, ship.hp, maxHp);
       try {

@@ -52,7 +52,11 @@ export function registerWerftRoutes(
     const account = await accountFromRequest(request, accounts);
     if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
     const ships = await werft.list(account.id);
-    const payload: WerftPayload = { slots: SHIP_SLOTS, ships: ships.map(toWire) };
+    const payload: WerftPayload = {
+      slots: SHIP_SLOTS,
+      ships: ships.map(toWire),
+      catalog: werft.catalog(),
+    };
     return payload;
   });
 
@@ -114,7 +118,17 @@ export function registerWerftRoutes(
     }
     const ship = await werft.shipOf(account.id, shipId);
     if (!ship) return reply.code(404).send({ error: 'Schiff nicht gefunden.' });
-    if (!validatePerkSet(ship.model, perks)) {
+    /*
+     * Slot-Zahl aus dem Katalog (ships.perk_slots) — nicht aus dem Code.
+     * SCHRUMPFEN ist auch über dem Limit erlaubt: senkt ein Entwickler
+     * perk_slots unter eine Bestands-Beladung, muss der Besitzer den
+     * Überhang noch ausbauen können — sonst wäre jede Änderung für immer
+     * ungültig (Deadlock). Wachsen oder Tauschen über dem Limit bleibt zu.
+     */
+    const slots = werft.perkSlots(ship.model);
+    const schrumpft = Array.isArray(perks) && perks.length < ship.perks.length;
+    const limit = schrumpft ? Math.max(slots, perks.length) : slots;
+    if (!validatePerkSet(ship.model, perks, limit)) {
       return reply.code(400).send({ error: 'Ungültige Perk-Auswahl.' });
     }
 

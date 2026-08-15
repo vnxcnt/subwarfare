@@ -1,4 +1,4 @@
-import type { VesselModel } from '../types/Player.js';
+import { DEFAULT_VESSEL_MODEL, type VesselModel } from '../types/Player.js';
 
 /**
  * Kampfwerte — Waffen und Rumpfmaße.
@@ -121,10 +121,16 @@ export const SIDE_LAUNCH_HALF_ANGLE_DEG = 10;
 export const SECTOR_TOLERANCE_DEG = 3;
 
 /**
- * Rumpfmaße in Metern für die Kollision: der Rumpf ist eine KAPSEL — Strecke
- * der Länge (length − beam) längs des Kurses, verdickt um beam/2. Die Längen
- * sind dieselben, mit denen der Client die Billboards skaliert; driften die
- * beiden auseinander, explodieren Torpedos sichtbar neben dem Schiff.
+ * BASIS-Rumpfmaße in Metern für die Kollision: der Rumpf ist eine KAPSEL —
+ * Strecke der Länge (length − beam) längs des Kurses, verdickt um beam/2.
+ *
+ * Seit ships.size (Migration 21) sind das KLASSEN-Basiswerte: alle spielbaren
+ * Überwasserschiffe tragen die Fregatten-Basis (140/25), alle U-Boote die
+ * U-Boot-Basis (110/13) — die tatsächliche Größe ist Basis × size aus der
+ * ships-Tabelle (`scaledHull` unten). NPC-Modelle behalten eigene Maße bei
+ * size 1. Die Längen sind dieselben, mit denen der Client die Billboards
+ * skaliert; driften die beiden auseinander, explodieren Torpedos sichtbar
+ * neben dem Schiff.
  */
 export const HULL_DIMENSIONS: Record<VesselModel, { length: number; beam: number }> = {
   fregatte01: { length: 140, beam: 25 },
@@ -132,11 +138,48 @@ export const HULL_DIMENSIONS: Record<VesselModel, { length: number; beam: number
   submarine01: { length: 110, beam: 13 },
   speedster01: { length: 18, beam: 6 },
   tanker01: { length: 180, beam: 30 },
-  fregatte02: { length: 145, beam: 26 },
-  submarine02: { length: 120, beam: 14 },
-  destroyer01: { length: 160, beam: 24 },
-  destroyer02: { length: 170, beam: 26 },
+  fregatte02: { length: 140, beam: 25 },
+  submarine02: { length: 110, beam: 13 },
+  destroyer01: { length: 140, beam: 25 },
+  destroyer02: { length: 140, beam: 25 },
+  destroyer03: { length: 140, beam: 25 },
+  submarine03: { length: 110, beam: 13 },
+  submarine04: { length: 110, beam: 13 },
 };
+
+/**
+ * Code-Default der Größenfaktoren (ships.size) — dieselben Zahlen wie der
+ * Migrations-Seed; danach führt die DB (Admin-DB-Editor, greift mit
+ * Dienst-Neustart). Basis 1 = fregatte01 (Überwasser) bzw. submarine01
+ * (U-Boote). Modelle ohne Eintrag (NPCs) fahren 1.
+ */
+export const DEFAULT_SHIP_SIZES: Partial<Record<VesselModel, number>> = {
+  fregatte01: 1,
+  fregatte02: 1.1,
+  submarine01: 1,
+  submarine02: 1.3,
+  submarine03: 1.4,
+  submarine04: 1.6,
+  destroyer01: 1.3,
+  destroyer02: 1.9,
+  destroyer03: 1.5,
+};
+
+/**
+ * Effektive Rumpfmaße eines Modells: Klassen-Basis × Größenfaktor. `size`
+ * kommt aus dem Katalog (ships-Tabelle über api/Spielserver/welcome); ohne
+ * ihn gilt der Code-Default. Server (Kollision, Abschuss-Offsets) und Client
+ * (Billboards, Klickradius) MÜSSEN beide hierüber rechnen.
+ */
+export function scaledHull(
+  model: VesselModel,
+  size?: number,
+): { length: number; beam: number } {
+  const base = HULL_DIMENSIONS[model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+  const factor =
+    typeof size === 'number' && size > 0 ? size : (DEFAULT_SHIP_SIZES[model] ?? 1);
+  return { length: base.length * factor, beam: base.beam * factor };
+}
 
 /**
  * Schadensfolgen — alle Schwellen als Anteil der vollen HP des Modells.

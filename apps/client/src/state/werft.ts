@@ -1,5 +1,10 @@
-import type { WerftPayload, WerftShip } from '@subwarfare/shared';
-import { SHIP_SLOTS } from '@subwarfare/shared';
+import type { WerftCatalogEntry, WerftPayload, WerftShip } from '@subwarfare/shared';
+import {
+  PERK_SLOTS_BY_MODEL,
+  SHIP_PRICES,
+  SHIP_SLOTS,
+  isPlayableModel,
+} from '@subwarfare/shared';
 import { ref } from 'vue';
 import { API_URL, account, token } from './auth';
 
@@ -14,6 +19,27 @@ export const werftSlots = ref(SHIP_SLOTS);
 export const werftLoaded = ref(false);
 export const werftBusy = ref(false);
 export const werftError = ref<string | null>(null);
+/** Kaufbarer Katalog (Preise, Perk-Slots, Basiswerte) aus der ships-Tabelle. */
+export const werftCatalog = ref<WerftCatalogEntry[]>([]);
+
+/** Katalog-Eintrag eines Modells — null, solange der Katalog nicht da ist. */
+export function catalogEntry(model: string): WerftCatalogEntry | null {
+  return werftCatalog.value.find((eintrag) => eintrag.model === model) ?? null;
+}
+
+/** Kaufpreis eines Modells: Katalog zuerst, Code-Katalog als Fallback. */
+export function catalogPrice(model: string): number {
+  const eintrag = catalogEntry(model);
+  if (eintrag) return eintrag.price;
+  return isPlayableModel(model) ? SHIP_PRICES[model] : 0;
+}
+
+/** Perk-Slots eines Modells: Katalog zuerst, Code-Katalog als Fallback. */
+export function catalogPerkSlots(model: string): number {
+  const eintrag = catalogEntry(model);
+  if (eintrag) return eintrag.perkSlots;
+  return isPlayableModel(model) ? PERK_SLOTS_BY_MODEL[model] : 0;
+}
 
 /**
  * Uhr für den Reparatur-Countdown: `repairSecondsLeft` gilt zum Zeitpunkt des
@@ -49,6 +75,9 @@ export async function refreshWerft(): Promise<void> {
     const data = (await response.json()) as WerftPayload;
     werftShips.value = data.ships;
     werftSlots.value = data.slots;
+    // Ältere api ohne Katalog-Feld: leer lassen, die Helfer fallen dann auf
+    // den Code-Katalog zurück.
+    werftCatalog.value = data.catalog ?? [];
     werftFetchedAt.value = Date.now();
     werftLoaded.value = true;
     ensureTicker();

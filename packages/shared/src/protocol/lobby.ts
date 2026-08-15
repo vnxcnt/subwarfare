@@ -107,10 +107,31 @@ export interface WerftShip {
   perks: string[];
 }
 
+/**
+ * Katalog-Eintrag eines KAUFBAREN Modells — Preis, Perk-Slots und Basiswerte
+ * kommen aus der ships-Tabelle (seit Migration 18), nicht mehr aus dem Code.
+ * Der Client rechnet und zeigt damit (Kaufkarten, Hover-Stats, Perk-Fächer);
+ * die api setzt dieselben Werte durch.
+ */
+export interface WerftCatalogEntry {
+  model: string;
+  price: number;
+  perkSlots: number;
+  hp: number;
+  /** Fahrt-Faktor relativ zur Fregatte (ships.speed). */
+  speedFactor: number;
+  /** Schiffstyp (1 NPC, 2 U-Boot, 3 Überwasser) — fürs Gruppieren. */
+  type: number;
+  /** Bewaffnung (Waffen-Kennungen) — für die Stats-Anzeige. */
+  armament: string[];
+}
+
 /** Antwort von `GET /api/werft`. */
 export interface WerftPayload {
   slots: number;
   ships: WerftShip[];
+  /** Kaufbare Modelle in Anzeige-Reihenfolge. */
+  catalog: WerftCatalogEntry[];
 }
 
 export interface WerftBuyRequest {

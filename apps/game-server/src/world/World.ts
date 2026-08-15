@@ -20,7 +20,6 @@ import {
   DEG,
   DEPTH_CHARGE,
   GUN,
-  HULL_DIMENSIONS,
   SHIP_TYPE_SUBMARINE,
   TORPEDO,
   Vessel,
@@ -28,6 +27,7 @@ import {
   armorHitCost,
   norm360,
   salvoSpread,
+  scaledHull,
   smokeLevelForHp,
   splitDamage,
   torusDelta,
@@ -167,6 +167,15 @@ export class World {
     private readonly ships: ShipCatalog,
   ) {
     this.map = map;
+  }
+
+  /**
+   * Effektive Rumpfmaße eines Modells: Klassen-Basis × ships.size aus dem
+   * Katalog. ALLE Kollisions- und Abschussrechnungen laufen hierüber — mit
+   * derselben Skalierung zeichnet der Client die Billboards (welcome.ships).
+   */
+  private hull(model: VesselModel): { length: number; beam: number } {
+    return scaledHull(model, this.ships.get(model).size);
   }
 
   /** Seegang der Karte übernehmen (0..1) — steuert die Schussstreuung. */
@@ -436,7 +445,7 @@ export class World {
    * Sektorprüfung liegt wie bei den anderen Waffen beim GameServer.
    */
   fireDepthCharge(shooter: Vessel, bearingDegrees: number): void {
-    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const dims = this.hull(shooter.model);
     this.launch(
       shooter, 'depthcharge', DEPTH_CHARGE.model, bearingDegrees,
       dims.beam / 2 + 4,
@@ -447,7 +456,7 @@ export class World {
 
   /** U-Boot: Torpedo aus dem Bugrohr, geradeaus in Kursrichtung. */
   fireTorpedo(shooter: Vessel): void {
-    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const dims = this.hull(shooter.model);
     // Kurz VOR dem Bug, damit der erste Kollisionstest nicht den eigenen —
     // ohnehin ausgenommenen — Rumpf streift.
     this.launch(
@@ -462,7 +471,7 @@ export class World {
    * dorthin, wo verfolgende Torpedos herkommen.
    */
   fireDecoy(shooter: Vessel): void {
-    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const dims = this.hull(shooter.model);
     this.launch(
       shooter, 'decoy', DECOY.model, shooter.rotation + 180,
       dims.length / 2 + DECOY.triggerRadius * 0.2,
@@ -472,7 +481,7 @@ export class World {
 
   /** Überwasserschiff: Torpedo über die SEITE abgeworfen, in Zielpeilung. */
   fireTorpedoSide(shooter: Vessel, bearingDegrees: number): void {
-    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const dims = this.hull(shooter.model);
     this.launch(
       shooter, 'torpedo', TORPEDO.model, bearingDegrees,
       dims.beam / 2 + TORPEDO.hitRadius * 2,
@@ -491,7 +500,7 @@ export class World {
     count: number,
     laengs: boolean,
   ): void {
-    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const dims = this.hull(shooter.model);
     const offset = (laengs ? dims.length / 2 : dims.beam / 2) + TORPEDO.hitRadius * 2;
     for (const versatz of salvoSpread(count)) {
       this.launch(
@@ -503,7 +512,7 @@ export class World {
 
   /** Überwasserschiff: Täuschkörper über die SEITE, in Zielpeilung. */
   fireDecoySide(shooter: Vessel, bearingDegrees: number): void {
-    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const dims = this.hull(shooter.model);
     this.launch(
       shooter, 'decoy', DECOY.model, bearingDegrees,
       dims.beam / 2 + DECOY.triggerRadius * 0.2,
@@ -594,7 +603,7 @@ export class World {
    * der Fregatte) machte alles Nähere prinzipiell unbeschießbar.
    */
   fireShell(shooter: Vessel, bearingDegrees: number): void {
-    const dims = HULL_DIMENSIONS[shooter.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const dims = this.hull(shooter.model);
     this.launch(
       shooter, 'shell', GUN.model, bearingDegrees,
       dims.beam / 2 + GUN.hitRadius * 2,
@@ -808,8 +817,8 @@ export class World {
    * heißt also Streckenabstand ≤ Summe der Halbbreiten.
    */
   private hullsOverlap(a: Vessel, b: Vessel): boolean {
-    const da = HULL_DIMENSIONS[a.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
-    const db = HULL_DIMENSIONS[b.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+    const da = this.hull(a.model);
+    const db = this.hull(b.model);
 
     // Billiger Vorfilter über die umschließenden Kreise — Torus-Versatz, damit
     // sich zwei Schiffe auch ÜBER die Naht hinweg rammen können.
@@ -928,7 +937,7 @@ export class World {
       if (vessel.id === projectile.ownerId || exclude.has(vessel.id)) continue;
       if (projectile.kind === 'shell' && vessel.depth > 0.5) continue;
 
-      const dims = HULL_DIMENSIONS[vessel.model] ?? HULL_DIMENSIONS[DEFAULT_VESSEL_MODEL];
+      const dims = this.hull(vessel.model);
       const reach = dims.beam / 2 + projectile.hitRadius;
 
       // Billiger Vorfilter: außerhalb des umschließenden Kreises kann nichts

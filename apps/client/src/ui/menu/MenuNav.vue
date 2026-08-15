@@ -150,7 +150,7 @@ function signOut(): void {
       :style="artStyle(NAV_ART.moderation)"
       @click="wechsle('moderation')"
     >
-      <span class="nav__item-label">Moderation</span>
+      <span class="nav__item-label">Administration</span>
     </button>
     <button
       type="button"

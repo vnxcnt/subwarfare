@@ -24,10 +24,11 @@ import { itemIconUrl } from '../itemIcons';
 import { SHIP_LABELS } from './shipLabels';
 
 /**
- * Moderation — Werkzeugkasten für Gamemaster und Entwickler: Konten prüfen,
- * Inventar setzen, Flottillen verwalten. Der Knopf ist rollen-gebunden, die
- * WAHRHEIT sitzt aber in der api: jede Route prüft die Rolle frisch am Konto.
- * Zustand lebt bewusst lokal — das Werkzeug braucht kein Menü-Gedächtnis.
+ * Administration (Nav-Reiter; intern weiter „moderation") — Werkzeugkasten
+ * für Gamemaster und Entwickler: Konten prüfen, Inventar setzen, Flottillen
+ * verwalten, DB-Editor. Der Knopf ist rollen-gebunden, die WAHRHEIT sitzt
+ * aber in der api: jede Route prüft die Rolle frisch am Konto. Zustand lebt
+ * bewusst lokal — das Werkzeug braucht kein Menü-Gedächtnis.
  */
 const reiter = ref<'konten' | 'flottillen' | 'datenbank'>('konten');
 
@@ -357,7 +358,7 @@ void istKommandant;
 </script>
 
 <template>
-  <section class="gold-panel menu__panel mod" aria-label="Moderation">
+  <section class="gold-panel menu__panel mod" aria-label="Administration">
     <div class="menu__tabs" role="tablist">
       <button
         type="button"

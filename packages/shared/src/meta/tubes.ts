@@ -39,6 +39,9 @@ export const TUBE_LAYOUTS: Partial<Record<VesselModel, TubePosition[]>> = {
   submarine02: ['bug', 'bug', 'heck'],
   destroyer01: ['backbord', 'backbord', 'steuerbord', 'steuerbord'],
   destroyer02: ['backbord', 'backbord', 'backbord', 'steuerbord', 'steuerbord', 'steuerbord'],
+  destroyer03: ['backbord', 'backbord', 'steuerbord', 'steuerbord'],
+  submarine03: ['bug', 'bug', 'bug', 'heck', 'heck'],
+  submarine04: ['bug', 'bug', 'bug', 'heck'],
 };
 
 export function tubeLayoutFor(model: VesselModel): TubePosition[] {

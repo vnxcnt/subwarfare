@@ -32,6 +32,9 @@ const MODEL_LABELS: Record<string, string> = {
   submarine02: 'U-Boot II',
   destroyer01: 'Zerstörer',
   destroyer02: 'Zerstörer II',
+  destroyer03: 'Zerstörer III',
+  submarine03: 'U-Boot III',
+  submarine04: 'U-Boot IV',
 };
 
 function choose(model: (typeof VESSEL_MODELS)[number]): void {

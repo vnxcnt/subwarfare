@@ -11,4 +11,7 @@ export const SHIP_LABELS: Record<PlayableModel, string> = {
   submarine02: 'U-Boot II',
   destroyer01: 'Zerstörer',
   destroyer02: 'Zerstörer II',
+  destroyer03: 'Zerstörer III',
+  submarine03: 'U-Boot III',
+  submarine04: 'U-Boot IV',
 };
