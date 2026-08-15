@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FLEET_MIN_LEVEL } from '@subwarfare/shared';
+import { FLEET_MIN_LEVEL, ROLE_GAMEMASTER } from '@subwarfare/shared';
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import logoUrl from '../../assets/ui/logo_main_white_login.png';
@@ -8,6 +8,7 @@ import artDepot from '../../assets/ui/menu/depot.webp';
 import artEinstellungen from '../../assets/ui/menu/einstellungen.webp';
 import artFlottille from '../../assets/ui/menu/flottille.webp';
 import artLogout from '../../assets/ui/menu/logout.webp';
+import artModeration from '../../assets/ui/menu/moderation.webp';
 import artNeuigkeiten from '../../assets/ui/menu/neuigkeiten.webp';
 import artStatistiken from '../../assets/ui/menu/statistiken.webp';
 import artWerft from '../../assets/ui/menu/werft.webp';
@@ -42,6 +43,7 @@ const NAV_ART: Record<MenuSection, string> = {
   flottille: artFlottille,
   statistiken: artStatistiken,
   neuigkeiten: artNeuigkeiten,
+  moderation: artModeration,
 };
 
 function artStyle(bild: string): Record<string, string> {
@@ -58,6 +60,10 @@ const router = useRouter();
 const flottilleGesperrt = computed(
   () => !account.value?.isDev && progression.value.level < FLEET_MIN_LEVEL,
 );
+
+/** Moderation nur für Gamemaster (2) und Entwickler (3) — die api prüft es
+ *  bei jeder Anfrage erneut; der Knopf ist nur die ehrliche Anzeige. */
+const darfModerieren = computed(() => (account.value?.role ?? 0) >= ROLE_GAMEMASTER);
 
 function gesperrt(ziel: MenuSection): boolean {
   return ziel === 'flottille' && flottilleGesperrt.value;
@@ -136,6 +142,17 @@ function signOut(): void {
       <span class="nav__item-label">Einstellungen</span>
     </button>
     <button
+      v-if="darfModerieren"
+      type="button"
+      class="nav__item nav__item--small"
+      :class="{ 'nav__item--active': section === 'moderation' }"
+      data-section="moderation"
+      :style="artStyle(NAV_ART.moderation)"
+      @click="wechsle('moderation')"
+    >
+      <span class="nav__item-label">Moderation</span>
+    </button>
+    <button
       type="button"
       class="nav__item nav__item--small"
       :style="artStyle(artLogout)"
@@ -162,7 +179,14 @@ function signOut(): void {
     rgb(10 9 7 / 78%) 70%,
     transparent 100%
   );
+  /* Scrollbar unsichtbar, Scrollen bleibt — der Balken zerschnitte das
+     Hafen-Artwork der Spalte. */
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
 }
 
 .nav__logo {

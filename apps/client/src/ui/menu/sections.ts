@@ -9,7 +9,8 @@ export type MenuSection =
   | 'depot'
   | 'flottille'
   | 'statistiken'
-  | 'neuigkeiten';
+  | 'neuigkeiten'
+  | 'moderation';
 
 /** Die großen Menüpunkte der linken Spalte, in Anzeige-Reihenfolge. */
 export const MAIN_SECTIONS: ReadonlyArray<{

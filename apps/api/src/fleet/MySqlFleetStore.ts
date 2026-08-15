@@ -98,12 +98,22 @@ export class MySqlFleetStore implements FleetStore {
 
   async mine(accountId: string): Promise<FleetMineResponse | null> {
     const [fleets] = await this.pool.execute<FleetRow[]>(
-      `SELECT f.id, f.name, f.description, f.treasury, f.created_at
+      `SELECT f.id
          FROM fleets f
          JOIN fleet_members m ON m.fleet_id = f.id
         WHERE m.account_id = ?
         LIMIT 1`,
       [accountId],
+    );
+    const fleet = fleets[0];
+    if (!fleet) return null;
+    return this.profile(fleet.id);
+  }
+
+  async profile(fleetId: string): Promise<FleetMineResponse | null> {
+    const [fleets] = await this.pool.execute<FleetRow[]>(
+      `SELECT id, name, description, treasury, created_at FROM fleets WHERE id = ? LIMIT 1`,
+      [fleetId],
     );
     const fleet = fleets[0];
     if (!fleet) return null;
@@ -133,6 +143,11 @@ export class MySqlFleetStore implements FleetStore {
         joinedAt: row.joined_at,
       })),
     };
+  }
+
+  async disband(fleetId: string): Promise<void> {
+    // Der CASCADE-Fremdschlüssel räumt die Mitgliedszeilen mit.
+    await this.pool.execute('DELETE FROM fleets WHERE id = ?', [fleetId]);
   }
 
   async membership(accountId: string): Promise<FleetMembership | null> {

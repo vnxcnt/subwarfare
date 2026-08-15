@@ -50,6 +50,11 @@ export interface InventoryStore {
   /** Schreibt Stücke gut — Rückgabe unverbrauchter Munition nach dem Einsatz. */
   credit(accountId: string, itemId: ItemId, amount: number): Promise<void>;
   /**
+   * Setzt den Bestand ABSOLUT — Moderationswerkzeug. 0 räumt den Posten
+   * (die Leseseite filtert Nullzeilen ohnehin aus).
+   */
+  setQuantity(accountId: string, itemId: ItemId, quantity: number): Promise<void>;
+  /**
    * Räumt Besitz und Zuordnungen eines Kontos — Teil der Konto-Löschung.
    * In MariaDB erledigt das der CASCADE-Fremdschlüssel, dort ist es ein No-op;
    * der Speicher-Betrieb hat keine Fremdschlüssel und muss selbst aufräumen.
@@ -142,6 +147,16 @@ export class MemoryInventoryStore implements InventoryStore {
       this.owned.set(accountId, map);
     }
     map.set(itemId, (map.get(itemId) ?? 0) + amount);
+  }
+
+  async setQuantity(accountId: string, itemId: ItemId, quantity: number): Promise<void> {
+    let map = this.owned.get(accountId);
+    if (!map) {
+      map = new Map();
+      this.owned.set(accountId, map);
+    }
+    if (quantity <= 0) map.delete(itemId);
+    else map.set(itemId, quantity);
   }
 
   async purge(accountId: string): Promise<void> {

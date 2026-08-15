@@ -149,6 +149,22 @@ export class MySqlInventoryStore implements InventoryStore {
     );
   }
 
+  async setQuantity(accountId: string, itemId: ItemId, quantity: number): Promise<void> {
+    if (quantity <= 0) {
+      await this.pool.execute(
+        'DELETE FROM account_items WHERE account_id = ? AND item_id = ?',
+        [accountId, itemId],
+      );
+      return;
+    }
+    await this.pool.execute(
+      `INSERT INTO account_items (account_id, item_id, quantity)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)`,
+      [accountId, itemId, quantity],
+    );
+  }
+
   async purge(): Promise<void> {
     // Nichts zu tun: account_items und ship_loadouts hängen mit ON DELETE
     // CASCADE am Konto — die Löschung der accounts-Zeile räumt beide mit.

@@ -133,6 +133,38 @@ export interface WerftMutationResponse {
   ships: WerftShip[];
 }
 
+/* --- Moderation (GM + Entwickler, REST unter /api/mod) ------------------- */
+
+/** Konto-Zeile der Moderations-Suche. */
+export interface ModAccountSummary {
+  id: string;
+  displayName: string;
+  role: number;
+  coins: number;
+  xp: number;
+  level: number;
+  kills: number;
+  deaths: number;
+  createdAt: string;
+  lastLoginAt: string;
+}
+
+/** Konto-Detail: Daten + Inventar + Flotte + Flottille. Bewusst OHNE Mail. */
+export interface ModAccountDetail extends ModAccountSummary {
+  hasGoogle: boolean;
+  hasDiscord: boolean;
+  items: InventoryItem[];
+  ships: WerftShip[];
+  fleet: { id: string; name: string; rank: number } | null;
+}
+
+export interface ModItemRequest {
+  accountId: string;
+  itemId: string;
+  /** Absoluter Bestand — 0 entfernt den Posten. */
+  quantity: number;
+}
+
 /** Antwort eines Kaufs: neuer Kontostand + frischer Besitz. */
 export interface ShopBuyResponse {
   coins: number;

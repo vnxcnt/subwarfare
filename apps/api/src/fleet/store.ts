@@ -30,6 +30,10 @@ export interface FleetStore {
   search(query: string, limit: number): Promise<FleetSummary[]>;
   /** Eigene Flottille samt Mitgliederliste — null ohne Mitgliedschaft. */
   mine(accountId: string): Promise<FleetMineResponse | null>;
+  /** Flottille samt Mitgliederliste über ihre ID — für die Moderation. */
+  profile(fleetId: string): Promise<FleetMineResponse | null>;
+  /** Löst eine Flottille komplett auf (Moderation) — Mitglieder fliegen mit. */
+  disband(fleetId: string): Promise<void>;
   /** Nur die Mitgliedschaft (fürs Rechte-Prüfen in den Routen). */
   membership(accountId: string): Promise<FleetMembership | null>;
   /** Beitritt als Besatzungsmitglied (Rang 5). */
@@ -123,7 +127,11 @@ export class MemoryFleetStore implements FleetStore {
   async mine(accountId: string): Promise<FleetMineResponse | null> {
     const membership = this.members.get(accountId);
     if (!membership) return null;
-    const fleet = this.fleets.get(membership.fleetId);
+    return this.profile(membership.fleetId);
+  }
+
+  async profile(fleetId: string): Promise<FleetMineResponse | null> {
+    const fleet = this.fleets.get(fleetId);
     if (!fleet) return null;
 
     const members = [];
@@ -150,6 +158,16 @@ export class MemoryFleetStore implements FleetStore {
       },
       members,
     };
+  }
+
+  async disband(fleetId: string): Promise<void> {
+    const fleet = this.fleets.get(fleetId);
+    if (!fleet) return;
+    for (const [accountId, eintrag] of this.members) {
+      if (eintrag.fleetId === fleetId) this.members.delete(accountId);
+    }
+    this.byName.delete(fleet.nameKey);
+    this.fleets.delete(fleetId);
   }
 
   async membership(accountId: string): Promise<FleetMembership | null> {

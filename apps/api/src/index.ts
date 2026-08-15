@@ -19,6 +19,7 @@ import { registerStatsRoutes } from './stats/routes.js';
 import { registerSocialRoutes } from './social/routes.js';
 import { MySqlSocialStore } from './social/MySqlSocialStore.js';
 import { MemorySocialStore, type SocialStore } from './social/store.js';
+import { registerModRoutes } from './mod/routes.js';
 import { registerWerftRoutes } from './werft/routes.js';
 import { MySqlWerftStore } from './werft/MySqlWerftStore.js';
 import { MemoryWerftStore, type WerftStore } from './werft/store.js';
@@ -94,6 +95,7 @@ await app.register(
       notify: (id) => lobby.notifySocial(id),
     });
     registerWerftRoutes(scope, accounts, inventory, werft);
+    registerModRoutes(scope, accounts, inventory, fleets, werft);
 
     // Interner Kanal für den Spielserver — derselbe Schlüssel wie dessen
     // /status. Von außen kommt man über Caddy zwar an die URL, aber ohne

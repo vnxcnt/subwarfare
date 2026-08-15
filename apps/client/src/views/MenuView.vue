@@ -12,6 +12,7 @@ import AuslaufenPanel from '../ui/menu/AuslaufenPanel.vue';
 import DepotPanel from '../ui/menu/DepotPanel.vue';
 import FlottillePanel from '../ui/menu/FlottillePanel.vue';
 import MenuNav from '../ui/menu/MenuNav.vue';
+import ModerationPanel from '../ui/menu/ModerationPanel.vue';
 import NeuigkeitenPanel from '../ui/menu/NeuigkeitenPanel.vue';
 import PlayerBadge from '../ui/menu/PlayerBadge.vue';
 import StatistikPanel from '../ui/menu/StatistikPanel.vue';
@@ -184,6 +185,7 @@ onBeforeUnmount(() => {
       <FlottillePanel v-else-if="section === 'flottille'" />
       <StatistikPanel v-else-if="section === 'statistiken'" />
       <NeuigkeitenPanel v-else-if="section === 'neuigkeiten'" />
+      <ModerationPanel v-else-if="section === 'moderation'" />
     </div>
 
     <PlayerBadge />
