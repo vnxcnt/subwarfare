@@ -17,6 +17,10 @@ export interface Account extends Omit<AccountProfile, 'hasGoogle' | 'hasDiscord'
   /** PvP-Zähler — nur Spieler-gegen-Spieler, NPC-Abschüsse zählen nicht. */
   kills: number;
   deaths: number;
+  /** Chatsperre (Moderation) — darf nicht mehr funken. */
+  chatMuted: boolean;
+  /** Kontosperre (BAN): die Begründung, oder null = nicht gesperrt. */
+  bannedReason: string | null;
 }
 
 export interface GoogleIdentity {
@@ -68,6 +72,16 @@ export interface AccountStore {
   recordPvpKill(id: string): Promise<void>;
   /** PvP-Untergang des Kontos (+1 deaths). Nur wenn der Killer ein Spieler war. */
   recordPvpDeath(id: string): Promise<void>;
+  /** Setzt die Kontorolle (Moderation) — die Rechte-Matrix prüft die Route. */
+  setRole(id: string, role: number): Promise<void>;
+  /** Setzt das Guthaben ABSOLUT (Moderation). */
+  setCoins(id: string, coins: number): Promise<void>;
+  /** Setzt den XP-Stand ABSOLUT (Moderation) — das Level folgt daraus. */
+  setXp(id: string, xp: number): Promise<void>;
+  /** Chatsperre setzen/aufheben (Moderation). */
+  setChatMuted(id: string, muted: boolean): Promise<void>;
+  /** Kontosperre: Begründung setzen, null hebt die Sperre auf (Moderation). */
+  setBan(id: string, reason: string | null): Promise<void>;
   /**
    * Bestenlisten, absteigend sortiert (PvP nach Kills, XP nach Stand) und
    * bereits als Wire-Typen inklusive abgeleitetem Level. Konten ohne

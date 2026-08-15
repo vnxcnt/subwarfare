@@ -128,6 +128,31 @@ export class MemoryAccountStore implements AccountStore {
     if (account) account.deaths += 1;
   }
 
+  async setRole(id: string, role: number): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (account) account.role = role;
+  }
+
+  async setCoins(id: string, coins: number): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (account) account.coins = coins;
+  }
+
+  async setXp(id: string, xp: number): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (account) account.xp = xp;
+  }
+
+  async setChatMuted(id: string, muted: boolean): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (account) account.chatMuted = muted;
+  }
+
+  async setBan(id: string, reason: string | null): Promise<void> {
+    const account = this.byIdMap.get(id);
+    if (account) account.bannedReason = reason;
+  }
+
   async topPvp(limit: number): Promise<PvpLeaderboardEntry[]> {
     // Identische Filter- und Sortierlogik wie im MySqlAccountStore.
     return [...this.byIdMap.values()]
@@ -204,7 +229,16 @@ export class MemoryAccountStore implements AccountStore {
   private create(
     fields: Omit<
       Account,
-      'id' | 'createdAt' | 'lastLoginAt' | 'coins' | 'xp' | 'role' | 'kills' | 'deaths'
+      | 'id'
+      | 'createdAt'
+      | 'lastLoginAt'
+      | 'coins'
+      | 'xp'
+      | 'role'
+      | 'kills'
+      | 'deaths'
+      | 'chatMuted'
+      | 'bannedReason'
     >,
   ): Account {
     const now = new Date().toISOString();
@@ -217,6 +251,8 @@ export class MemoryAccountStore implements AccountStore {
       role: 0,
       kills: 0,
       deaths: 0,
+      chatMuted: false,
+      bannedReason: null,
       createdAt: now,
       lastLoginAt: now,
     };

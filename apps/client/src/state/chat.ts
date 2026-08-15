@@ -123,6 +123,14 @@ export function connectChat(): void {
   });
   // Freundschafts-Stand hat sich drüben geändert — Liste nachziehen.
   socket.on('social:update', () => void refreshFriends());
+  // Moderation hat die Nachrichten eines Kontos gelöscht — aus ALLEN Fäden
+  // entfernen (die gespeicherten Kanäle hat der Server bereits geräumt).
+  socket.on('chat:purge', (payload) => {
+    for (const key of Object.keys(threads) as ThreadKey[]) {
+      const liste = threads[key];
+      if (liste) threads[key] = liste.filter((zeile) => zeile.senderId !== payload.accountId);
+    }
+  });
 }
 
 export function disconnectChat(): void {

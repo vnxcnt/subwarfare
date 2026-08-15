@@ -147,6 +147,12 @@ export class WerftService {
     });
   }
 
+  /** Räumt die Flotte eines Kontos — Teil der Konto-Löschung (Memory-Pflicht,
+   *  MariaDB erledigt es per CASCADE). */
+  purge(accountId: string): Promise<void> {
+    return this.withLock(accountId, () => this.store.purge(accountId));
+  }
+
   /**
    * Schadensmeldung des Spielservers. Ownership-Prüfung ist Pflicht — der
    * interne Kanal ist vertrauenswürdig, aber ein Meldefehler drüben darf nie

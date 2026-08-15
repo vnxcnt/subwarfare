@@ -59,6 +59,11 @@ export interface PlayerProfile {
   /** Flottille samt Rang — null ohne Mitgliedschaft. */
   fleet: { name: string; rank: number } | null;
   friendship: FriendshipState;
+  /**
+   * Chatsperre des Spielers — NUR gesetzt, wenn der Abfragende selbst
+   * Moderationsrechte hat (steuert die Knöpfe auf der Profilkarte).
+   */
+  chatMuted?: boolean;
 }
 
 /** Eine gespeicherte Chat-Zeile, wie die Historie sie liefert. */

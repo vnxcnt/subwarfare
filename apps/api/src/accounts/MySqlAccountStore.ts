@@ -26,6 +26,8 @@ interface AccountRow extends RowDataPacket {
   last_login_at: string;
   kills: number;
   deaths: number;
+  chat_muted: number;
+  banned_reason: string | null;
 }
 
 function toAccount(row: AccountRow): Account {
@@ -44,11 +46,14 @@ function toAccount(row: AccountRow): Account {
     lastLoginAt: row.last_login_at,
     kills: row.kills,
     deaths: row.deaths,
+    chatMuted: row.chat_muted === 1,
+    bannedReason: row.banned_reason,
   };
 }
 
 const SELECT = `SELECT id, google_sub, discord_id, email, display_name, avatar_url, is_dev,
-                       coins, xp, role, created_at, last_login_at, kills, deaths
+                       coins, xp, role, created_at, last_login_at, kills, deaths,
+                       chat_muted, banned_reason
                   FROM accounts`;
 
 /**
@@ -207,6 +212,29 @@ export class MySqlAccountStore implements AccountStore {
 
   async recordPvpDeath(id: string): Promise<void> {
     await this.pool.execute('UPDATE accounts SET deaths = deaths + 1 WHERE id = ?', [id]);
+  }
+
+  async setRole(id: string, role: number): Promise<void> {
+    await this.pool.execute('UPDATE accounts SET role = ? WHERE id = ?', [role, id]);
+  }
+
+  async setCoins(id: string, coins: number): Promise<void> {
+    await this.pool.execute('UPDATE accounts SET coins = ? WHERE id = ?', [coins, id]);
+  }
+
+  async setXp(id: string, xp: number): Promise<void> {
+    await this.pool.execute('UPDATE accounts SET xp = ? WHERE id = ?', [xp, id]);
+  }
+
+  async setChatMuted(id: string, muted: boolean): Promise<void> {
+    await this.pool.execute('UPDATE accounts SET chat_muted = ? WHERE id = ?', [muted ? 1 : 0, id]);
+  }
+
+  async setBan(id: string, reason: string | null): Promise<void> {
+    await this.pool.execute(
+      'UPDATE accounts SET banned_reason = ?, banned_at = ? WHERE id = ?',
+      [reason, reason === null ? null : new Date(), id],
+    );
   }
 
   async topPvp(limit: number): Promise<PvpLeaderboardEntry[]> {

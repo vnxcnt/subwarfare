@@ -30,7 +30,11 @@ export async function accountFromRequest(
   if (!header?.startsWith('Bearer ')) return null;
   const claims = await verifySession(header.slice(7));
   if (!claims) return null;
-  return accounts.byId(claims.sub);
+  const account = await accounts.byId(claims.sub);
+  // Gesperrte Konten fallen an JEDEM Auth-Punkt durch: das umlaufende Token
+  // wird damit wertlos, der Client landet über die 401er am Login.
+  if (account?.bannedReason !== null && account?.bannedReason !== undefined) return null;
+  return account;
 }
 
 /**
@@ -241,6 +245,9 @@ export function registerAuthRoutes(
     if (!name) return reply.code(400).send({ error: 'Name muss 2 bis 24 Zeichen haben.' });
 
     const account = await accounts.upsertDev(name);
+    if (account.bannedReason !== null) {
+      return reply.code(403).send({ error: `Konto gesperrt: ${account.bannedReason}` });
+    }
     await accounts.touchLogin(account.id);
     const response: AuthResponse = {
       token: await signSession({ sub: account.id, name: account.displayName }),

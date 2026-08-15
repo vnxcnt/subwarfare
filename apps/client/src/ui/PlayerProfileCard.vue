@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { RANKS, fleetRankName } from '@subwarfare/shared';
+import { RANKS, ROLE_MODERATOR, fleetRankName } from '@subwarfare/shared';
 import { computed } from 'vue';
+import { account } from '../state/auth';
 import {
   acceptFriend,
   cancelRequest,
   closeProfile,
   declineFriend,
+  modChatMute,
+  modChatPurge,
   openConversation,
   profil,
   removeFriend,
@@ -35,6 +38,17 @@ const seit = computed(() => {
   const datum = new Date(roh);
   return Number.isNaN(datum.getTime()) ? '—' : datum.toLocaleDateString('de-DE');
 });
+
+/**
+ * Moderations-Zeile: ab Moderator (Rolle 1), nie auf der eigenen Karte.
+ * Der Knopf ist nur die Anzeige — die api prüft Rolle UND Hierarchie erneut.
+ */
+const zeigeModeration = computed(
+  () =>
+    (account.value?.role ?? 0) >= ROLE_MODERATOR &&
+    profil.value !== null &&
+    profil.value.friendship !== 'self',
+);
 </script>
 
 <template>
@@ -133,6 +147,25 @@ const seit = computed(() => {
             Freund entfernen
           </button>
         </template>
+      </div>
+
+      <!-- Moderations-Zeile (ab Moderator): Chat leeren + Chatsperre. -->
+      <div v-if="zeigeModeration" class="profilkarte__moderation">
+        <span class="profilkarte__moderation-titel">Moderation</span>
+        <button
+          type="button"
+          class="profilkarte__knopf profilkarte__knopf--mod"
+          @click="modChatPurge(profil.accountId)"
+        >
+          Nachrichten löschen
+        </button>
+        <button
+          type="button"
+          class="profilkarte__knopf profilkarte__knopf--mod"
+          @click="modChatMute(profil.accountId, !(profil.chatMuted ?? false))"
+        >
+          {{ profil.chatMuted ? 'Chatsperre aufheben' : 'Chatsperre' }}
+        </button>
       </div>
     </section>
   </div>
@@ -311,5 +344,35 @@ const seit = computed(() => {
   background: rgb(0 0 0 / 25%);
   color: inherit;
   opacity: 0.85;
+}
+
+/* --- Moderations-Zeile ---------------------------------------------------- */
+
+.profilkarte__moderation {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--gold-border);
+}
+
+.profilkarte__moderation-titel {
+  font-size: 0.5625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #f26d6d;
+  opacity: 0.85;
+}
+
+.profilkarte__knopf--mod {
+  flex: 1;
+  border-color: rgb(242 109 109 / 45%);
+  background: rgb(242 109 109 / 10%);
+  color: #f4b3b5;
+}
+
+.profilkarte__knopf--mod:hover {
+  background: rgb(242 109 109 / 20%);
 }
 </style>

@@ -136,3 +136,24 @@ export function openConversation(accountId: string): void {
   dmPartner.value = accountId;
   closeProfile();
 }
+
+/* --- Moderations-Werkzeuge der Profilkarte (Rolle ≥ Moderator) ----------- */
+
+/** Löscht alle Chatnachrichten des Spielers (Server räumt + broadcastet). */
+export async function modChatPurge(accountId: string): Promise<void> {
+  try {
+    await api('/mod/chat/purge', { accountId });
+  } catch {
+    // Fehlanzeige — die Karte bleibt einfach unverändert.
+  }
+}
+
+/** Chatsperre setzen/aufheben; die offene Profilkarte zieht nach. */
+export async function modChatMute(accountId: string, muted: boolean): Promise<void> {
+  try {
+    await api('/mod/chat/mute', { accountId, muted });
+  } catch {
+    return;
+  }
+  if (profil.value?.accountId === accountId) await openProfile(accountId);
+}

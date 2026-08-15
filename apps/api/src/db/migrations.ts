@@ -357,4 +357,18 @@ export const MIGRATIONS: readonly Migration[] = [
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     ],
   },
+  {
+    id: 17,
+    name: 'moderation',
+    statements: [
+      // Chatsperre (Moderation): 1 = darf nicht mehr funken. Rein additiv,
+      // der Rest des Kontos bleibt nutzbar.
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS chat_muted TINYINT UNSIGNED NOT NULL DEFAULT 0`,
+      // Kontosperre (BAN): NULL = nicht gesperrt. Ein gesperrtes Konto faellt
+      // an JEDEM Auth-Punkt durch (REST, Lobby, Login) — die Begruendung
+      // bleibt fuer die Moderation nachlesbar.
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS banned_reason VARCHAR(200) NULL`,
+      `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS banned_at DATETIME NULL`,
+    ],
+  },
 ];

@@ -4,6 +4,7 @@ import type {
   FleetSummary,
   InventoryItem,
   ItemId,
+  LoadoutEntry,
   ModAccountDetail,
   ModAccountSummary,
 } from '@subwarfare/shared';
@@ -18,7 +19,7 @@ import {
   isPlayableModel,
 } from '@subwarfare/shared';
 import { computed, ref } from 'vue';
-import { API_URL, token } from '../../state/auth';
+import { API_URL, account, token } from '../../state/auth';
 import { itemIconUrl } from '../itemIcons';
 import { SHIP_LABELS } from './shipLabels';
 
@@ -28,7 +29,11 @@ import { SHIP_LABELS } from './shipLabels';
  * WAHRHEIT sitzt aber in der api: jede Route prüft die Rolle frisch am Konto.
  * Zustand lebt bewusst lokal — das Werkzeug braucht kein Menü-Gedächtnis.
  */
-const reiter = ref<'konten' | 'flottillen'>('konten');
+const reiter = ref<'konten' | 'flottillen' | 'datenbank'>('konten');
+
+/** Eigene Rolle — steuert nur die ANZEIGE, die api prüft frisch. */
+const meineRolle = computed(() => account.value?.role ?? 0);
+const istEntwickler = computed(() => meineRolle.value === ROLE_DEVELOPER);
 const fehler = ref<string | null>(null);
 const beschaeftigt = ref(false);
 
@@ -94,11 +99,116 @@ async function kontenSuchen(): Promise<void> {
 
 async function kontoOeffnen(id: string): Promise<void> {
   const data = await lade<ModAccountDetail>(`/mod/accounts/${encodeURIComponent(id)}`);
-  if (data) konto.value = data;
+  if (data) {
+    konto.value = data;
+    // Eingaben auf den frischen Stand stellen — halbe Tipp-Reste aus einem
+    // vorher geöffneten Konto wären hier gefährliche Vorbelegungen.
+    rollenAuswahl.value = data.role;
+    coinsEingabe.value = String(data.coins);
+    xpEingabe.value = String(data.xp);
+    bannGrund.value = '';
+    loeschenOffen.value = false;
+    loeschenEingabe.value = '';
+  }
 }
 
 function schiffLabel(model: string): string {
   return isPlayableModel(model) ? SHIP_LABELS[model] : model;
+}
+
+/* --- Konto-Aktionen (Rolle, Coins, XP, Sperre, Löschung, Chat) ------------ */
+
+/**
+ * Darf ICH dieses Konto anfassen? Spiegel der Server-Regel darfBearbeiten:
+ * nie sich selbst, sonst nur nach unten — Entwickler auch untereinander.
+ * Nur Anzeige-Logik; die api entscheidet bei jeder Anfrage selbst.
+ */
+const bearbeitbar = computed(() => {
+  const ziel = konto.value;
+  const ich = account.value;
+  if (!ziel || !ich || ziel.id === ich.id) return false;
+  return meineRolle.value > ziel.role || istEntwickler.value;
+});
+
+const rollenAuswahl = ref(0);
+const coinsEingabe = ref('');
+const xpEingabe = ref('');
+const bannGrund = ref('');
+/** Löschdialog: erst öffnen, dann „LÖSCHEN" tippen — wie beim Abwracken. */
+const loeschenOffen = ref(false);
+const loeschenEingabe = ref('');
+
+/** Rollen, die ICH vergeben darf — Spiegel der Server-Matrix. */
+const vergebbareRollen = computed(() =>
+  istEntwickler.value ? [0, ROLE_MODERATOR, ROLE_GAMEMASTER, ROLE_DEVELOPER] : [0, ROLE_MODERATOR],
+);
+
+/** Gemeinsames Muster: Mutation schicken, Detail frisch laden. */
+async function kontoAktion(path: string, body: Record<string, unknown>): Promise<boolean> {
+  if (!konto.value) return false;
+  const data = await lade<{ ok: boolean }>(path, { accountId: konto.value.id, ...body });
+  if (!data) return false;
+  await kontoOeffnen(konto.value.id);
+  return true;
+}
+
+function rolleSetzen(): Promise<boolean> {
+  return kontoAktion('/mod/role', { role: rollenAuswahl.value });
+}
+
+function coinsSetzen(): Promise<boolean> {
+  const wert = Number.parseInt(coinsEingabe.value, 10);
+  if (!Number.isFinite(wert) || wert < 0) {
+    fehler.value = 'Coins: ganze Zahl ab 0.';
+    return Promise.resolve(false);
+  }
+  return kontoAktion('/mod/coins', { coins: wert });
+}
+
+function xpSetzen(): Promise<boolean> {
+  const wert = Number.parseInt(xpEingabe.value, 10);
+  if (!Number.isFinite(wert) || wert < 0) {
+    fehler.value = 'XP: ganze Zahl ab 0.';
+    return Promise.resolve(false);
+  }
+  return kontoAktion('/mod/xp', { xp: wert });
+}
+
+function sperren(): Promise<boolean> {
+  return kontoAktion('/mod/ban', { reason: bannGrund.value.trim() });
+}
+
+function entsperren(): Promise<boolean> {
+  return kontoAktion('/mod/unban', {});
+}
+
+function chatLeeren(): Promise<boolean> {
+  return kontoAktion('/mod/chat/purge', {});
+}
+
+function chatSperreSetzen(muted: boolean): Promise<boolean> {
+  return kontoAktion('/mod/chat/mute', { muted });
+}
+
+async function kontoLoeschen(): Promise<void> {
+  if (!konto.value || loeschenEingabe.value !== 'LÖSCHEN') return;
+  const data = await lade<{ ok: boolean }>('/mod/delete', { accountId: konto.value.id });
+  if (data?.ok) {
+    konto.value = null;
+    await kontenSuchen();
+  }
+}
+
+/** Ausrüstungs-Slot eines Kontos leeren (Entwickler-Korrektur). */
+async function slotLeeren(eintrag: LoadoutEntry): Promise<void> {
+  if (!konto.value) return;
+  const data = await lade<{ loadouts: LoadoutEntry[] }>('/mod/loadout', {
+    accountId: konto.value.id,
+    model: eintrag.model,
+    slot: eintrag.slot,
+    itemId: null,
+  });
+  if (data && konto.value) konto.value = { ...konto.value, loadouts: data.loadouts };
 }
 
 /* --- Inventar setzen ------------------------------------------------------ */
@@ -131,6 +241,61 @@ async function bestandSetzen(itemId: string, roh: string): Promise<void> {
 
 function itemName(itemId: string): string {
   return ITEMS.find((eintrag) => eintrag.id === itemId)?.name ?? itemId;
+}
+
+/* --- Datenbank (nur Entwickler) ------------------------------------------- */
+
+/** Anzeige-Namen der freigegebenen Katalog-Tabellen (Whitelist der api). */
+const DB_TABELLEN: Record<string, string> = {
+  ships: 'Schiffe (ships)',
+  armor: 'Panzerung (armor)',
+  weapon_items: 'Waffen (weapon_items)',
+};
+
+interface DbAntwort {
+  table: string;
+  pk: string;
+  editable: string[];
+  rows: Array<Record<string, unknown>>;
+}
+
+const dbTabelle = ref('ships');
+const dbDaten = ref<DbAntwort | null>(null);
+const dbHinweis = ref<string | null>(null);
+/** Zell-Eingaben, Schlüssel `${zeilenKey}:${spalte}` — leer = Original zeigen. */
+const dbEingabe = ref<Partial<Record<string, string>>>({});
+
+async function dbLaden(): Promise<void> {
+  dbHinweis.value = null;
+  dbEingabe.value = {};
+  const data = await lade<DbAntwort>(`/mod/db/${encodeURIComponent(dbTabelle.value)}`);
+  dbDaten.value = data;
+}
+
+function dbZellwert(zeile: Record<string, unknown>, spalte: string): string {
+  const key = `${String(zeile[dbDaten.value?.pk ?? ''])}:${spalte}`;
+  return dbEingabe.value[key] ?? String(zeile[spalte] ?? '');
+}
+
+async function dbSetzen(zeile: Record<string, unknown>, spalte: string): Promise<void> {
+  if (!dbDaten.value) return;
+  const key = String(zeile[dbDaten.value.pk]);
+  const roh = dbZellwert(zeile, spalte);
+  const wert = Number.parseFloat(roh.replace(',', '.'));
+  if (!Number.isFinite(wert)) {
+    fehler.value = 'Wert: eine Zahl.';
+    return;
+  }
+  const data = await lade<{ ok: boolean; hint?: string }>(
+    `/mod/db/${encodeURIComponent(dbTabelle.value)}`,
+    { key, column: spalte, value: wert },
+  );
+  if (data?.ok) {
+    dbHinweis.value = data.hint ?? null;
+    // Zeile lokal nachziehen — ein voller Reload würde andere Eingaben wischen.
+    zeile[spalte] = wert;
+    delete dbEingabe.value[`${key}:${spalte}`];
+  }
 }
 
 /* --- Flottillen ----------------------------------------------------------- */
@@ -214,6 +379,17 @@ void istKommandant;
       >
         Flottillen
       </button>
+      <button
+        v-if="istEntwickler"
+        type="button"
+        class="menu__tab"
+        :class="{ 'menu__tab--active': reiter === 'datenbank' }"
+        role="tab"
+        :aria-selected="reiter === 'datenbank'"
+        @click="reiter = 'datenbank'"
+      >
+        Datenbank
+      </button>
     </div>
 
     <!-- ===================== Konten ===================== -->
@@ -256,6 +432,10 @@ void istKommandant;
           <span class="mod__zeile-rolle" :class="`mod__rolle--${konto.role}`">
             {{ ROLLEN_LABEL[konto.role] ?? konto.role }}
           </span>
+          <span v-if="konto.bannedReason !== null" class="mod__badge mod__badge--bann">
+            Gesperrt: {{ konto.bannedReason }}
+          </span>
+          <span v-if="konto.chatMuted" class="mod__badge">Chatsperre</span>
         </h3>
 
         <dl class="mod__daten">
@@ -345,11 +525,171 @@ void istKommandant;
             Ins Inventar setzen
           </button>
         </div>
+
+        <template v-if="konto.loadouts.length > 0">
+          <h4 class="mod__abschnitt">Ausrüstung (ship_loadouts)</h4>
+          <ul class="mod__liste">
+            <li
+              v-for="eintrag in konto.loadouts"
+              :key="`${eintrag.model}:${eintrag.slot}`"
+              class="mod__item"
+            >
+              <span class="mod__item-name">
+                {{ schiffLabel(eintrag.model) }} · {{ eintrag.slot }}
+              </span>
+              <span class="mod__zeile-meta hud__num">
+                {{ itemName(eintrag.itemId) }}{{ eintrag.count !== null ? ` ×${eintrag.count}` : '' }}
+              </span>
+              <button
+                v-if="istEntwickler"
+                type="button"
+                class="mod__knopf mod__knopf--leise"
+                :disabled="beschaeftigt"
+                @click="slotLeeren(eintrag)"
+              >
+                Slot leeren
+              </button>
+            </li>
+          </ul>
+        </template>
+
+        <template v-if="bearbeitbar">
+          <h4 class="mod__abschnitt">Aktionen</h4>
+
+          <div class="mod__aktion">
+            <span class="mod__aktion-label">Rolle</span>
+            <select v-model.number="rollenAuswahl" class="mod__select mod__select--schmal">
+              <option v-for="rolle in vergebbareRollen" :key="rolle" :value="rolle">
+                {{ ROLLEN_LABEL[rolle] }}
+              </option>
+            </select>
+            <button
+              type="button"
+              class="mod__knopf"
+              :disabled="beschaeftigt || rollenAuswahl === konto.role"
+              @click="rolleSetzen"
+            >
+              Setzen
+            </button>
+          </div>
+
+          <div class="mod__aktion">
+            <span class="mod__aktion-label">Coins</span>
+            <input
+              v-model="coinsEingabe"
+              class="mod__item-menge mod__item-menge--breit hud__num"
+              type="text"
+              inputmode="numeric"
+              aria-label="Neuer Coin-Stand"
+            />
+            <button type="button" class="mod__knopf" :disabled="beschaeftigt" @click="coinsSetzen">
+              Setzen
+            </button>
+          </div>
+
+          <div class="mod__aktion">
+            <span class="mod__aktion-label">XP</span>
+            <input
+              v-model="xpEingabe"
+              class="mod__item-menge mod__item-menge--breit hud__num"
+              type="text"
+              inputmode="numeric"
+              aria-label="Neuer XP-Stand"
+            />
+            <button type="button" class="mod__knopf" :disabled="beschaeftigt" @click="xpSetzen">
+              Setzen
+            </button>
+          </div>
+
+          <div class="mod__aktion">
+            <span class="mod__aktion-label">Chat</span>
+            <button type="button" class="mod__knopf" :disabled="beschaeftigt" @click="chatLeeren">
+              Nachrichten löschen
+            </button>
+            <button
+              type="button"
+              class="mod__knopf"
+              :disabled="beschaeftigt"
+              @click="chatSperreSetzen(!konto.chatMuted)"
+            >
+              {{ konto.chatMuted ? 'Chatsperre aufheben' : 'Chatsperre verhängen' }}
+            </button>
+          </div>
+
+          <div class="mod__aktion">
+            <span class="mod__aktion-label">Sperre</span>
+            <template v-if="konto.bannedReason === null">
+              <input
+                v-model="bannGrund"
+                class="mod__bann-grund"
+                type="text"
+                maxlength="200"
+                placeholder="Begründung (mind. 3 Zeichen) …"
+                aria-label="Begründung der Kontosperre"
+              />
+              <button
+                type="button"
+                class="mod__knopf mod__knopf--gefahr mod__knopf--zeile"
+                :disabled="beschaeftigt || bannGrund.trim().length < 3"
+                @click="sperren"
+              >
+                Konto sperren
+              </button>
+            </template>
+            <template v-else>
+              <button type="button" class="mod__knopf" :disabled="beschaeftigt" @click="entsperren">
+                Entsperren
+              </button>
+            </template>
+          </div>
+
+          <div class="mod__aktion">
+            <span class="mod__aktion-label">Gefahr</span>
+            <template v-if="!loeschenOffen">
+              <button
+                type="button"
+                class="mod__knopf mod__knopf--gefahr mod__knopf--zeile"
+                :disabled="beschaeftigt"
+                @click="loeschenOffen = true"
+              >
+                Konto löschen …
+              </button>
+            </template>
+            <template v-else>
+              <input
+                v-model="loeschenEingabe"
+                class="mod__bann-grund"
+                type="text"
+                placeholder="Zur Bestätigung LÖSCHEN tippen"
+                aria-label="Löschbestätigung"
+                autocomplete="off"
+              />
+              <button
+                type="button"
+                class="mod__knopf mod__knopf--gefahr mod__knopf--zeile"
+                :disabled="beschaeftigt || loeschenEingabe !== 'LÖSCHEN'"
+                @click="kontoLoeschen"
+              >
+                Endgültig löschen
+              </button>
+              <button
+                type="button"
+                class="mod__knopf mod__knopf--leise"
+                @click="loeschenOffen = false; loeschenEingabe = ''"
+              >
+                Abbrechen
+              </button>
+            </template>
+          </div>
+        </template>
+        <p v-else class="menu__soon">
+          Dieses Konto liegt außerhalb deiner Befugnis — nur Ansicht.
+        </p>
       </div>
     </template>
 
     <!-- ===================== Flottillen ===================== -->
-    <template v-else>
+    <template v-else-if="reiter === 'flottillen'">
       <form class="mod__suche" @submit.prevent="flottenSuchen">
         <input
           v-model="flottenSuche"
@@ -409,6 +749,65 @@ void istKommandant;
           {{ aufloesenScharf ? 'Wirklich auflösen? Erneut klicken!' : 'Flottille auflösen' }}
         </button>
       </div>
+    </template>
+
+    <!-- ===================== Datenbank (Entwickler) ===================== -->
+    <template v-else-if="reiter === 'datenbank'">
+      <div class="mod__suche">
+        <select v-model="dbTabelle" class="mod__select" aria-label="Katalog-Tabelle">
+          <option v-for="(label, name) in DB_TABELLEN" :key="name" :value="name">
+            {{ label }}
+          </option>
+        </select>
+        <button type="button" :disabled="beschaeftigt" @click="dbLaden">Laden</button>
+      </div>
+
+      <p class="menu__soon">
+        Änderungen greifen erst nach dem nächsten Neustart der Dienste (api und Spielserver
+        laden die Kataloge beim Start).
+      </p>
+
+      <div v-if="dbDaten" class="mod__db-scroll">
+        <table class="mod__db">
+          <thead>
+            <tr>
+              <th>{{ dbDaten.pk }}</th>
+              <th v-for="spalte in dbDaten.editable" :key="spalte">{{ spalte }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="zeile in dbDaten.rows" :key="String(zeile[dbDaten.pk])">
+              <td class="mod__db-key hud__num">{{ zeile[dbDaten.pk] }}</td>
+              <td v-for="spalte in dbDaten.editable" :key="spalte">
+                <span class="mod__db-zelle">
+                  <input
+                    class="mod__item-menge hud__num"
+                    type="text"
+                    inputmode="decimal"
+                    :value="dbZellwert(zeile, spalte)"
+                    :aria-label="`${zeile[dbDaten.pk]} ${spalte}`"
+                    @input="
+                      dbEingabe[`${String(zeile[dbDaten.pk])}:${spalte}`] = (
+                        $event.target as HTMLInputElement
+                      ).value
+                    "
+                  />
+                  <button
+                    type="button"
+                    class="mod__knopf"
+                    :disabled="beschaeftigt"
+                    @click="dbSetzen(zeile, spalte)"
+                  >
+                    Setzen
+                  </button>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p v-if="dbHinweis" class="mod__db-hinweis">{{ dbHinweis }}</p>
     </template>
 
     <p v-if="fehler" class="menu__error">{{ fehler }}</p>
@@ -679,5 +1078,104 @@ void istKommandant;
   color: #e9e2cd;
   font: inherit;
   font-size: 0.8125rem;
+}
+
+.mod__select--schmal {
+  flex: 0 0 auto;
+  width: 10rem;
+}
+
+/* --- Status-Abzeichen + Aktionen ------------------------------------------ */
+
+.mod__badge {
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--gold-border);
+  font-size: 0.5625rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.mod__badge--bann {
+  border-color: #f26d6d;
+  color: #f26d6d;
+  text-transform: none;
+}
+
+.mod__aktion {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mod__aktion-label {
+  flex: 0 0 4.5rem;
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.mod__item-menge--breit {
+  width: 7rem;
+}
+
+.mod__bann-grund {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--gold-border);
+  background: rgb(0 0 0 / 30%);
+  color: inherit;
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+/* Gefahr-Knöpfe in Aktions-ZEILEN sollen nicht an den Rand springen. */
+.mod__knopf--zeile {
+  justify-self: auto;
+}
+
+/* --- Datenbank-Reiter ----------------------------------------------------- */
+
+.mod__db-scroll {
+  overflow-x: auto;
+}
+
+.mod__db {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.mod__db th {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--gold-border);
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  opacity: 0.7;
+}
+
+.mod__db td {
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid rgb(230 207 120 / 12%);
+}
+
+.mod__db-key {
+  white-space: nowrap;
+}
+
+.mod__db-zelle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.mod__db-hinweis {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  color: #6fd08c;
 }
 </style>

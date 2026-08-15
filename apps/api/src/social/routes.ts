@@ -5,7 +5,7 @@ import type {
   PlayerProfile,
   StoredChatMessage,
 } from '@subwarfare/shared';
-import { CHAT_HISTORY_LIMIT, progressionFromXp } from '@subwarfare/shared';
+import { CHAT_HISTORY_LIMIT, ROLE_MODERATOR, progressionFromXp } from '@subwarfare/shared';
 import type { FastifyInstance } from 'fastify';
 import type { Account, AccountStore } from '../accounts/store.js';
 import { accountFromRequest } from '../auth/routes.js';
@@ -194,6 +194,9 @@ export function registerSocialRoutes(
       fleet,
       friendship,
     };
+    // Chatsperre nur für Moderationsberechtigte — sie steuert die Knöpfe auf
+    // der Profilkarte und geht andere Spieler nichts an.
+    if (account.role >= ROLE_MODERATOR) profile.chatMuted = target.chatMuted;
     return profile;
   });
 

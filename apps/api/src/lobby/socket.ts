@@ -113,6 +113,11 @@ export class LobbyGateway {
     this.io.of('/lobby').to(`account:${accountId}`).emit('social:update');
   }
 
+  /** Moderation: alle Clients werfen die Zeilen dieses Kontos weg. */
+  broadcastChatPurge(accountId: string): void {
+    this.io.of('/lobby').emit('chat:purge', { accountId });
+  }
+
   register(): void {
     const lobby = this.io.of('/lobby');
 
@@ -155,6 +160,17 @@ export class LobbyGateway {
     if (!claims) {
       next(new Error('Nicht angemeldet.'));
       return;
+    }
+    // Gesperrte Konten kommen auch nicht in die Lobby — dieselbe Regel wie
+    // an der REST-Auth. Eine DB-Störung lässt durch (Verfügbarkeit).
+    try {
+      const konto = await this.accounts.byId(claims.sub);
+      if (konto?.bannedReason != null) {
+        next(new Error('Konto gesperrt.'));
+        return;
+      }
+    } catch {
+      // Standard: durchlassen.
     }
     socket.data.accountId = claims.sub;
     socket.data.name = claims.name;
@@ -233,6 +249,9 @@ export class LobbyGateway {
     } catch {
       // Standardwerte unten.
     }
+    // Chatsperre und Kontosperre: die Zeile fällt still weg — der Rest der
+    // Verbindung (Warteschlange, Mitlesen) bleibt bei der Chatsperre nutzbar.
+    if (konto?.chatMuted || konto?.bannedReason != null) return;
     const zeile: ChatMessagePayload = {
       channel: 'hafen',
       senderId: socket.data.accountId,

@@ -67,6 +67,8 @@ export interface SocialStore {
   ): Promise<{ id: number; at: string }>;
   /** Die letzten `limit` Zeilen eines Kontexts, älteste zuerst. */
   messages(channel: ChatChannel, contextId: string, limit: number): Promise<StoredMessageRow[]>;
+  /** Moderation: löscht ALLE gespeicherten Zeilen eines Absenders. */
+  deleteBySender(accountId: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -176,6 +178,15 @@ export class MemorySocialStore implements SocialStore {
   ): Promise<StoredMessageRow[]> {
     const liste = this.byContext.get(`${channel}/${contextId}`) ?? [];
     return liste.slice(-Math.max(1, limit));
+  }
+
+  async deleteBySender(accountId: string): Promise<void> {
+    for (const [key, liste] of this.byContext) {
+      this.byContext.set(
+        key,
+        liste.filter((zeile) => zeile.senderId !== accountId),
+      );
+    }
   }
 
   async close(): Promise<void> {

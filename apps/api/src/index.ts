@@ -95,7 +95,9 @@ await app.register(
       notify: (id) => lobby.notifySocial(id),
     });
     registerWerftRoutes(scope, accounts, inventory, werft);
-    registerModRoutes(scope, accounts, inventory, fleets, werft);
+    registerModRoutes(scope, accounts, inventory, fleets, werft, social, {
+      purgeChat: (id) => lobby.broadcastChatPurge(id),
+    });
 
     // Interner Kanal für den Spielserver — derselbe Schlüssel wie dessen
     // /status. Von außen kommt man über Caddy zwar an die URL, aber ohne

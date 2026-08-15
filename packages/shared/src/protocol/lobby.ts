@@ -153,8 +153,14 @@ export interface ModAccountSummary {
 export interface ModAccountDetail extends ModAccountSummary {
   hasGoogle: boolean;
   hasDiscord: boolean;
+  /** Kontosperre: die Begründung, oder null. */
+  bannedReason: string | null;
+  /** Chatsperre aktiv? */
+  chatMuted: boolean;
   items: InventoryItem[];
   ships: WerftShip[];
+  /** Ausrüstungs-Belegungen (je Modell) — für die Entwickler-Korrektur. */
+  loadouts: LoadoutEntry[];
   fleet: { id: string; name: string; rank: number } | null;
 }
 
@@ -253,6 +259,12 @@ export interface LobbyServerToClientEvents {
    * Nutzlast: die Wahrheit holt sich der Client per REST.
    */
   'social:update': () => void;
+  /**
+   * Moderation hat die Nachrichten eines Kontos gelöscht — jeder Client
+   * entfernt dessen Zeilen aus allen Gesprächsfäden (auch dem flüchtigen
+   * Hafen; die gespeicherten Kanäle hat die api bereits geräumt).
+   */
+  'chat:purge': (payload: { accountId: string }) => void;
 }
 
 export interface LobbyClientToServerEvents {

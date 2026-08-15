@@ -163,6 +163,10 @@ export class MySqlSocialStore implements SocialStore {
     }));
   }
 
+  async deleteBySender(accountId: string): Promise<void> {
+    await this.pool.execute('DELETE FROM chat_messages WHERE sender_id = ?', [accountId]);
+  }
+
   async close(): Promise<void> {
     // Der geteilte Pool wird zentral geschlossen (AccountStore.close).
   }
