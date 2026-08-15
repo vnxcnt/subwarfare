@@ -19,6 +19,7 @@ import {
   refreshWerft,
   repairRemaining,
   repairShip,
+  scrapShip,
   setShipPerks,
   werftBusy,
   werftError,
@@ -163,6 +164,32 @@ async function perkSetzen(ship: WerftShip, index: number, perkId: string | null)
   await setShipPerks(ship.shipId, perks);
 }
 
+/* --- Verschrotten --------------------------------------------------------- */
+
+/** Schiff, dessen Verschrottungs-Dialog offen ist — null = kein Dialog. */
+const abwrackKandidat = ref<WerftShip | null>(null);
+/** Getippte Bestätigung — der Knopf schaltet erst bei exakt „LÖSCHEN" frei. */
+const abwrackBestaetigung = ref('');
+
+function abwrackDialogOeffnen(ship: WerftShip): void {
+  abwrackKandidat.value = ship;
+  abwrackBestaetigung.value = '';
+}
+
+function abwrackDialogSchliessen(): void {
+  abwrackKandidat.value = null;
+  abwrackBestaetigung.value = '';
+}
+
+const abwrackFreigegeben = computed(() => abwrackBestaetigung.value === 'LÖSCHEN');
+
+async function abwracken(): Promise<void> {
+  const ship = abwrackKandidat.value;
+  if (!ship || !abwrackFreigegeben.value) return;
+  const fehler = await scrapShip(ship.shipId);
+  if (fehler === null) abwrackDialogSchliessen();
+}
+
 /* --- Kaufwerft ------------------------------------------------------------ */
 
 const flotteVoll = computed(() => werftShips.value.length >= werftSlots.value);
@@ -204,14 +231,25 @@ onMounted(() => {
 
           <div class="werft__kopf">
             <span class="werft__name">{{ label(ship.model) }}</span>
-            <span
-              class="werft__status"
-              :class="`werft__status--${zustand(ship)}`"
-            >
-              {{ ZUSTAND_LABEL[zustand(ship)] }}
-              <template v-if="zustand(ship) === 'reparatur'">
-                — <span class="hud__num">{{ restzeit(ship) }}</span>
-              </template>
+            <span class="werft__kopf-rechts">
+              <span
+                class="werft__status"
+                :class="`werft__status--${zustand(ship)}`"
+              >
+                {{ ZUSTAND_LABEL[zustand(ship)] }}
+                <template v-if="zustand(ship) === 'reparatur'">
+                  — <span class="hud__num">{{ restzeit(ship) }}</span>
+                </template>
+              </span>
+              <button
+                type="button"
+                class="werft__abwracken"
+                title="Schiff aus der Flotte entfernen (keine Erstattung)"
+                aria-label="Schiff entfernen"
+                @click="abwrackDialogOeffnen(ship)"
+              >
+                ×
+              </button>
             </span>
           </div>
 
@@ -312,6 +350,42 @@ onMounted(() => {
 
       <p v-if="werftError" class="menu__error">{{ werftError }}</p>
     </section>
+
+    <!-- Verschrottungs-Dialog: endgültig, keine Erstattung — die getippte
+         Bestätigung „LÖSCHEN" schaltet den Knopf frei. -->
+    <div v-if="abwrackKandidat" class="werft__dialog-schleier" @click.self="abwrackDialogSchliessen">
+      <section class="gold-panel werft__dialog" aria-label="Schiff entfernen">
+        <h2 class="gold-panel__title">Schiff entfernen</h2>
+        <p class="werft__dialog-text">
+          <strong>{{ label(abwrackKandidat.model) }}</strong> wird endgültig aus der Flotte
+          entfernt. Du bekommst deine Coins <strong>nicht</strong> zurück — auch nicht anteilig.
+        </p>
+        <p class="werft__dialog-text">
+          Tippe zur Bestätigung <strong>LÖSCHEN</strong>:
+        </p>
+        <input
+          v-model="abwrackBestaetigung"
+          class="werft__dialog-eingabe"
+          type="text"
+          placeholder="LÖSCHEN"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="werft__dialog-aktionen">
+          <button
+            type="button"
+            class="werft__knopf werft__knopf--gefahr"
+            :disabled="!abwrackFreigegeben || werftBusy"
+            @click="abwracken"
+          >
+            Endgültig entfernen
+          </button>
+          <button type="button" class="werft__knopf" @click="abwrackDialogSchliessen">
+            Abbrechen
+          </button>
+        </div>
+      </section>
+    </div>
 
     <section class="gold-panel menu__panel" aria-label="Schiffskauf">
       <h2 class="gold-panel__title">Kaufwerft</h2>
@@ -440,6 +514,90 @@ onMounted(() => {
 
 .werft__status--reparatur {
   color: var(--gold);
+}
+
+.werft__kopf-rechts {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.werft__abwracken {
+  padding: 0 0.3rem;
+  border: none;
+  background: none;
+  color: #f26d6d;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.werft__abwracken:hover {
+  opacity: 1;
+}
+
+/* --- Verschrottungs-Dialog ------------------------------------------------ */
+
+.werft__dialog-schleier {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgb(4 20 31 / 55%);
+}
+
+.werft__dialog {
+  width: min(24rem, calc(100vw - 2rem));
+  padding: 1rem 1.1rem 1.1rem;
+}
+
+.werft__dialog-text {
+  margin: 0 0 0.7rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.werft__dialog-text strong {
+  color: #f26d6d;
+}
+
+.werft__dialog-eingabe {
+  width: 100%;
+  margin-bottom: 0.8rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--gold-border);
+  background: rgb(0 0 0 / 35%);
+  color: #e9e2cd;
+  font: inherit;
+  font-size: 0.8125rem;
+  letter-spacing: 0.08em;
+}
+
+.werft__dialog-eingabe:focus {
+  outline: none;
+  border-color: #f26d6d;
+}
+
+.werft__dialog-aktionen {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.werft__dialog-aktionen .werft__knopf {
+  flex: 1;
+}
+
+.werft__knopf--gefahr {
+  border-color: #f26d6d;
+  background: rgb(242 109 109 / 12%);
+  color: #f26d6d;
+}
+
+.werft__knopf--gefahr:hover:not(:disabled) {
+  background: rgb(242 109 109 / 22%);
 }
 
 /* --- HP-Balken ------------------------------------------------------------ */

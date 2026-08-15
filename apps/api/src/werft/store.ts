@@ -33,6 +33,8 @@ export interface WerftStore {
   /** Reparatur abschließen: hp = maxHp UND repair_until leeren — EIN Schritt. */
   completeRepair(shipId: string, maxHp: number): Promise<void>;
   setPerks(shipId: string, perks: string[]): Promise<void>;
+  /** Entfernt eine Instanz endgültig — Verschrotten, keine Erstattung. */
+  remove(shipId: string): Promise<void>;
   count(accountId: string): Promise<number>;
   /** Memory-Aufräumen bei Kontolöschung; MariaDB erledigt das per CASCADE. */
   purge(accountId: string): Promise<void>;
@@ -88,6 +90,10 @@ export class MemoryWerftStore implements WerftStore {
   async setPerks(shipId: string, perks: string[]): Promise<void> {
     const ship = this.ships.get(shipId);
     if (ship) ship.perks = [...perks];
+  }
+
+  async remove(shipId: string): Promise<void> {
+    this.ships.delete(shipId);
   }
 
   async count(accountId: string): Promise<number> {

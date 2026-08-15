@@ -87,6 +87,24 @@ export function registerWerftRoutes(
     return mutationResponse(account.id);
   });
 
+  /*
+   * Verschrotten — endgültig und OHNE Erstattung (auch nicht anteilig; das
+   * ist die Spielregel, der Client verlangt dafür die getippte Bestätigung).
+   * Der Server prüft nur Besitz und See-Status; die Bestätigung ist UX.
+   */
+  app.post('/werft/scrap', async (request, reply) => {
+    const account = await accountFromRequest(request, accounts);
+    if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });
+    const { shipId } = (request.body ?? {}) as Partial<{ shipId: string }>;
+    if (typeof shipId !== 'string' || shipId.length === 0) {
+      return reply.code(400).send({ error: 'Schiff fehlt.' });
+    }
+    const result = await werft.scrap(account.id, shipId);
+    if (result === 'notfound') return reply.code(404).send({ error: 'Schiff nicht gefunden.' });
+    if (result === 'atsea') return reply.code(409).send({ error: 'Schiff ist gerade im Einsatz.' });
+    return mutationResponse(account.id);
+  });
+
   app.post('/werft/perks', async (request, reply) => {
     const account = await accountFromRequest(request, accounts);
     if (!account) return reply.code(401).send({ error: 'Nicht angemeldet.' });

@@ -92,6 +92,10 @@ export class MySqlWerftStore implements WerftStore {
     ]);
   }
 
+  async remove(shipId: string): Promise<void> {
+    await this.pool.execute('DELETE FROM account_ships WHERE id = ?', [shipId]);
+  }
+
   async count(accountId: string): Promise<number> {
     const [rows] = await this.pool.execute<RowDataPacket[]>(
       'SELECT COUNT(*) AS anzahl FROM account_ships WHERE account_id = ?',

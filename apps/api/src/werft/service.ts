@@ -127,6 +127,27 @@ export class WerftService {
   }
 
   /**
+   * Verschrotten: entfernt die Instanz ENDGÜLTIG, ohne jede Erstattung — der
+   * Slot wird frei, die Coins sind weg (bewusste Spielregel). Nicht auf See:
+   * der laufende Einsatz würde seinen Schaden sonst ins Leere melden.
+   */
+  scrap(accountId: string, shipId: string): Promise<'ok' | 'notfound' | 'atsea'> {
+    return this.withLock(accountId, async () => {
+      const ships = await this.listLocked(accountId);
+      const ship = ships.find((eintrag) => eintrag.id === shipId);
+      if (!ship) return 'notfound';
+      try {
+        const status = await fetchGameServerStatus();
+        if (status?.accounts.includes(accountId)) return 'atsea';
+      } catch {
+        // Status unerreichbar — zulassen (Verfügbarkeit vor Perfektion).
+      }
+      await this.store.remove(shipId);
+      return 'ok';
+    });
+  }
+
+  /**
    * Schadensmeldung des Spielservers. Ownership-Prüfung ist Pflicht — der
    * interne Kanal ist vertrauenswürdig, aber ein Meldefehler drüben darf nie
    * ein fremdes Schiff treffen. Clamp 0..maxHp; laufende Reparaturen bleiben

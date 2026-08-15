@@ -125,3 +125,8 @@ export function repairShip(shipId: string): Promise<string | null> {
 export function setShipPerks(shipId: string, perks: string[]): Promise<string | null> {
   return mutate('/werft/perks', { shipId, perks });
 }
+
+/** Verschrottet eine Instanz — endgültig, ohne Erstattung. */
+export function scrapShip(shipId: string): Promise<string | null> {
+  return mutate('/werft/scrap', { shipId });
+}
