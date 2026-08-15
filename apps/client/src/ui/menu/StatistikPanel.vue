@@ -151,31 +151,7 @@ onMounted(() => void refreshLeaderboard());
   width: min(48rem, 100%);
 }
 
-/* Reiter: gleiche Optik wie in der Werft (dort scoped, deshalb hier erneut). */
-.menu__tabs {
-  display: flex;
-  gap: 0.4rem;
-  margin-bottom: 0.8rem;
-}
-
-.menu__tab {
-  flex: 1;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid var(--gold-border);
-  background: rgb(0 0 0 / 25%);
-  color: inherit;
-  font: inherit;
-  font-size: 0.75rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.menu__tab--active {
-  border-color: var(--gold);
-  background: var(--gold-faint);
-  color: var(--gold);
-}
+/* Die Reiter-Optik (.menu__tabs/.menu__tab) kommt aus menu-shared.css. */
 
 /* --- Tabellen ------------------------------------------------------------ */
 

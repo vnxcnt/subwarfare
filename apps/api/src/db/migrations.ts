@@ -332,4 +332,29 @@ export const MIGRATIONS: readonly Migration[] = [
        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     ],
   },
+  {
+    id: 16,
+    name: 'werft-schiffe',
+    statements: [
+      // Schiffs-INSTANZEN je Konto (die 6 Werft-Slots). hp ist die AKTUELLE
+      // Rest-HP — das Maximum kommt zur Laufzeit aus der ships-Tabelle und
+      // wird bewusst nicht dupliziert. repair_until laeuft lazy aus: beim
+      // Lesen nach Ablauf wird hp auf das Maximum gesetzt und die Spalte
+      // geleert. perks = verbaute Perk-Item-Ids als JSON-Array. Kein Seed:
+      // Bestandskonten bekommen ihre Gratis-Schiffe beim ersten Werft-Abruf
+      // (Lazy-Seeding in der Service-Schicht).
+      `CREATE TABLE IF NOT EXISTS account_ships (
+         id CHAR(36) NOT NULL PRIMARY KEY,
+         account_id CHAR(36) NOT NULL,
+         model VARCHAR(32) NOT NULL,
+         hp INT UNSIGNED NOT NULL,
+         repair_until DATETIME NULL,
+         perks JSON NOT NULL,
+         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         KEY idx_account_ships_account (account_id),
+         CONSTRAINT fk_account_ships_account FOREIGN KEY (account_id)
+           REFERENCES accounts (id) ON DELETE CASCADE
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    ],
+  },
 ];

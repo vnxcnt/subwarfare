@@ -9,6 +9,7 @@ import { refreshMapStatus } from '../state/maps';
 import { volumes } from '../state/settings';
 import { GAME_VERSION } from '@subwarfare/shared';
 import AuslaufenPanel from '../ui/menu/AuslaufenPanel.vue';
+import DepotPanel from '../ui/menu/DepotPanel.vue';
 import FlottillePanel from '../ui/menu/FlottillePanel.vue';
 import MenuNav from '../ui/menu/MenuNav.vue';
 import NeuigkeitenPanel from '../ui/menu/NeuigkeitenPanel.vue';
@@ -179,6 +180,7 @@ onBeforeUnmount(() => {
       <p v-if="menuNotice" class="menu__notice">{{ menuNotice }}</p>
       <AuslaufenPanel v-if="section === 'auslaufen'" />
       <WerftPanel v-else-if="section === 'werft'" />
+      <DepotPanel v-else-if="section === 'depot'" />
       <FlottillePanel v-else-if="section === 'flottille'" />
       <StatistikPanel v-else-if="section === 'statistiken'" />
       <NeuigkeitenPanel v-else-if="section === 'neuigkeiten'" />

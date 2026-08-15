@@ -9,6 +9,7 @@ import type {
   ProjectileState,
   SpawnPoint,
   VesselModel,
+  VesselProfile,
   WeaponId,
 } from '@subwarfare/shared';
 import {
@@ -139,6 +140,13 @@ export class World {
    * denselben Wert zu erweitern hätte jede neue Waffe wieder mitgeschleppt.
    */
   private readonly weaponDamage = new Map<PlayerId, Partial<Record<WeaponId, number>>>();
+  /**
+   * Perk-modifiziertes Basisprofil je Fahrzeug. Fehlt der Eintrag, gilt das
+   * Katalog-Profil des Modells. WICHTIG für die Schadensdrossel: sie baut das
+   * Profil frisch aus der Basis — ohne diesen Merker verlöre der erste
+   * Treffer unter der Drossel-Schwelle alle Perk-Wirkungen.
+   */
+  private readonly profileOverrides = new Map<PlayerId, VesselProfile>();
   private readonly projectiles = new Map<string, Projectile>();
   /**
    * Lootkisten. Der Inhalt (Coins) lebt NUR hier — der Broadcast trägt bloß
@@ -183,16 +191,33 @@ export class World {
     name: string,
     model: VesselModel = DEFAULT_VESSEL_MODEL,
     armor: ArmorStats | null = null,
+    options?: {
+      /** Perk-modifiziertes Profil — wird als Basis für die Drossel gemerkt. */
+      profile?: VesselProfile;
+      /** Start-HP (Rest-HP der Werft-Instanz). Geklemmt auf 1..maxHp. */
+      hp?: number;
+    },
   ): Vessel {
     const point = this.pickSpawnPoint();
+    const profile = options?.profile ?? this.ships.profile(model);
     const vessel = new Vessel(
       { id, name, model, x: point.x, y: point.y, rotation: point.rotation },
-      this.ships.profile(model),
+      profile,
     );
     this.vessels.set(id, vessel);
-    this.hitpoints.set(id, this.ships.get(model).hp);
+    if (options?.profile) this.profileOverrides.set(id, options.profile);
+    else this.profileOverrides.delete(id);
+
+    const maxHp = this.ships.get(model).hp;
+    // Unter 1 spawnt niemand (die api lässt HP 0 gar nicht auslaufen) und
+    // über dem Modell-Maximum auch nicht (Rebalance-Schutz).
+    const hp = Math.max(1, Math.min(Math.floor(options?.hp ?? maxHp), maxHp));
+    this.hitpoints.set(id, hp);
     if (armor) this.armor.set(id, { stats: armor, integrity: 100 });
     else this.armor.delete(id);
+    // Wer angeschlagen ausläuft, raucht und drosselt ab Sekunde eins — die
+    // Folgen hängen an den HP, nicht an der Treffer-Geschichte.
+    if (hp < maxHp) this.applyDamageEffects(vessel, hp);
     return vessel;
   }
 
@@ -215,6 +240,7 @@ export class World {
     this.hitpoints.delete(id);
     this.armor.delete(id);
     this.weaponDamage.delete(id);
+    this.profileOverrides.delete(id);
     return this.vessels.delete(id);
   }
 
@@ -262,6 +288,9 @@ export class World {
     const vessel = this.vessels.get(id);
     if (!vessel) return;
     this.hitpoints.set(id, this.ships.get(vessel.model).hp);
+    // Der Entwickler-Modellwechsel wirft den Perk-Override ab — die Perks
+    // gehören zur Werft-Instanz, nicht zum getauschten Modell (Dev-only).
+    this.profileOverrides.delete(id);
     // Frisches Schiff heißt auch frische Panzerung — sonst führe der
     // Entwickler-Modellwechsel ein neues Boot mit aufgerissener Panzerung.
     const slot = this.armor.get(id);
@@ -859,7 +888,9 @@ export class World {
     vessel.smoke = smokeLevelForHp(hp, stats.hp);
 
     if (hp < stats.hp * DAMAGE.slowHpRatio) {
-      const base = this.ships.profile(vessel.model);
+      // Basis ist das PERK-Profil, falls eines gemerkt ist — sonst nähme der
+      // erste Drossel-Treffer dem Boot alle verbauten Perks wieder weg.
+      const base = this.profileOverrides.get(vessel.id) ?? this.ships.profile(vessel.model);
       vessel.applyProfile({
         ...base,
         maxForward: base.maxForward * DAMAGE.slowFactor,

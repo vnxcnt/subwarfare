@@ -38,6 +38,12 @@ export * from './meta/weather.js';
 // Flottillen (Clans): Ränge, Rechte-Helfer, Namensregeln, Wire-Typen.
 export * from './meta/fleet.js';
 
+// Werft: Schiffs-Slots, Reparatur-Formeln, Perk-Slots je Modell.
+export * from './meta/werft.js';
+
+// Perks: Katalog, Profil-Wirkung, Rohr-Faktor, Regel-Prüfung.
+export * from './meta/perks.js';
+
 // Statistik: XP-Belohnungen, Kampf-Ereignisse, Bestenlisten-Wire-Typen.
 export * from './meta/stats.js';
 
@@ -97,8 +103,12 @@ export * from './sim/torus.js';
  *     die Minimap zeichnet die Linie.
  * 18: Kommandanten-Level im PlayerState (aus dem Ticket-Claim `level`) — fürs
  *     Namensschild beim Anklicken fremder Schiffe (Rang + Name, keine HP).
+ * 19: Werft-Umbau — Schiffe sind gekaufte INSTANZEN: Ticket-Claims tragen
+ *     `shipId`, `perks` und `startHp`; `welcome.perks` fürs eigene Profil;
+ *     `destroyed` ohne respawnSeconds (Versenkung beendet die Runde, der
+ *     Server trennt); `queue:join` verlangt `shipId` statt `shipModel`.
  */
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 /**
  * Sichtbare Spielversion (Patch-Stand) — unten im Hauptmenü eingeblendet und

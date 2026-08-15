@@ -35,6 +35,12 @@ export interface WelcomePayload {
    * sich später während einer Partie ändern.
    */
   weather: WeatherState;
+  /**
+   * Verbaute Perks des EIGENEN Schiffs — der Client spiegelt damit das
+   * Fahrprofil (Telegraf-Höchstfahrt, Schadensdrossel). Fremde Perks werden
+   * bewusst nie verschickt.
+   */
+  perks: string[];
   tick: number;
 }
 
@@ -170,12 +176,11 @@ export interface FxPayload {
 }
 
 /**
- * Nur an den Betroffenen: das eigene Boot ist versenkt. Das Fahrzeug ist ab
- * jetzt aus der Welt; nach `respawnSeconds` setzt der Server neu ein.
+ * Nur an den Betroffenen: das eigene Boot ist versenkt. Seit Protokoll 19 ist
+ * das das RUNDENENDE — der Server trennt die Verbindung gleich darauf, das
+ * Schiff liegt beschädigt (HP 0) in der Werft. Bewusst ohne Felder.
  */
-export interface DestroyedPayload {
-  respawnSeconds: number;
-}
+export type DestroyedPayload = Record<string, never>;
 
 /**
  * Handruderlage −1 (Backbord) .. 1 (Steuerbord), 0 = mittschiffs. Ersetzt seit
@@ -320,6 +325,12 @@ export interface GameSocketData {
   loadout: LoadoutEntryStack[];
   /** Spielstufe aus dem Ticket — fürs Namensschild im Broadcast. */
   level: number;
+  /** Schiffs-INSTANZ aus dem Ticket — Ziel der Schadensmeldung am Rundenende. */
+  shipId: string;
+  /** Verbaute Perks der Instanz — Profil-, Sonar- und Rohr-Wirkung. */
+  perks: string[];
+  /** Rest-HP der Instanz beim Auslaufen — der Spawn startet damit. */
+  startHp: number;
 }
 
 /** Inhalt eines Join-Tickets. Vom Backend signiert, vom Spielserver geprüft. */
@@ -359,6 +370,16 @@ export interface TicketClaims {
    * Spieler beim Anklicken Rang und Name sehen.
    */
   level: number;
+  /**
+   * Schiffs-INSTANZ dieses Einsatzes (account_ships.id). Steht aus demselben
+   * Grund im Ticket wie `armorItem`: der Spielserver hat keine Datenbank —
+   * am Rundenende meldet er den Schaden gegen genau diese Instanz zurück.
+   */
+  shipId: string;
+  /** Verbaute Perks der Instanz — die api hat die Regeln bereits geprüft. */
+  perks: string[];
+  /** Rest-HP der Instanz beim Auslaufen — der Spawn startet damit. */
+  startHp: number;
   /** Einmalkennung — der Spielserver merkt sich verbrauchte Tickets. */
   jti: string;
 }

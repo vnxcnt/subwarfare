@@ -15,22 +15,21 @@ import {
   LOOT_PICKUP_RADIUS,
   NPC_LOOT,
   PROTOCOL_VERSION,
-  RESPAWN_SECONDS,
   ROLE_DEVELOPER,
   SECTOR_TOLERANCE_DEG,
-  SHIP_ACCESS,
   SHIP_TYPE_SUBMARINE,
   SIDE_LAUNCH_HALF_ANGLE_DEG,
   SIM_STEP_SECONDS,
   TORPEDO,
   angleDelta,
+  applyPerksToProfile,
   clampStep,
   currentHour,
   effectiveSensorRange,
-  isPlayableModel,
   isVesselModel,
   sanitizeWeather,
   torusDistanceSquared,
+  tubeReloadFactor,
 } from '@subwarfare/shared';
 import type {
   LoadoutEntryStack,
@@ -139,24 +138,26 @@ export class GameServer {
    * Salve aus allen scharf geschalteten Rohren.
    */
   private readonly tubes = new Map<string, Tube[]>();
-  /** Versenkte Spieler, die auf ihren Wiedereinstieg warten. */
-  private readonly pendingRespawns = new Map<string, { seconds: number; model: VesselModel }>();
+  /**
+   * Effektive Rohr-Ladezeit je Account in Sekunden — TUBE.reloadSeconds durch
+   * den Tube-Perk-Faktor des Tickets. Fehlt der Eintrag, gilt der Grundwert.
+   */
+  private readonly tubeReload = new Map<string, number>();
   /**
    * Getragener Loot je Account in Coins. FRACHT, kein Besitz: gutgeschrieben
    * wird erst bei der Extraktion, beim Untergang geht alles wieder über Bord.
    */
   private readonly loot = new Map<string, number>();
-  /**
-   * Wessen Einsatzgebühr schon als Kiste gefallen ist. Die Gebühr wurde EINMAL
-   * bezahlt und fällt deshalb nur beim ersten Untergang — sonst wäre ein
-   * absichtlich mehrfach versenktes Schiff eine Coin-Druckmaschine für den
-   * Gegner (bezahlt 375, gedroppt 3 × 375).
-   */
-  private readonly feeDropped = new Set<string>();
   /** Sekunden ununterbrochen in einer Extraktionszone, je Account. */
   private readonly extractionSeconds = new Map<string, number>();
   /** Accounts, deren Extraktion gerade abgeschlossen wird (Trennung läuft). */
   private readonly extracting = new Set<string>();
+  /**
+   * Wessen Schiffszustand für DIESEN Einsatz bereits gemeldet wurde. Der
+   * Melder prüft das Set selbst — Versenkung, Extraktion und der immer
+   * folgende Disconnect dürfen zusammen nur EINE Meldung ergeben.
+   */
+  private readonly shipDamageReported = new Set<string>();
 
   private tickTimer: NodeJS.Timeout | null = null;
   private accumulator = 0;
@@ -210,11 +211,13 @@ export class GameServer {
 
     // Ein Neustart beendet alle laufenden Einsätze — das ist NICHT die Schuld
     // der Spieler, also volle Abrechnung wie bei einer Extraktion: Munition
-    // zurück und getragenen Loot gutschreiben. Fire-and-forget; die Meldungen
-    // laufen los, bevor die Verbindungen fallen.
+    // zurück, getragenen Loot gutschreiben und das Schiff mit seiner REST-HP
+    // melden (nicht 0). Fire-and-forget; die Meldungen laufen los, bevor die
+    // Verbindungen fallen.
     for (const [accountId, socket] of this.sockets) {
       if (this.extracting.has(accountId)) continue;
       this.reportSortieEnd(accountId, socket.data.loadout, this.loot.get(accountId) ?? 0);
+      this.reportShipDamage(accountId, socket.data.shipId, this.world.hp(accountId));
     }
 
     this.io?.emit('kicked', { code: 'shutdown', message: 'Server fährt herunter.' });
@@ -281,6 +284,9 @@ export class GameServer {
     socket.data.armorItem = result.claims.armorItem;
     socket.data.loadout = result.claims.loadout;
     socket.data.level = result.claims.level;
+    socket.data.shipId = result.claims.shipId;
+    socket.data.perks = result.claims.perks;
+    socket.data.startHp = result.claims.startHp;
     next();
   }
 
@@ -292,41 +298,51 @@ export class GameServer {
     const previous = this.sockets.get(accountId);
     if (previous) {
       // Der alte Einsatz endet ohne Extraktion — sein Loot und seine
-      // Restmunition verfallen, wie bei jedem anderen Abgang auch. Das neue
-      // Ticket bringt seine eigene Ausrüstung mit.
+      // Restmunition verfallen, und sein SCHIFF gilt als versenkt (HP 0),
+      // wie bei jedem anderen Abgang ohne Extraktion auch.
+      this.reportShipDamage(accountId, previous.data.shipId, 0);
       previous.emit('kicked', { code: 'duplicate_session', message: 'An anderer Stelle verbunden.' });
       previous.disconnect(true);
       this.world.remove(accountId);
       // Die neue Sitzung beginnt am Spawnpunkt — mit leerer Ortungslage und
-      // frischer Einsatzbuchhaltung.
+      // frischer Einsatzbuchhaltung. Auch der Schadens-Guard fällt: der NEUE
+      // Einsatz (neues Ticket, ggf. anderes Schiff) muss wieder melden dürfen.
       this.detected.delete(accountId);
       this.loot.delete(accountId);
-      this.feeDropped.delete(accountId);
       this.extractionSeconds.delete(accountId);
       this.extracting.delete(accountId);
+      this.shipDamageReported.delete(accountId);
     }
 
-    // Auch eine noch laufende Respawn-Wartezeit verfällt — die neue Sitzung
-    // beginnt frisch am Spawnpunkt.
-    this.pendingRespawns.delete(accountId);
-
     this.sockets.set(accountId, socket);
-    // Das Modell kommt aus dem signierten Ticket — Level und Einsatzkosten hat
-    // die api dort schon geprüft. Die isVesselModel-Prüfung ist das Sicherheits-
+    // Das Modell kommt aus dem signierten Ticket — Besitz und Zustand hat die
+    // api dort schon geprüft. Die isVesselModel-Prüfung ist das Sicherheits-
     // netz gegen ein älteres Backend oder eine Kennung ohne Client-Atlas.
     const ticketModel = socket.data.shipModel;
+    const model = isVesselModel(ticketModel) ? ticketModel : undefined;
+    const perks = socket.data.perks;
     const vessel = this.world.spawn(
       accountId,
       name,
-      isVesselModel(ticketModel) ? ticketModel : undefined,
+      model,
       // Panzerung ebenfalls aus dem signierten Ticket. Eine unbekannte Kennung
       // löst der Katalog zu null auf — dann fährt das Boot ungepanzert.
       this.armor.get(socket.data.armorItem),
+      {
+        // Perk-Profil und Rest-HP der Werft-Instanz — beides api-signiert.
+        profile:
+          perks.length > 0 && model
+            ? applyPerksToProfile(this.ships.profile(model), perks)
+            : undefined,
+        hp: socket.data.startHp,
+      },
     );
     // Level aus dem Ticket — läuft ab jetzt im Broadcast mit (Namensschild).
     vessel.level = socket.data.level;
     this.loadAmmoFromTicket(socket);
     this.resetTubes(accountId, vessel.model);
+    // Tube-Perk: schnellere Rohre für diesen Einsatz.
+    this.tubeReload.set(accountId, TUBE.reloadSeconds / tubeReloadFactor(perks));
     console.log(`[game-server] ${name} (${accountId}) verbunden — ${this.sockets.size} Spieler.`);
 
     socket.emit('welcome', {
@@ -337,6 +353,8 @@ export class GameServer {
       // Fortgeschriebene Tageszeit statt der Ausgangszeit — sonst begänne der
       // Tag für jeden Beitretenden von vorn.
       weather: this.currentWeather(),
+      // Eigene Perks — der Client spiegelt damit sein Fahrprofil.
+      perks,
       tick: this.tick,
     });
     this.sendOwn(socket, vessel);
@@ -550,16 +568,19 @@ export class GameServer {
       // BEWUSST keine Abrechnung: wer ohne Extraktion geht — Knopf, Absturz,
       // Kabel — verliert Loot und mitgebrachte Ausrüstung. Die Extraktion hat
       // ihre Abrechnung schon selbst gemacht, bevor sie hier ankommt.
+      // Das SCHIFF gilt dabei als versenkt (HP 0) — der Guard im Melder macht
+      // das nach Versenkung oder Extraktion zum No-op.
+      this.reportShipDamage(accountId, socket.data.shipId, 0);
       this.sockets.delete(accountId);
       this.loot.delete(accountId);
-      this.feeDropped.delete(accountId);
       this.extractionSeconds.delete(accountId);
       this.extracting.delete(accountId);
       this.detected.delete(accountId);
-      this.pendingRespawns.delete(accountId);
       this.ammo.delete(accountId);
       this.nextFireTick.delete(accountId);
       this.tubes.delete(accountId);
+      this.tubeReload.delete(accountId);
+      this.shipDamageReported.delete(accountId);
       this.world.remove(accountId);
       this.notifyLeft(accountId);
       console.log(`[game-server] ${name} getrennt — ${this.sockets.size} Spieler.`);
@@ -593,7 +614,8 @@ export class GameServer {
         if (!ammo || vorrat <= 0) break;
         ammo.torpedo = vorrat - 1;
         tube.status = 'laedt';
-        tube.remaining = TUBE.reloadSeconds;
+        // Effektive Ladezeit des Kontos — der Tube-Perk beschleunigt sie.
+        tube.remaining = this.tubeReload.get(accountId) ?? TUBE.reloadSeconds;
         geaendert = true;
       }
     } else {
@@ -693,11 +715,13 @@ export class GameServer {
   /** Rohr-Zustände für das `own`-Ereignis. */
   private tubeStates(accountId: string): TubeState[] {
     const tubes = this.tubes.get(accountId) ?? [];
+    // Der Fortschritt rechnet gegen die EFFEKTIVE Ladezeit dieses Kontos —
+    // mit Tube-Perk liefe der Balken sonst nur bis zur Perk-Quote statt bis 1.
+    const reload = this.tubeReload.get(accountId) ?? TUBE.reloadSeconds;
     return tubes.map((tube) => ({
       position: tube.position,
       status: tube.status,
-      progress:
-        tube.status === 'laedt' ? 1 - Math.min(tube.remaining / TUBE.reloadSeconds, 1) : 0,
+      progress: tube.status === 'laedt' ? 1 - Math.min(tube.remaining / reload, 1) : 0,
       armed: tube.armed,
     }));
   }
@@ -830,6 +854,27 @@ export class GameServer {
     });
   }
 
+  /**
+   * Meldet den Zustand der Werft-Instanz am Rundenende: Versenkung, EXIT und
+   * Disconnect melden 0, die Extraktion (und der Shutdown) die Rest-HP.
+   * HÖCHSTENS EINE Meldung je Einsatz — Versenkung und der ihr folgende
+   * Disconnect laufen beide hier durch, der Guard lässt nur den Ersten durch.
+   * Fire-and-forget wie reportStats; eine leere shipId (altes Backend-Ticket)
+   * meldet nichts.
+   */
+  private reportShipDamage(accountId: string, shipId: string, hp: number): void {
+    if (!shipId || this.shipDamageReported.has(accountId)) return;
+    this.shipDamageReported.add(accountId);
+    fetch(`${env.apiInternalUrl}/api/internal/ship-damage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-internal-key': env.internalKey },
+      body: JSON.stringify({ accountId, shipId, hp }),
+      signal: AbortSignal.timeout(3000),
+    }).catch((error) => {
+      console.warn(`[game-server] Schadensmeldung für ${accountId} fehlgeschlagen:`, error);
+    });
+  }
+
   private sendOwn(socket: GameSocket, vessel: Vessel): void {
     const accountId = socket.data.accountId;
     const ammo = this.ammo.get(accountId);
@@ -873,7 +918,6 @@ export class GameServer {
       const events = this.world.update(SIM_STEP_SECONDS);
       this.handleCombatEvents(events);
       this.updateLootAndExtraction(SIM_STEP_SECONDS);
-      this.updateRespawns(SIM_STEP_SECONDS);
       this.updateTubes(SIM_STEP_SECONDS);
       this.accumulator -= SIM_STEP_SECONDS;
       this.tick += 1;
@@ -893,9 +937,10 @@ export class GameServer {
 
   /**
    * Wertet die Kampfereignisse eines Simulationsschritts aus: fx-Meldungen an
-   * alle in Sonar-Reichweite, Versenkungen räumen das Fahrzeug aus der Welt
-   * und stoßen den Wiedereinstieg an — Spieler über die Warteliste, Bots über
-   * ihre eigene.
+   * alle in Sonar-Reichweite. Eine Versenkung räumt das Fahrzeug aus der
+   * Welt — für SPIELER ist das seit Protokoll 19 das Rundenende (Schiff
+   * beschädigt in die Werft, Verbindung wird getrennt), nur Bots und
+   * Frachter kehren über ihre eigenen Listen zurück.
    */
   private handleCombatEvents(events: WorldEvents): void {
     for (const impact of events.impacts) this.emitFx('impact', impact.x, impact.y);
@@ -940,25 +985,20 @@ export class GameServer {
         if (killerSocket) {
           stats.push({ type: 'pvp_kill', killerId: wreck.killerId!, victimId: wreck.id });
         }
-        /*
-         * Spieler-Drop: Einsatzgebühr des TICKET-Schiffs (nur beim ersten
-         * Untergang — sie wurde einmal bezahlt) plus alles, was er trug.
-         * Der Getragene Loot geht damit über Bord, nicht unter: wer das Wrack
-         * plündert, übernimmt die Fracht.
-         */
-        const ticketModel = socket.data.shipModel;
-        const gebuehr =
-          !this.feeDropped.has(wreck.id) && isPlayableModel(ticketModel)
-            ? SHIP_ACCESS[ticketModel].sortieCost
-            : 0;
-        this.feeDropped.add(wreck.id);
+        // Die getragene Fracht geht über Bord, nicht unter: wer das Wrack
+        // plündert, übernimmt sie. (Die frühere Einsatzgebühr ist mit dem
+        // Werft-Umbau entfallen — Schiffe kosten Kauf und Reparatur.)
         const fracht = this.loot.get(wreck.id) ?? 0;
         this.loot.set(wreck.id, 0);
-        this.world.spawnCrate(wreck.x, wreck.y, gebuehr + fracht);
+        this.world.spawnCrate(wreck.x, wreck.y, fracht);
 
-        this.pendingRespawns.set(wreck.id, { seconds: RESPAWN_SECONDS, model });
-        socket.emit('destroyed', { respawnSeconds: RESPAWN_SECONDS });
-        console.log(`[game-server] ${socket.data.name} versenkt — Respawn in ${RESPAWN_SECONDS} s.`);
+        // Rundenende: Schiff mit HP 0 in die Werft melden, dem Betroffenen
+        // den Untergang zeigen und dann trennen — die Verzögerung lässt das
+        // destroyed-Paket und die Untergangs-Anzeige sicher ankommen.
+        this.reportShipDamage(wreck.id, socket.data.shipId, 0);
+        socket.emit('destroyed', {});
+        setTimeout(() => socket.disconnect(true), 1500);
+        console.log(`[game-server] ${socket.data.name} versenkt — Runde beendet.`);
       } else {
         // Versenkter NPC gibt dem Spieler-Killer XP (weniger als ein Spieler,
         // und ohne K/D-Wirkung — die zählt nur Spieler gegen Spieler).
@@ -1027,45 +1067,15 @@ export class GameServer {
     // Extraktions-XP nur HIER, nicht beim Server-Shutdown: der rechnet zwar
     // Loot ab, ist aber keine erspielte Extraktion.
     this.reportStats([{ type: 'extraction', accountId }]);
+    // Rest-HP SYNCHRON vor dem Trenn-Timer melden — die Extraktion ist der
+    // einzige Abgang, der das Schiff nicht auf 0 setzt; der Guard lässt den
+    // späteren Disconnect-Handler dann schweigen.
+    this.reportShipDamage(accountId, socket.data.shipId, this.world.hp(accountId));
     socket.emit('extracted', { coins });
     console.log(`[game-server] ${socket.data.name} extrahiert — ${coins} Coins gesichert.`);
     // Trennung leicht verzögert, damit das extracted-Paket sicher rausgeht —
     // ein disconnect im selben Zug kann es sonst verschlucken.
     setTimeout(() => socket.disconnect(true), 150);
-  }
-
-  /** Setzt versenkte Spieler nach Ablauf ihrer Wartezeit wieder ein. */
-  private updateRespawns(deltaSeconds: number): void {
-    for (const [accountId, pending] of this.pendingRespawns) {
-      pending.seconds -= deltaSeconds;
-      if (pending.seconds > 0) continue;
-      this.pendingRespawns.delete(accountId);
-
-      const socket = this.sockets.get(accountId);
-      // Inzwischen getrennt — der Disconnect-Handler hat schon aufgeräumt.
-      if (!socket) continue;
-
-      // Wiedereinstieg heißt frisches Boot: die Panzerung des Einsatzes steht
-      // wieder ganz. Sie ist mit dem Ticket bezahlt, nicht mit dem Leben.
-      const vessel = this.world.spawn(
-        accountId,
-        socket.data.name,
-        pending.model,
-        this.armor.get(socket.data.armorItem),
-      );
-      vessel.level = socket.data.level;
-      // KEIN Auffüllen der Munition: der Vorrat gilt für den ganzen Einsatz.
-      // Er kommt aus dem Inventar und ist dort schon abgebucht — ein Respawn
-      // wäre sonst der bequemste Weg, Torpedos aus dem Nichts zu bekommen.
-      // Der Schaden je Sorte muss dagegen neu gesetzt werden: `world.remove`
-      // beim Untergang hat ihn mitgenommen.
-      for (const posten of socket.data.loadout) {
-        const schaden = this.ammoCatalog.damage(posten.itemId);
-        if (schaden !== null) this.world.setWeaponDamage(accountId, posten.weapon, schaden);
-      }
-      this.resetTubes(accountId, pending.model);
-      this.sendOwn(socket, vessel);
-    }
   }
 
   /**

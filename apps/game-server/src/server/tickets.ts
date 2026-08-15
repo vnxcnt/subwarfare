@@ -1,5 +1,5 @@
 import type { LoadoutEntryStack, TicketClaims } from '@subwarfare/shared';
-import { TICKET_AUDIENCE } from '@subwarfare/shared';
+import { TICKET_AUDIENCE, isPerkId } from '@subwarfare/shared';
 import { jwtVerify } from 'jose';
 import { env } from '../env.js';
 
@@ -69,7 +69,7 @@ export async function verifyTicket(raw: unknown): Promise<TicketResult> {
     return { ok: false, reason: 'Ticket ungültig oder abgelaufen.' };
   }
 
-  const { sub, name, mapId, jti, exp, role, shipModel, armorItem, loadout, level } =
+  const { sub, name, mapId, jti, exp, role, shipModel, armorItem, loadout, level, shipId, perks, startHp } =
     payload as Record<string, unknown>;
   if (typeof sub !== 'string' || typeof jti !== 'string' || typeof mapId !== 'string') {
     return { ok: false, reason: 'Ticket unvollständig.' };
@@ -102,6 +102,17 @@ export async function verifyTicket(raw: unknown): Promise<TicketResult> {
       loadout: Array.isArray(loadout) ? loadout.filter(istPosten) : [],
       // Fehlt im Ticket (altes Backend): Stufe 1 — rein informativ.
       level: typeof level === 'number' ? level : 1,
+      // Fehlt (altes Backend): leere Kennung — dann gibt es am Rundenende
+      // schlicht keine Schadensmeldung.
+      shipId: typeof shipId === 'string' ? shipId : '',
+      // Nur echte Perk-Kennungen übernehmen — Unbekanntes wirkt wie keins.
+      perks: Array.isArray(perks) ? perks.filter(isPerkId) : [],
+      // Fehlt (altes Backend): Infinity — der Spawn-Clamp macht daraus die
+      // vollen HP des Modells.
+      startHp:
+        typeof startHp === 'number' && Number.isFinite(startHp)
+          ? startHp
+          : Number.POSITIVE_INFINITY,
       jti,
     },
   };

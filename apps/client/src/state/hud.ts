@@ -412,13 +412,13 @@ export function orderTube(index: number, action: 'laden' | 'scharf', armed?: boo
 }
 
 /**
- * „Versenkt"-Meldung: Zeitstempel (ms), zu dem der Wiedereinstieg ansteht —
- * oder null. Eigener Ref statt Feld im HUD-Snapshot, weil `writeHud` nach dem
- * Untergang gar nicht mehr läuft (es gibt kein eigenes Boot mehr): die Anzeige
- * muss auch ohne Frame-Schreiber weiterleben.
+ * „Versenkt"-Meldung. Eigener Ref statt Feld im HUD-Snapshot, weil `writeHud`
+ * nach dem Untergang gar nicht mehr läuft (es gibt kein eigenes Boot mehr):
+ * die Anzeige muss auch ohne Frame-Schreiber weiterleben. Seit Protokoll 19
+ * ist die Versenkung das RUNDENENDE — der Server trennt gleich darauf.
  */
-export const sunkUntil = shallowRef<number | null>(null);
+export const sunk = shallowRef(false);
 
-export function setSunkNotice(until: number | null): void {
-  sunkUntil.value = until;
+export function setSunkNotice(active: boolean): void {
+  sunk.value = active;
 }

@@ -33,6 +33,7 @@ import {
   TORPEDO,
   Vessel,
   angleDelta,
+  applyPerksToProfile,
   clampStep,
   norm360,
   profileForShip,
@@ -216,6 +217,8 @@ export class Game {
    * tatsächlich fährt. Anzeige-Wahrheit für Telegraf und Munitionsleiste.
    */
   private readonly shipCatalog = new Map<string, ShipStats>();
+  /** Verbaute Perks des EIGENEN Boots (aus der `welcome`) — Profil-Spiegel. */
+  private ownPerks: string[] = [];
   /** Welches Profil ein Fahrzeug gerade fährt — für den Wechsel bei applyState. */
   private readonly appliedProfileModel = new Map<string, string>();
 
@@ -323,16 +326,25 @@ export class Game {
    */
   private ensureProfile(vessel: Vessel): void {
     const stats = this.shipStats(vessel.model);
+    const istEigenes = vessel.id === this.selfId;
     const throttled =
-      vessel.id === this.selfId &&
+      istEigenes &&
       this.ownHp !== null &&
       this.ownHp > 0 &&
       this.ownHp < stats.hp * DAMAGE.slowHpRatio;
 
-    const key = `${vessel.model}:${throttled ? 'gedrosselt' : 'voll'}`;
+    // Perk-Signatur in den Cache-Schlüssel: kommt die welcome (mit den Perks)
+    // nach dem ersten Profil-Aufbau an, zieht das Profil hier nach.
+    const perkKey = istEigenes ? this.ownPerks.join(',') : '';
+    const key = `${vessel.model}:${throttled ? 'gedrosselt' : 'voll'}:${perkKey}`;
     if (this.appliedProfileModel.get(vessel.id) === key) return;
 
-    const base = profileForShip(DESTROYER, stats);
+    // Beim eigenen Boot dieselbe Rechnung wie der Server: erst Perks aufs
+    // Basisprofil, dann gegebenenfalls die Schadens-Drossel obendrauf.
+    let base = profileForShip(DESTROYER, stats);
+    if (istEigenes && this.ownPerks.length > 0) {
+      base = applyPerksToProfile(base, this.ownPerks);
+    }
     vessel.applyProfile(
       throttled
         ? {
@@ -559,6 +571,8 @@ export class Game {
         this.progressHook?.({ label: 'Lage wird übernommen', value: 0.96 });
         this.selfId = payload.selfId;
         world.entities.setOwnId(payload.selfId);
+        // Eigene Perks — ensureProfile spiegelt damit das Server-Fahrprofil.
+        this.ownPerks = payload.perks ?? [];
         for (const ship of payload.ships) this.shipCatalog.set(ship.model, ship);
         world.setMap(payload.map);
         // Extraktionszonen sichtbar machen: je Kreis ein Ring aus Bojen.
@@ -614,10 +628,10 @@ export class Game {
         const listener = this.ownVessel ?? world.camera;
         this.audio?.playImpact(Math.hypot(fxX - listener.x, fxY - listener.y));
       },
-      onDestroyed: (payload) => {
-        // Das eigene Boot verschwindet mit dem nächsten Broadcast von selbst
-        // aus dem Bestand — hier bleibt nur die Meldung an den Spieler.
-        setSunkNotice(Date.now() + payload.respawnSeconds * 1000);
+      onDestroyed: () => {
+        // Versenkung = Rundenende: der Server trennt gleich, die Anzeige
+        // überbrückt die letzten anderthalb Sekunden auf See.
+        setSunkNotice(true);
       },
       onExtracted: (payload) => session.onExtracted(payload.coins),
       onLog: (payload) => pushLogEntry(payload.kind, payload.text),
@@ -720,7 +734,7 @@ export class Game {
         // Follow-Ziel ist dann ein verwaistes Objekt).
         world.centerOn(vessel.x, vessel.y);
         world.follow(vessel);
-        setSunkNotice(null);
+        setSunkNotice(false);
         // Ruderlage neu ansagen: das frische Server-Boot steht mittschiffs,
         // die gehaltene Taste soll sofort wieder greifen.
         this.pushSteer(true);
@@ -1460,7 +1474,7 @@ export class Game {
     this.ownAmmo = {};
     this.ownTubes = [];
     this.pendingTelegraphStep = null;
-    setSunkNotice(null);
+    setSunkNotice(false);
     if (this.tiltKeys) window.removeEventListener('keydown', this.tiltKeys);
     this.tiltKeys = null;
     if (this.steerListeners) {

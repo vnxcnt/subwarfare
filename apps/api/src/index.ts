@@ -19,6 +19,10 @@ import { registerStatsRoutes } from './stats/routes.js';
 import { registerSocialRoutes } from './social/routes.js';
 import { MySqlSocialStore } from './social/MySqlSocialStore.js';
 import { MemorySocialStore, type SocialStore } from './social/store.js';
+import { registerWerftRoutes } from './werft/routes.js';
+import { MySqlWerftStore } from './werft/MySqlWerftStore.js';
+import { MemoryWerftStore, type WerftStore } from './werft/store.js';
+import { WerftService } from './werft/service.js';
 import { migrate } from './db/migrate.js';
 import { env, warnAboutDefaults } from './env.js';
 import { fetchGameServerStatus } from './gameserver/status.js';
@@ -30,12 +34,17 @@ warnAboutDefaults();
 
 await migrate();
 
+// Schiffskatalog EINMAL laden: die Startprüfung unten braucht ihn, und die
+// Werft leitet daraus die maxHp je Modell ab (DB-Änderungen greifen wie beim
+// Spielserver erst mit Neustart).
+const shipStats = await loadShipStats();
+
 // Struktur-Vertrag der Werft prüfen: die Ausrüstungs-Slots leiten sich aus der
 // Bewaffnung im CODE-Katalog ab (equipSlotsForArmament) — die ships-Tabelle
 // darf ZAHLEN (HP, Speed) abweichen, aber nicht die Bewaffnung, sonst zeigt
 // das Menü Slots, die der Spielserver verweigert. Nur warnen, nicht abbrechen:
 // der Betrieb ist mit falscher Anzeige lästig, ohne api aber tot.
-for (const ship of await loadShipStats()) {
+for (const ship of shipStats) {
   const expected = [...(DEFAULT_SHIP_STATS[ship.model]?.armament ?? [])].sort().join(',');
   const actual = [...ship.armament].sort().join(',');
   if (expected !== actual) {
@@ -52,6 +61,8 @@ const inventory: InventoryStore = env.databaseUrl
   : new MemoryInventoryStore(accounts);
 const fleets: FleetStore = env.databaseUrl ? new MySqlFleetStore() : new MemoryFleetStore(accounts);
 const social: SocialStore = env.databaseUrl ? new MySqlSocialStore() : new MemorySocialStore();
+const werftStore: WerftStore = env.databaseUrl ? new MySqlWerftStore() : new MemoryWerftStore();
+const werft = new WerftService(werftStore, accounts, shipStats);
 
 const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
 
@@ -82,6 +93,7 @@ await app.register(
       online: (id) => lobby.isOnline(id),
       notify: (id) => lobby.notifySocial(id),
     });
+    registerWerftRoutes(scope, accounts, inventory, werft);
 
     // Interner Kanal für den Spielserver — derselbe Schlüssel wie dessen
     // /status. Von außen kommt man über Caddy zwar an die URL, aber ohne
@@ -198,7 +210,7 @@ const io = new Server(app.server, {
   cors: { origin: env.corsOrigin, credentials: true },
 });
 
-const lobby = new LobbyGateway(io, new MemoryQueue(), accounts, inventory, fleets, social);
+const lobby = new LobbyGateway(io, new MemoryQueue(), accounts, inventory, fleets, social, werft);
 lobby.register();
 
 await app.listen({ port: env.port, host: env.host });

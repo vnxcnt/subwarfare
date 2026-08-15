@@ -52,7 +52,7 @@ export function takeSession(): QueueTicketPayload | null {
 }
 
 /** In die Warteschlange einreihen. Führt bei freiem Platz direkt zum Ticket. */
-export function joinQueue(mapId: string, shipModel: string, onTicket: () => void): void {
+export function joinQueue(mapId: string, shipId: string, onTicket: () => void): void {
   if (!token.value) return;
   leaveQueue();
 
@@ -70,7 +70,7 @@ export function joinQueue(mapId: string, shipModel: string, onTicket: () => void
   });
 
   socket.on('connect', () => {
-    socket?.emit('queue:join', { mapId, shipModel });
+    socket?.emit('queue:join', { mapId, shipId });
   });
 
   socket.on('connect_error', (error) => {

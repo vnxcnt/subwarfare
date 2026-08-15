@@ -101,8 +101,8 @@ const weather = computed(() => {
       <button
         class="status__knopf status__exit"
         type="button"
-        title="Karte verlassen — Loot und mitgebrachte Ausrüstung gehen verloren. Sichern: 8 s in einer Bojen-Zone extrahieren."
-        aria-label="Karte verlassen (ohne Extraktion gehen Loot und Ausrüstung verloren)"
+        title="Karte verlassen — Loot und Ausrüstung gehen verloren, dein Schiff gilt als versenkt (HP 0). Sichern: 8 s in einer Bojen-Zone extrahieren."
+        aria-label="Karte verlassen (ohne Extraktion gehen Loot und Ausrüstung verloren, das Schiff gilt als versenkt)"
         @click="leaveToMenu"
       >
         <img class="status__icon" :src="exitIcon" alt="" />

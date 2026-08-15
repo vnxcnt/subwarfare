@@ -1,39 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { sunkUntil } from '../state/hud';
+import { sunk } from '../state/hud';
 
 /**
- * Vollbild-Meldung nach der eigenen Versenkung, mit Countdown bis zum
- * Wiedereinstieg. Eigene Uhr per Intervall statt `hud.time`: nach dem
- * Untergang existiert kein eigenes Boot mehr, `writeHud` läuft nicht weiter —
- * die HUD-Uhr stünde still.
+ * Vollbild-Meldung nach der eigenen Versenkung. Seit Protokoll 19 ist die
+ * Versenkung das RUNDENENDE: kein Countdown mehr — der Server trennt nach
+ * ~1,5 s, dann landet der Spieler mit der End-Meldung im Hauptmenü.
  */
-const now = ref(Date.now());
-let timer: ReturnType<typeof setInterval> | null = null;
-
-onMounted(() => {
-  timer = setInterval(() => {
-    now.value = Date.now();
-  }, 200);
-});
-onBeforeUnmount(() => {
-  if (timer) clearInterval(timer);
-});
-
-const secondsLeft = computed(() => {
-  if (sunkUntil.value === null) return null;
-  return Math.max(0, Math.ceil((sunkUntil.value - now.value) / 1000));
-});
 </script>
 
 <template>
-  <div v-if="secondsLeft !== null" class="death">
+  <div v-if="sunk" class="death">
     <div class="death__panel hud__panel">
       <span class="death__title">Versenkt!</span>
-      <span v-if="secondsLeft > 0" class="death__sub">
-        Wiedereinstieg in <span class="hud__num">{{ secondsLeft }}</span> s …
-      </span>
-      <span v-else class="death__sub">Neues Schiff läuft aus …</span>
+      <span class="death__sub">Dein Schiff liegt beschädigt in der Werft.</span>
     </div>
   </div>
 </template>

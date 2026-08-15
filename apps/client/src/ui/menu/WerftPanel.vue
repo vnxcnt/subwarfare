@@ -1,295 +1,477 @@
 <script setup lang="ts">
-import type { ItemCategory, ItemId } from '@subwarfare/shared';
-import { BULK_CATEGORIES, ITEMS, SHOP_BUY_MAX } from '@subwarfare/shared';
-import { computed, reactive, ref } from 'vue';
+import type { PlayableModel, WerftShip } from '@subwarfare/shared';
+import {
+  ITEMS,
+  PERK_SLOTS_BY_MODEL,
+  PLAYABLE_MODELS,
+  SHIP_PRICES,
+  isPerkId,
+  isPlayableModel,
+  perkById,
+  perkEffectLabel,
+  repairCost,
+} from '@subwarfare/shared';
+import { computed, onMounted, ref } from 'vue';
 import { account } from '../../state/auth';
-import { buyItem, economyBusy, economyError, ownedQuantity } from '../../state/economy';
-import { itemIconUrl } from '../itemIcons';
+import { ownedQuantity, refreshInventory } from '../../state/economy';
+import {
+  buyShip,
+  refreshWerft,
+  repairRemaining,
+  repairShip,
+  setShipPerks,
+  werftBusy,
+  werftError,
+  werftLoaded,
+  werftShips,
+  werftSlots,
+} from '../../state/werft';
+import { perkIconUrl } from '../perkIcons';
+import { SHIP_LABELS } from './shipLabels';
 
 /**
- * Werft: Inventar und Shop — der Handelsbereich des Hafens. Umzug aus der
- * rechten Spalte des alten Menüs; Logik unverändert, nur eigenständig.
+ * Werft: die Schiffsbasis. Sechs Slots je Konto — jede Karte ist eine
+ * INSTANZ mit eigener HP, eigenem Reparatur-Timer und eigenen Perks. Unten
+ * die Kaufwerft: Modelle mit Preisen, solange Slots frei sind. Formeln und
+ * Regeln kommen aus shared; die api prüft alles erneut.
  */
-const sideTab = ref<'inventar' | 'shop'>('inventar');
+const SHIP_PREVIEWS = import.meta.glob('../../assets/ships/*.webp', {
+  eager: true,
+  import: 'default',
+}) as Record<string, string>;
 
-/** Kaufbare Items — der Katalog kennt auch unverkäufliche (nur erspielbar). */
-const shopItems = ITEMS.filter((item) => item.shopPrice !== null);
-
-/** Besitz in Katalog-Reihenfolge, nur was da ist. */
-const ownedList = computed(() =>
-  ITEMS.map((item) => ({ ...item, quantity: ownedQuantity(item.id) })).filter(
-    (item) => item.quantity > 0,
-  ),
-);
+function shipPreviewUrl(model: string): string | null {
+  return SHIP_PREVIEWS[`../../assets/ships/${model}.webp`] ?? null;
+}
 
 const rawCoins = computed(() => account.value?.coins ?? 0);
 
+function label(model: string): string {
+  return isPlayableModel(model) ? SHIP_LABELS[model] : model;
+}
+
+/* --- Zustand & Reparatur -------------------------------------------------- */
+
+type ShipZustand = 'bereit' | 'beschaedigt' | 'wrack' | 'reparatur';
+
+function zustand(ship: WerftShip): ShipZustand {
+  if (ship.repairUntil !== null) return 'reparatur';
+  if (ship.hp <= 0) return 'wrack';
+  if (ship.hp < ship.maxHp) return 'beschaedigt';
+  return 'bereit';
+}
+
+const ZUSTAND_LABEL: Record<ShipZustand, string> = {
+  bereit: 'Bereit',
+  beschaedigt: 'Beschädigt',
+  wrack: 'Schwer beschädigt',
+  reparatur: 'In Reparatur',
+};
+
+function hpProzent(ship: WerftShip): number {
+  if (ship.maxHp <= 0) return 0;
+  return Math.round((ship.hp / ship.maxHp) * 100);
+}
+
+function hpKlasse(ship: WerftShip): string {
+  const prozent = hpProzent(ship);
+  if (prozent <= 25) return 'werft__hp-balken--rot';
+  if (prozent <= 60) return 'werft__hp-balken--gelb';
+  return '';
+}
+
+function kosten(ship: WerftShip): number {
+  return isPlayableModel(ship.model) ? repairCost(ship.model, ship.hp, ship.maxHp) : 0;
+}
+
+/** Restzeit als h:mm:ss bzw. mm:ss — destroyer02 repariert 80 Minuten. */
+function restzeit(ship: WerftShip): string {
+  const rest = repairRemaining(ship) ?? 0;
+  const h = Math.floor(rest / 3600);
+  const m = Math.floor((rest % 3600) / 60);
+  const s = rest % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+async function reparieren(ship: WerftShip): Promise<void> {
+  await repairShip(ship.shipId);
+}
+
+/* --- Perks ---------------------------------------------------------------- */
+
+/** Offener Perk-Slot (Auswahlliste sichtbar) — höchstens einer zugleich. */
+const aktiverPerkSlot = ref<{ shipId: string; index: number } | null>(null);
+
+function perkSlotOffen(ship: WerftShip, index: number): boolean {
+  return (
+    aktiverPerkSlot.value?.shipId === ship.shipId && aktiverPerkSlot.value.index === index
+  );
+}
+
+function togglePerkSlot(ship: WerftShip, index: number): void {
+  aktiverPerkSlot.value = perkSlotOffen(ship, index) ? null : { shipId: ship.shipId, index };
+}
+
+function perkSlots(ship: WerftShip): number {
+  return isPlayableModel(ship.model) ? PERK_SLOTS_BY_MODEL[ship.model] : 0;
+}
+
+function perkImSlot(ship: WerftShip, index: number): string | null {
+  return ship.perks[index] ?? null;
+}
+
+function perkName(perkId: string): string {
+  return ITEMS.find((item) => item.id === perkId)?.name ?? perkId;
+}
+
+function perkTooltip(perkId: string): string {
+  return isPerkId(perkId) ? `${perkName(perkId)} — ${perkEffectLabel(perkId)}` : perkId;
+}
+
 /**
- * Mengenkauf für Verbrauchsgüter (Munition aller Art): gewählte Stückzahl je
- * Item, Start 1. Die ±-Knöpfe springen aufs 5er-Raster (1 → 5 → 10 → …),
- * die Eingabe nimmt jede Zahl bis SHOP_BUY_MAX — die api validiert dasselbe.
+ * Wählbare Perks für einen Slot: im Besitz, und der TYP ist auf diesem
+ * Schiff noch nicht verbaut (außer im angeklickten Slot selbst) — dieselbe
+ * Regel, die die api mit validatePerkSet durchsetzt.
  */
-const mengen = reactive<Partial<Record<ItemId, number>>>({});
-
-function mengeVon(itemId: ItemId): number {
-  return mengen[itemId] ?? 1;
+function perkOptionen(ship: WerftShip, index: number): string[] {
+  const belegteTypen = new Set(
+    ship.perks
+      .filter((_, i) => i !== index)
+      .filter(isPerkId)
+      .map((id) => perkById(id).type),
+  );
+  return ITEMS.filter((item) => item.category === 'perk')
+    .map((item) => item.id)
+    .filter(
+      (id) =>
+        isPerkId(id) && ownedQuantity(id) > 0 && !belegteTypen.has(perkById(id).type),
+    );
 }
 
-function istMengenkauf(category: ItemCategory): boolean {
-  return BULK_CATEGORIES.includes(category);
+async function perkSetzen(ship: WerftShip, index: number, perkId: string | null): Promise<void> {
+  const perks = [...ship.perks];
+  if (perkId === null) {
+    if (index < perks.length) perks.splice(index, 1);
+  } else if (index < perks.length) {
+    perks[index] = perkId;
+  } else {
+    perks.push(perkId);
+  }
+  aktiverPerkSlot.value = null;
+  await setShipPerks(ship.shipId, perks);
 }
 
-/** ±5 als Raster, nicht als Addition: von 1 geht es auf 5, von 7 runter auf 5. */
-function stufe(itemId: ItemId, richtung: 1 | -1): void {
-  const aktuell = mengeVon(itemId);
-  mengen[itemId] =
-    richtung > 0
-      ? Math.min(SHOP_BUY_MAX, Math.floor(aktuell / 5) * 5 + 5)
-      : Math.max(1, Math.ceil(aktuell / 5) * 5 - 5);
+/* --- Kaufwerft ------------------------------------------------------------ */
+
+const flotteVoll = computed(() => werftShips.value.length >= werftSlots.value);
+
+function preis(model: PlayableModel): number {
+  return SHIP_PRICES[model];
 }
 
-/** Freie Eingabe: ganzzahlig geklemmt; Unsinn fällt auf 1 zurück. */
-function mengeEingabe(itemId: ItemId, event: Event): void {
-  const feld = event.target as HTMLInputElement;
-  const roh = Number.parseInt(feld.value, 10);
-  const wert = Number.isFinite(roh) ? Math.min(SHOP_BUY_MAX, Math.max(1, roh)) : 1;
-  mengen[itemId] = wert;
-  // Zurückschreiben, damit „abc" oder „0" sichtbar zur echten Menge wird.
-  feld.value = String(wert);
+async function kaufen(model: PlayableModel): Promise<void> {
+  await buyShip(model);
 }
 
-/** Gesamtpreis der gewählten Menge — das steht auch auf dem Preisschild. */
-function gesamt(item: (typeof shopItems)[number]): number {
-  return (item.shopPrice ?? 0) * mengeVon(item.id);
-}
-
-async function buy(itemId: ItemId): Promise<void> {
-  await buyItem(itemId, mengeVon(itemId));
-}
+onMounted(() => {
+  void refreshWerft();
+  // Für die Perk-Auswahl: der Besitz kommt aus dem Inventar.
+  void refreshInventory();
+});
 </script>
 
 <template>
-  <section class="gold-panel menu__panel werft" aria-label="Inventar und Shop">
-    <div class="menu__tabs" role="tablist">
-      <button
-        type="button"
-        class="menu__tab"
-        :class="{ 'menu__tab--active': sideTab === 'inventar' }"
-        role="tab"
-        :aria-selected="sideTab === 'inventar'"
-        @click="sideTab = 'inventar'"
-      >
-        Inventar
-      </button>
-      <button
-        type="button"
-        class="menu__tab"
-        :class="{ 'menu__tab--active': sideTab === 'shop' }"
-        role="tab"
-        :aria-selected="sideTab === 'shop'"
-        @click="sideTab = 'shop'"
-      >
-        Shop
-      </button>
-    </div>
+  <div class="werft">
+    <section class="gold-panel menu__panel" aria-label="Meine Flotte">
+      <h2 class="gold-panel__title">
+        Meine Flotte
+        <span class="werft__slots hud__num">{{ werftShips.length }} / {{ werftSlots }}</span>
+      </h2>
 
-    <template v-if="sideTab === 'inventar'">
-      <ul v-if="ownedList.length > 0" class="menu__items">
-        <li v-for="item in ownedList" :key="item.id" class="menu__item">
-          <img
-            v-if="itemIconUrl(item.id)"
-            class="menu__item-icon"
-            :src="itemIconUrl(item.id)!"
-            alt=""
-          />
-          <span class="menu__item-name">{{ item.name }}</span>
-          <span class="menu__item-qty hud__num">×{{ item.quantity }}</span>
+      <p v-if="!werftLoaded" class="menu__soon">Lade Flotte …</p>
+      <ul v-else class="werft__flotte">
+        <li v-for="ship in werftShips" :key="ship.shipId" class="werft__karte">
+          <div class="werft__bild">
+            <img
+              v-if="shipPreviewUrl(ship.model)"
+              :src="shipPreviewUrl(ship.model)!"
+              alt=""
+              draggable="false"
+            />
+          </div>
+
+          <div class="werft__kopf">
+            <span class="werft__name">{{ label(ship.model) }}</span>
+            <span
+              class="werft__status"
+              :class="`werft__status--${zustand(ship)}`"
+            >
+              {{ ZUSTAND_LABEL[zustand(ship)] }}
+              <template v-if="zustand(ship) === 'reparatur'">
+                — <span class="hud__num">{{ restzeit(ship) }}</span>
+              </template>
+            </span>
+          </div>
+
+          <div class="werft__hp" :title="`${ship.hp} / ${ship.maxHp} HP`">
+            <div
+              class="werft__hp-balken"
+              :class="hpKlasse(ship)"
+              :style="{ width: `${hpProzent(ship)}%` }"
+            ></div>
+          </div>
+          <span class="werft__hp-text hud__num">{{ ship.hp }} / {{ ship.maxHp }} HP</span>
+
+          <button
+            v-if="zustand(ship) === 'beschaedigt' || zustand(ship) === 'wrack'"
+            type="button"
+            class="werft__knopf"
+            :disabled="werftBusy || rawCoins < kosten(ship)"
+            @click="reparieren(ship)"
+          >
+            <template v-if="kosten(ship) > 0">
+              Reparieren ·
+              <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
+              {{ kosten(ship) }}
+            </template>
+            <template v-else>Gratis reparieren</template>
+          </button>
+
+          <!-- Perk-Slots der Instanz: je Typ höchstens einer, Anzahl je Modell. -->
+          <div class="werft__perks">
+            <button
+              v-for="index in perkSlots(ship)"
+              :key="index"
+              type="button"
+              class="werft__perkslot"
+              :class="{ 'werft__perkslot--offen': perkSlotOffen(ship, index - 1) }"
+              :title="
+                perkImSlot(ship, index - 1)
+                  ? perkTooltip(perkImSlot(ship, index - 1)!)
+                  : 'Perk verbauen'
+              "
+              @click="togglePerkSlot(ship, index - 1)"
+            >
+              <img
+                v-if="perkImSlot(ship, index - 1) && perkIconUrl(perkImSlot(ship, index - 1)!)"
+                :src="perkIconUrl(perkImSlot(ship, index - 1)!)!"
+                alt=""
+                draggable="false"
+              />
+              <span v-else>+</span>
+            </button>
+          </div>
+
+          <!-- Auswahl fürs offene Perk-Fach: Besitz, Typ-Regel gespiegelt. -->
+          <div
+            v-if="aktiverPerkSlot?.shipId === ship.shipId"
+            class="werft__perk-optionen"
+          >
+            <button
+              v-if="perkImSlot(ship, aktiverPerkSlot.index)"
+              type="button"
+              class="werft__perk-option werft__perk-option--leeren"
+              :disabled="werftBusy"
+              @click="perkSetzen(ship, aktiverPerkSlot.index, null)"
+            >
+              — Perk ausbauen —
+            </button>
+            <button
+              v-for="option in perkOptionen(ship, aktiverPerkSlot.index)"
+              :key="option"
+              type="button"
+              class="werft__perk-option"
+              :disabled="werftBusy"
+              @click="perkSetzen(ship, aktiverPerkSlot.index, option)"
+            >
+              <img
+                v-if="perkIconUrl(option)"
+                class="werft__perk-option-icon"
+                :src="perkIconUrl(option)!"
+                alt=""
+              />
+              <span class="werft__perk-option-name">{{ perkName(option) }}</span>
+              <span class="werft__perk-option-effekt">{{
+                isPerkId(option) ? perkEffectLabel(option) : ''
+              }}</span>
+            </button>
+            <p
+              v-if="
+                perkOptionen(ship, aktiverPerkSlot.index).length === 0 &&
+                !perkImSlot(ship, aktiverPerkSlot.index)
+              "
+              class="menu__soon"
+            >
+              Keine passenden Perks im Depot — sie fallen als Beute auf See.
+            </p>
+          </div>
         </li>
       </ul>
-      <p v-else class="menu__soon">Noch keine Items — schau im Shop vorbei.</p>
-    </template>
 
-    <template v-else>
-      <ul class="menu__items">
-        <li v-for="item in shopItems" :key="item.id" class="menu__item menu__item--shop">
-          <img
-            v-if="itemIconUrl(item.id)"
-            class="menu__item-icon"
-            :src="itemIconUrl(item.id)!"
-            alt=""
-          />
-          <span class="menu__item-name">{{ item.name }}</span>
-          <span v-if="istMengenkauf(item.category)" class="menu__menge">
-            <button
-              type="button"
-              class="menu__menge-knopf"
-              aria-label="5 weniger"
-              @click="stufe(item.id, -1)"
-            >
-              −
-            </button>
-            <input
-              class="menu__menge-eingabe hud__num"
-              type="text"
-              inputmode="numeric"
-              :value="mengeVon(item.id)"
-              :aria-label="`Stückzahl ${item.name}`"
-              @change="mengeEingabe(item.id, $event)"
+      <p v-if="werftError" class="menu__error">{{ werftError }}</p>
+    </section>
+
+    <section class="gold-panel menu__panel" aria-label="Schiffskauf">
+      <h2 class="gold-panel__title">Kaufwerft</h2>
+      <p v-if="flotteVoll" class="menu__soon">
+        Alle {{ werftSlots }} Slots sind belegt — für ein neues Schiff muss erst Platz sein.
+      </p>
+      <ul class="werft__angebote">
+        <li v-for="model in PLAYABLE_MODELS" :key="model" class="werft__angebot">
+          <div class="werft__bild werft__bild--klein">
+            <img
+              v-if="shipPreviewUrl(model)"
+              :src="shipPreviewUrl(model)!"
+              alt=""
+              draggable="false"
             />
-            <button
-              type="button"
-              class="menu__menge-knopf"
-              aria-label="5 mehr"
-              @click="stufe(item.id, 1)"
-            >
-              +
-            </button>
-          </span>
-          <span class="menu__item-price hud__num">
-            <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
-            {{ gesamt(item) }}
+          </div>
+          <span class="werft__angebot-name">{{ label(model) }}</span>
+          <span class="werft__angebot-preis hud__num">
+            <template v-if="preis(model) > 0">
+              <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
+              {{ preis(model) }}
+            </template>
+            <template v-else>Kostenlos</template>
           </span>
           <button
             type="button"
-            class="menu__buy"
-            :disabled="economyBusy || rawCoins < gesamt(item)"
-            @click="buy(item.id)"
+            class="werft__knopf"
+            :disabled="werftBusy || flotteVoll || rawCoins < preis(model)"
+            @click="kaufen(model)"
           >
             Kaufen
           </button>
         </li>
       </ul>
-      <p v-if="economyError" class="menu__error">{{ economyError }}</p>
-    </template>
-  </section>
+    </section>
+  </div>
 </template>
 
 <style scoped>
-/*
- * Die Werft braucht Fläche: Item-Zeilen tragen Icon + Name + Preis + Knopf.
- * Deutlich breiter als die 34-rem-Vorgabe der Shell, die Listen laufen dann
- * zweispaltig — eine gestreckte Einzelspalte sähe nur leer aus.
- */
 .werft {
+  display: grid;
+  gap: 1rem;
   max-width: none !important;
-  /* Seit dem Mengen-Stepper tragen Shop-Zeilen mehr — etwas breiter, damit
-     zwei Spalten mit vollen Item-Namen nebeneinander atmen. */
-  width: min(62rem, 100%);
+  width: min(72rem, 100%);
 }
 
-.menu__tabs {
-  display: flex;
-  gap: 0.4rem;
-  margin-bottom: 0.8rem;
+.werft__slots {
+  float: right;
+  opacity: 0.8;
 }
 
-.menu__tab {
-  flex: 1;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid var(--gold-border);
-  background: rgb(0 0 0 / 25%);
-  color: inherit;
-  font: inherit;
-  font-size: 0.75rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
+/* --- Flotten-Karten ------------------------------------------------------- */
 
-.menu__tab--active {
-  border-color: var(--gold);
-  background: var(--gold-faint);
-  color: var(--gold);
-}
-
-.menu__items {
+.werft__flotte {
   margin: 0;
   padding: 0;
   list-style: none;
   display: grid;
-  /* Nutzt die Breite: zwei Spalten, bei schmalem Fenster automatisch eine. */
-  grid-template-columns: repeat(auto-fill, minmax(26rem, 1fr));
-  gap: 0.35rem 0.6rem;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: 0.7rem;
 }
 
-.menu__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.35rem 0.5rem;
+.werft__karte {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.6rem;
   border: 1px solid var(--gold-border);
   background: rgb(0 0 0 / 20%);
-  font-size: 0.8125rem;
 }
 
-.menu__item-icon {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
+/* Wasser-Kachel wie bei der Schiffswahl im Auslaufen-Bereich. */
+.werft__bild {
+  display: grid;
+  place-items: center;
+  height: 88px;
+  border: 1px solid var(--gold-border);
+  background-image:
+    linear-gradient(180deg, rgb(4 14 22 / 30%) 0%, rgb(4 14 22 / 62%) 100%),
+    url('../../assets/fx/ocean_water.webp');
+  background-size: auto, 280px;
+  background-repeat: no-repeat, repeat;
+}
+
+.werft__bild img {
+  height: 72px;
   object-fit: contain;
-  image-rendering: -webkit-optimize-contrast;
+  -webkit-user-drag: none;
 }
 
-.menu__item-name {
-  flex: 1;
-  /* Darf schrumpfen (und umbrechen), sonst drückt der Stepper die Zeile auf. */
-  min-width: 0;
+.werft__bild--klein {
+  height: 60px;
 }
 
-/* --- Mengen-Stepper (nur Verbrauchsgüter) -------------------------------- */
-
-.menu__menge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2rem;
-  flex: 0 0 auto;
+.werft__bild--klein img {
+  height: 48px;
 }
 
-.menu__menge-knopf {
-  width: 1.5rem;
-  height: 1.5rem;
-  border: 1px solid var(--gold-border);
-  background: rgb(0 0 0 / 25%);
+.werft__kopf {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.werft__name {
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.werft__status {
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+}
+
+.werft__status--bereit {
+  color: #6fd08c;
+}
+
+.werft__status--beschaedigt {
+  color: #e2b45a;
+}
+
+.werft__status--wrack {
+  color: #f26d6d;
+}
+
+.werft__status--reparatur {
   color: var(--gold);
-  font: inherit;
-  font-size: 0.8125rem;
-  line-height: 1;
-  cursor: pointer;
 }
 
-.menu__menge-knopf:hover {
-  border-color: var(--gold);
-  background: var(--gold-faint);
-}
+/* --- HP-Balken ------------------------------------------------------------ */
 
-.menu__menge-eingabe {
-  width: 2.6rem;
-  padding: 0.22rem 0.15rem;
+.werft__hp {
+  height: 6px;
   border: 1px solid var(--gold-border);
-  background: rgb(0 0 0 / 30%);
-  color: inherit;
-  font: inherit;
-  font-size: 0.75rem;
-  text-align: center;
+  background: rgb(0 0 0 / 40%);
 }
 
-.menu__menge-eingabe:focus {
-  outline: none;
-  border-color: var(--gold);
+.werft__hp-balken {
+  height: 100%;
+  background: #6fd08c;
 }
 
-.menu__item-qty {
-  opacity: 0.7;
+.werft__hp-balken--gelb {
+  background: #e2b45a;
 }
 
-.menu__item-price {
-  color: var(--gold-bright);
-  white-space: nowrap;
+.werft__hp-balken--rot {
+  background: #f26d6d;
 }
 
-.menu__buy {
-  padding: 0.25rem 0.6rem;
+.werft__hp-text {
+  font-size: 0.625rem;
+  opacity: 0.65;
+}
+
+/* --- Knöpfe --------------------------------------------------------------- */
+
+.werft__knopf {
+  padding: 0.35rem 0.6rem;
   border: 1px solid var(--gold);
   background: var(--gold-faint);
   color: var(--gold);
@@ -300,12 +482,132 @@ async function buy(itemId: ItemId): Promise<void> {
   cursor: pointer;
 }
 
-.menu__buy:hover:not(:disabled) {
+.werft__knopf:hover:not(:disabled) {
   background: rgb(230 207 120 / 22%);
 }
 
-.menu__buy:disabled {
+.werft__knopf:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* --- Perks ---------------------------------------------------------------- */
+
+.werft__perks {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.werft__perkslot {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 1px dashed var(--gold-border);
+  background: rgb(0 0 0 / 25%);
+  color: var(--gold);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.werft__perkslot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.werft__perkslot:hover,
+.werft__perkslot--offen {
+  border-color: var(--gold);
+  border-style: solid;
+}
+
+.werft__perk-optionen {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.4rem;
+  border: 1px solid var(--gold-border);
+  background: rgb(0 0 0 / 30%);
+}
+
+.werft__perk-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid transparent;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.werft__perk-option:hover:not(:disabled) {
+  border-color: var(--gold-border);
+  background: var(--gold-faint);
+}
+
+.werft__perk-option--leeren {
+  opacity: 0.75;
+}
+
+.werft__perk-option-icon {
+  width: 26px;
+  height: 26px;
+  object-fit: cover;
+}
+
+.werft__perk-option-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.werft__perk-option-effekt {
+  font-size: 0.625rem;
+  color: var(--gold);
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+/* --- Kaufwerft ------------------------------------------------------------ */
+
+.werft__angebote {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: 0.5rem;
+}
+
+.werft__angebot {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--gold-border);
+  background: rgb(0 0 0 / 20%);
+}
+
+.werft__bild--klein {
+  flex: 0 0 84px;
+  width: 84px;
+}
+
+.werft__angebot-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+.werft__angebot-preis {
+  font-size: 0.8125rem;
+  color: var(--gold-bright);
+  white-space: nowrap;
 }
 </style>

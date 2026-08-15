@@ -46,6 +46,8 @@ export interface GameSocketHandlers {
 export class GameSocket {
   private socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
   private ended = false;
+  /** Das eigene Boot wurde versenkt — färbt die gleich folgende Trennung. */
+  private sunk = false;
 
   connect(gameUrl: string, ticket: string, handlers: GameSocketHandlers): void {
     if (this.socket) throw new Error('GameSocket ist bereits verbunden.');
@@ -72,7 +74,13 @@ export class GameSocket {
     socket.on('own', handlers.onOwn);
     socket.on('player:left', (payload) => handlers.onPlayerLeft(payload.id));
     socket.on('fx', handlers.onFx);
-    socket.on('destroyed', handlers.onDestroyed);
+    socket.on('destroyed', (payload) => {
+      // Versenkung ist seit Protokoll 19 das Rundenende: der Server trennt
+      // gleich — die Trennung soll dann als „Versenkt" enden, nicht als
+      // „Verbindung verloren".
+      this.sunk = true;
+      handlers.onDestroyed(payload);
+    });
     socket.on('extracted', (payload) => {
       // Die Extraktion IST das Sitzungsende — nur ein gutes. Über dieselbe
       // ended-Sperre, damit die gleich folgende Server-Trennung nicht noch
@@ -87,7 +95,12 @@ export class GameSocket {
     socket.on('connect_error', (error) => end(error.message || 'Verbindung abgelehnt.'));
     socket.on('disconnect', (reason) => {
       // Selbst ausgelöste Trennung (Seitenwechsel) ist kein Fehlerfall.
-      if (reason !== 'io client disconnect') end('Verbindung zum Spielserver verloren.');
+      if (reason === 'io client disconnect') return;
+      end(
+        this.sunk
+          ? 'Versenkt — dein Schiff liegt beschädigt in der Werft.'
+          : 'Verbindung zum Spielserver verloren.',
+      );
     });
   }
 

@@ -180,8 +180,10 @@ export function smokeLevelForHp(hp: number, maxHp: number): number {
   return 0;
 }
 
-/** Wartezeit bis zum Wiedereinstieg nach einer Versenkung, in Sekunden. */
-export const RESPAWN_SECONDS = 5;
-
-/** Bots kehren langsamer zurück — die Karte soll nicht sofort wieder voll sein. */
+/**
+ * Bots kehren nach einer Versenkung zeitversetzt zurück — die Karte soll
+ * nicht sofort wieder voll sein. (Spieler respawnen seit Protokoll 19 NICHT
+ * mehr: Versenkung beendet die Runde, das Schiff liegt beschädigt in der
+ * Werft.)
+ */
 export const BOT_RESPAWN_SECONDS = 10;

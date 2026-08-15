@@ -1,8 +1,8 @@
 export interface QueueEntry {
   accountId: string;
   name: string;
-  /** Gewähltes Schiff — bereits gegen Level geprüft; bezahlt wird beim Ticket. */
-  shipModel: string;
+  /** Gewählte Schiffs-INSTANZ — Zustand wird bei der Ticketausgabe FRISCH geprüft. */
+  shipId: string;
   /** Millisekunden-Zeitstempel des Einreihens. */
   joinedAt: number;
 }

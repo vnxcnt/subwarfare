@@ -22,7 +22,8 @@ export type ItemCategory =
   | 'wasserbombe'
   | 'taeuschkoerper'
   | 'munition'
-  | 'panzerung';
+  | 'panzerung'
+  | 'perk';
 
 /**
  * Obergrenze je Kauf-Anfrage. Schützt vor Tippfehlern und Überlauf-Spielen —
@@ -79,6 +80,25 @@ export const ITEMS = [
   { id: 'munition_mk1', name: '125mm Munition MK I', category: 'munition', shopPrice: 2 },
   { id: 'munition_mk2', name: '125mm Munition MK II', category: 'munition', shopPrice: 6 },
   { id: 'munition_mk3', name: '125mm Munition MK III', category: 'munition', shopPrice: null },
+  // Perks: ausschließlich erspielbar (NPC-Drops, Loottable folgt) — nie im
+  // Shop. Die WERTE stehen im Perk-Katalog (meta/perks.ts), verknüpft über
+  // die Id; hier lebt nur, was jedes Item braucht: Name und Besitz-Fähigkeit.
+  { id: 'engine01', name: 'Maschine I', category: 'perk', shopPrice: null },
+  { id: 'engine02', name: 'Maschine II', category: 'perk', shopPrice: null },
+  { id: 'engine03', name: 'Maschine III', category: 'perk', shopPrice: null },
+  { id: 'engine04', name: 'Maschine IV', category: 'perk', shopPrice: null },
+  { id: 'propeller01', name: 'Schraube I', category: 'perk', shopPrice: null },
+  { id: 'propeller02', name: 'Schraube II', category: 'perk', shopPrice: null },
+  { id: 'propeller03', name: 'Schraube III', category: 'perk', shopPrice: null },
+  { id: 'rudder01', name: 'Ruderanlage I', category: 'perk', shopPrice: null },
+  { id: 'rudder02', name: 'Ruderanlage II', category: 'perk', shopPrice: null },
+  { id: 'rudder03', name: 'Ruderanlage III', category: 'perk', shopPrice: null },
+  { id: 'sonar01', name: 'Sonar I', category: 'perk', shopPrice: null },
+  { id: 'sonar02', name: 'Sonar II', category: 'perk', shopPrice: null },
+  { id: 'sonar03', name: 'Sonar III', category: 'perk', shopPrice: null },
+  { id: 'tube01', name: 'Rohrlademechanik I', category: 'perk', shopPrice: null },
+  { id: 'tube02', name: 'Rohrlademechanik II', category: 'perk', shopPrice: null },
+  { id: 'tube03', name: 'Rohrlademechanik III', category: 'perk', shopPrice: null },
 ] as const satisfies ReadonlyArray<{
   id: string;
   name: string;
@@ -105,6 +125,7 @@ export const CATEGORY_LABELS: Record<ItemCategory, string> = {
   taeuschkoerper: 'Täuschkörper',
   munition: '125mm Munition',
   panzerung: 'Panzerung',
+  perk: 'Perk',
 };
 
 /**
@@ -123,37 +144,34 @@ export function equipSlotsForArmament(armament: readonly WeaponId[]): ItemCatego
 }
 
 /**
- * Spielbare Schiffe mit Zugangsregeln: Freischaltung ab Level, Kosten in Coins
- * JE EINSATZ (abgezogen bei der Ticketausgabe, nicht beim Respawn innerhalb
- * einer Partie). NPC-Modelle stehen bewusst nicht in dieser Liste — was hier
- * fehlt, kann kein Spieler anfordern.
+ * Kaufpreise der spielbaren Schiffe in Coins. 0 = kostenlos (Starter-Schiffe;
+ * neue Konten bekommen fregatte01 und submarine01 automatisch in die Werft).
+ * Es gibt KEINE Level-Freischaltung und KEINE Einsatzkosten mehr — die
+ * Schiffs-Ökonomie sind Kauf und Reparatur (meta/werft.ts). NPC-Modelle
+ * stehen bewusst nicht in dieser Liste — was hier fehlt, kann kein Spieler
+ * kaufen oder anfordern.
  */
-export interface ShipAccess {
-  /** Ab diesem Level wählbar (1 = von Anfang an). */
-  minLevel: number;
-  /** Coins je Einsatz. 0 = kostenlos. */
-  sortieCost: number;
-}
+export const SHIP_PRICES = {
+  fregatte01: 0,
+  fregatte02: 2750,
+  submarine01: 0,
+  submarine02: 5650,
+  destroyer01: 12550,
+  destroyer02: 37500,
+} as const satisfies Partial<Record<VesselModel, number>>;
 
-export const SHIP_ACCESS = {
-  fregatte01: { minLevel: 1, sortieCost: 0 },
-  fregatte02: { minLevel: 3, sortieCost: 25 },
-  submarine01: { minLevel: 5, sortieCost: 40 },
-  submarine02: { minLevel: 7, sortieCost: 60 },
-  destroyer01: { minLevel: 10, sortieCost: 125 },
-  destroyer02: { minLevel: 15, sortieCost: 375 },
-} as const satisfies Partial<Record<VesselModel, ShipAccess>>;
+export type PlayableModel = keyof typeof SHIP_PRICES;
 
-export type PlayableModel = keyof typeof SHIP_ACCESS;
-
-/** Anzeige-Reihenfolge der Werft: nach Freischalt-Level aufsteigend. */
-export const PLAYABLE_MODELS = (Object.keys(SHIP_ACCESS) as PlayableModel[]).sort(
-  (a, b) => SHIP_ACCESS[a].minLevel - SHIP_ACCESS[b].minLevel,
-);
+/** Feste Anzeige-Reihenfolge der Werft (Klassen beisammen, aufsteigend). */
+export const PLAYABLE_MODELS: readonly PlayableModel[] = [
+  'fregatte01',
+  'fregatte02',
+  'submarine01',
+  'submarine02',
+  'destroyer01',
+  'destroyer02',
+];
 
 export function isPlayableModel(value: unknown): value is PlayableModel {
-  return typeof value === 'string' && Object.hasOwn(SHIP_ACCESS, value);
+  return typeof value === 'string' && Object.hasOwn(SHIP_PRICES, value);
 }
-
-/** Perk-Slots je Konto. Perk-Items gibt es noch nicht — die Slots stehen schon. */
-export const PERK_SLOTS = 3;

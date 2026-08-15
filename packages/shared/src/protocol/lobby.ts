@@ -48,11 +48,12 @@ export interface AuthResponse {
 export interface QueueJoinRequest {
   mapId: string;
   /**
-   * Gewähltes Schiff für diesen Einsatz. Die api prüft Freischalt-Level und
-   * zieht die Einsatzkosten bei der Ticketausgabe ab (`SHIP_ACCESS`). Fehlt
-   * das Feld (alter Client), fährt die kostenlose Fregatte.
+   * Gewählte Schiffs-INSTANZ (account_ships.id) für diesen Einsatz. Die api
+   * prüft Besitz, Zustand (HP > 0, nicht in Reparatur) und liest Perks und
+   * Rest-HP der Instanz ins Ticket. Fehlt das Feld (veralteter Client), gibt
+   * es einen Fehler — KEINEN Fallback.
    */
-  shipModel?: string;
+  shipId?: string;
 }
 
 /* --- Inventar, Shop, Ausrüstung (REST unter /api) ----------------------- */
@@ -87,6 +88,49 @@ export interface ShopBuyRequest {
   itemId: string;
   /** Stückzahl (Mengenkauf). Fehlt sie, gilt 1. 1..SHOP_BUY_MAX. */
   quantity?: number;
+}
+
+/* --- Werft: Schiffs-Instanzen, Reparatur, Perks (REST unter /api) -------- */
+
+/** Eine Schiffs-Instanz, wie die Werft sie anzeigt. */
+export interface WerftShip {
+  shipId: string;
+  model: string;
+  /** Aktuelle HP. 0 = schwer beschädigt, nicht auslaufbar. */
+  hp: number;
+  maxHp: number;
+  /** ISO-Zeitpunkt des Reparatur-Endes — null, wenn keine Reparatur läuft. */
+  repairUntil: string | null;
+  /** Restsekunden der Reparatur zum Abfragezeitpunkt — für den Countdown. */
+  repairSecondsLeft: number | null;
+  /** Verbaute Perks (Item-Ids). */
+  perks: string[];
+}
+
+/** Antwort von `GET /api/werft`. */
+export interface WerftPayload {
+  slots: number;
+  ships: WerftShip[];
+}
+
+export interface WerftBuyRequest {
+  model: string;
+}
+
+export interface WerftRepairRequest {
+  shipId: string;
+}
+
+export interface WerftPerksRequest {
+  shipId: string;
+  /** Die KOMPLETTE neue Perk-Liste der Instanz (ersetzt die alte). */
+  perks: string[];
+}
+
+/** Antwort der Werft-Mutationen: frischer Kontostand + frische Flotte. */
+export interface WerftMutationResponse {
+  coins: number;
+  ships: WerftShip[];
 }
 
 /** Antwort eines Kaufs: neuer Kontostand + frischer Besitz. */

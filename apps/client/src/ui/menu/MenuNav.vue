@@ -4,6 +4,7 @@ import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import logoUrl from '../../assets/ui/logo_main_white_login.png';
 import artAuslaufen from '../../assets/ui/menu/auslaufen.webp';
+import artDepot from '../../assets/ui/menu/depot.webp';
 import artEinstellungen from '../../assets/ui/menu/einstellungen.webp';
 import artFlottille from '../../assets/ui/menu/flottille.webp';
 import artLogout from '../../assets/ui/menu/logout.webp';
@@ -37,6 +38,7 @@ const emit = defineEmits<{ settings: [] }>();
 const NAV_ART: Record<MenuSection, string> = {
   auslaufen: artAuslaufen,
   werft: artWerft,
+  depot: artDepot,
   flottille: artFlottille,
   statistiken: artStatistiken,
   neuigkeiten: artNeuigkeiten,

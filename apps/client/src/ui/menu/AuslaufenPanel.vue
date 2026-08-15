@@ -1,21 +1,17 @@
 <script setup lang="ts">
-import type { ItemCategory, ItemDefinition, ItemId, PlayableModel } from '@subwarfare/shared';
+import type { ItemCategory, ItemDefinition, ItemId, PlayableModel, WerftShip } from '@subwarfare/shared';
 import {
   CATEGORY_LABELS,
   DEFAULT_SHIP_STATS,
   ITEMS,
-  PERK_SLOTS,
-  PLAYABLE_MODELS,
-  SHIP_ACCESS,
   equipSlotsForArmament,
   isItemId,
   isPlayableModel,
   itemById,
 } from '@subwarfare/shared';
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { mapLabel } from '../../config';
-import { account, progression } from '../../state/auth';
 import {
   economyBusy,
   economyError,
@@ -33,13 +29,16 @@ import {
   queueState,
 } from '../../state/lobby';
 import { mapStatus } from '../../state/maps';
+import { refreshWerft, werftLoaded, werftShips } from '../../state/werft';
 import { itemIconUrl } from '../itemIcons';
+import { SHIP_LABELS } from './shipLabels';
 
 /**
  * Auslaufen: der Weg aufs Wasser — Einsatz/Warteschlange, Schiffswahl und
- * Ausrüstung in einem Bereich. Umzug aus der alten Menü-Mitte; der
- * effectiveShip-Cluster (Wahl → Sperre → Kosten → Slots → play) ist bewusst
- * EIN Block geblieben.
+ * Ausrüstung in einem Bereich. Seit dem Werft-Umbau wählt man eine
+ * INSTANZ aus der eigenen Flotte (mit Rest-HP), kein Modell: beschädigte
+ * oder in Reparatur liegende Schiffe sind gesperrt — repariert wird in der
+ * Werft. Ausrüstung (Munition/Panzerung) hängt weiter am MODELL der Instanz.
  */
 const router = useRouter();
 
@@ -83,21 +82,11 @@ function mapCoverStyle(id: string): Record<string, string> {
   return bild ? { '--cover': `url(${bild})` } : {};
 }
 
-const rawCoins = computed(() => account.value?.coins ?? 0);
 const waiting = computed(() => queueState.value === 'waiting' || queueState.value === 'connecting');
 
-/* --- Schiffswahl --------------------------------------------------------- */
+/* --- Schiffswahl (Instanzen aus der Werft) -------------------------------- */
 
-const SHIP_LABELS: Record<PlayableModel, string> = {
-  fregatte01: 'Fregatte',
-  fregatte02: 'Fregatte II',
-  submarine01: 'U-Boot',
-  submarine02: 'U-Boot II',
-  destroyer01: 'Zerstörer',
-  destroyer02: 'Zerstörer II',
-};
-
-const SHIP_KEY = 'subwarfare:ship';
+const SHIP_KEY = 'subwarfare:shipId';
 
 /**
  * Schiffs-Previews, Dateiname = Modellkennung — wie bei den Item-Icons über
@@ -109,51 +98,81 @@ const SHIP_PREVIEWS = import.meta.glob('../../assets/ships/*.webp', {
   import: 'default',
 }) as Record<string, string>;
 
-function shipPreviewUrl(model: PlayableModel): string | null {
+function shipPreviewUrl(model: string): string | null {
   return SHIP_PREVIEWS[`../../assets/ships/${model}.webp`] ?? null;
 }
 
-function restoreShip(): PlayableModel {
-  try {
-    const stored = localStorage.getItem(SHIP_KEY);
-    if (isPlayableModel(stored)) return stored;
-  } catch {
-    // Gesperrter Storage — dann eben der Standard.
-  }
-  return 'fregatte01';
+function shipLabel(model: string): string {
+  return isPlayableModel(model) ? SHIP_LABELS[model] : model;
 }
 
-const selectedShip = ref<PlayableModel>(restoreShip());
-
-function shipLocked(model: PlayableModel): boolean {
-  return progression.value.level < SHIP_ACCESS[model].minLevel;
+/** Nur unversehrte bis angeschlagene Schiffe laufen aus — Wracks und
+ *  Reparaturen nicht. Dieselbe Regel setzt die api am Ticket durch. */
+function auslaufbar(ship: WerftShip): boolean {
+  return ship.hp > 0 && ship.repairUntil === null;
 }
 
-function selectShip(model: PlayableModel): void {
-  if (shipLocked(model) || waiting.value) return;
-  selectedShip.value = model;
+function sperrGrund(ship: WerftShip): string | null {
+  if (ship.repairUntil !== null) return 'In Reparatur';
+  if (ship.hp <= 0) return 'Schwer beschädigt';
+  return null;
+}
+
+const selectedShipId = ref<string | null>(null);
+
+/**
+ * Auswahl herstellen, sobald die Flotte da ist: die gespeicherte Instanz,
+ * wenn sie noch existiert UND auslaufen darf — sonst die erste auslaufbare,
+ * sonst nichts (Knopf bleibt gesperrt).
+ */
+watch(
+  werftShips,
+  (ships) => {
+    const aktuelle = ships.find((ship) => ship.shipId === selectedShipId.value);
+    if (aktuelle && auslaufbar(aktuelle)) return;
+    let gespeichert: string | null = null;
+    try {
+      gespeichert = localStorage.getItem(SHIP_KEY);
+    } catch {
+      // Gesperrter Storage — dann eben ohne Gedächtnis.
+    }
+    const wunsch = ships.find((ship) => ship.shipId === gespeichert);
+    const wahl = wunsch && auslaufbar(wunsch) ? wunsch : ships.find(auslaufbar);
+    selectedShipId.value = wahl?.shipId ?? null;
+  },
+  { immediate: true },
+);
+
+const selectedShip = computed<WerftShip | null>(
+  () => werftShips.value.find((ship) => ship.shipId === selectedShipId.value) ?? null,
+);
+
+function selectShip(ship: WerftShip): void {
+  if (!auslaufbar(ship) || waiting.value) return;
+  selectedShipId.value = ship.shipId;
   activeSlot.value = null;
   try {
-    localStorage.setItem(SHIP_KEY, model);
+    localStorage.setItem(SHIP_KEY, ship.shipId);
   } catch {
     // Speichern ist wünschenswert, nicht Bedingung.
   }
 }
 
-/** Die gespeicherte Wahl kann über dem Level liegen (anderes Konto am selben
- *  Browser) — dann zurück auf den kostenlosen Standard. */
-const effectiveShip = computed<PlayableModel>(() =>
-  shipLocked(selectedShip.value) ? 'fregatte01' : selectedShip.value,
-);
-
-const sortieCost = computed(() => SHIP_ACCESS[effectiveShip.value].sortieCost);
-const canAffordSortie = computed(() => rawCoins.value >= sortieCost.value);
+/**
+ * Modell der gewählten Instanz — speist die Ausrüstungs-Slots (die weiter je
+ * MODELL gelten). Ohne Auswahl der Fregatten-Standard, damit die Slot-Liste
+ * nie leer rendert.
+ */
+const effectiveModel = computed<PlayableModel>(() => {
+  const model = selectedShip.value?.model;
+  return isPlayableModel(model) ? model : 'fregatte01';
+});
 
 /* --- Ausrüstungs-Slots --------------------------------------------------- */
 
 /** Ausrüstungs-Slots des gewählten Schiffs, aus dessen Bewaffnung. */
 const equipSlots = computed<ItemCategory[]>(() =>
-  equipSlotsForArmament(DEFAULT_SHIP_STATS[effectiveShip.value].armament),
+  equipSlotsForArmament(DEFAULT_SHIP_STATS[effectiveModel.value].armament),
 );
 
 /** Aufgeklappter Slot (Item-Auswahl sichtbar) — höchstens einer. */
@@ -164,13 +183,13 @@ function toggleSlot(slot: ItemCategory): void {
 }
 
 function equippedName(slot: ItemCategory): string | null {
-  const id = equippedItem(effectiveShip.value, slot);
+  const id = equippedItem(effectiveModel.value, slot);
   return id !== null && isItemId(id) ? itemById(id).name : null;
 }
 
 /** Icon des equippten Items — null bei leerem Slot oder fehlender Grafik. */
 function slotIcon(slot: ItemCategory): string | null {
-  const id = equippedItem(effectiveShip.value, slot);
+  const id = equippedItem(effectiveModel.value, slot);
   return id !== null ? itemIconUrl(id) : null;
 }
 
@@ -182,7 +201,7 @@ function slotIcon(slot: ItemCategory): string | null {
  */
 function aboardCount(slot: ItemCategory): number | null {
   if (slot === 'panzerung') return null;
-  const entry = equippedEntry(effectiveShip.value, slot);
+  const entry = equippedEntry(effectiveModel.value, slot);
   if (!entry || !isItemId(entry.itemId)) return null;
   const vorrat = ownedQuantity(entry.itemId);
   return Math.min(entry.count ?? vorrat, vorrat);
@@ -190,7 +209,7 @@ function aboardCount(slot: ItemCategory): number | null {
 
 /** Lagerbestand des equippten Items — Obergrenze des Mengen-Steppers. */
 function aboardMax(slot: ItemCategory): number {
-  const id = equippedItem(effectiveShip.value, slot);
+  const id = equippedItem(effectiveModel.value, slot);
   return id !== null && isItemId(id) ? ownedQuantity(id) : 0;
 }
 
@@ -200,11 +219,11 @@ function aboardMax(slot: ItemCategory): number {
  * Wahrheit, nicht der lokale Wunsch.
  */
 async function orderCount(slot: ItemCategory, roh: number): Promise<void> {
-  const entry = equippedEntry(effectiveShip.value, slot);
+  const entry = equippedEntry(effectiveModel.value, slot);
   if (!entry || !isItemId(entry.itemId)) return;
   const max = Math.max(ownedQuantity(entry.itemId), 1);
   const wert = Math.min(Math.max(Math.round(roh) || 1, 1), max);
-  await equip(effectiveShip.value, slot, entry.itemId, wert);
+  await equip(effectiveModel.value, slot, entry.itemId, wert);
 }
 
 function onCountInput(slot: ItemCategory, event: Event): void {
@@ -219,7 +238,7 @@ function ownedInCategory(category: ItemCategory): Array<ItemDefinition & { quant
 }
 
 async function equipSlot(slot: ItemCategory, itemId: ItemId | null): Promise<void> {
-  await equip(effectiveShip.value, slot, itemId);
+  await equip(effectiveModel.value, slot, itemId);
   // Beim Belegen offen lassen: direkt daneben sitzt jetzt der Mengen-Stepper,
   // und wer ein Item wählt, will meist auch die Stückzahl setzen. Nur das
   // Leeren schließt — dann gibt es nichts mehr einzustellen.
@@ -230,8 +249,9 @@ async function equipSlot(slot: ItemCategory, itemId: ItemId | null): Promise<voi
 
 function play(): void {
   menuNotice.value = null;
-  if (!canAffordSortie.value) return;
-  joinQueue(selectedMap.value, effectiveShip.value, () => {
+  const shipId = selectedShipId.value;
+  if (!shipId) return;
+  joinQueue(selectedMap.value, shipId, () => {
     void router.push({ name: 'play' });
   });
 }
@@ -239,6 +259,11 @@ function play(): void {
 function cancel(): void {
   leaveQueue();
 }
+
+onMounted(() => {
+  // Die Flotte ist die Schiffswahl — ohne sie gibt es nichts auszuwählen.
+  if (!werftLoaded.value) void refreshWerft();
+});
 </script>
 
 <template>
@@ -273,68 +298,59 @@ function cancel(): void {
       <button
         class="menu__go"
         type="button"
-        :disabled="waiting || !canAffordSortie"
+        :disabled="waiting || !selectedShip"
         @click="play"
       >
         <template v-if="queueState === 'connecting'">Verbinde …</template>
         <template v-else-if="queueState === 'waiting' && queuePosition">
           Warteschlange — Platz {{ queuePosition.position }} von {{ queuePosition.size }}
         </template>
-        <template v-else-if="sortieCost > 0">
-          In See stechen · {{ SHIP_LABELS[effectiveShip] }} · {{ sortieCost }} Coins
+        <template v-else-if="selectedShip">
+          In See stechen · {{ shipLabel(selectedShip.model) }}
         </template>
-        <template v-else>In See stechen · {{ SHIP_LABELS[effectiveShip] }}</template>
+        <template v-else>Kein einsatzbereites Schiff</template>
       </button>
       <button v-if="waiting" class="menu__cancel" type="button" @click="cancel">Abbrechen</button>
 
-      <p v-if="!waiting && !canAffordSortie" class="menu__error">
-        Nicht genug Coins für diesen Einsatz.
+      <p v-if="werftLoaded && !selectedShip" class="menu__error">
+        Kein Schiff einsatzbereit — repariere deine Flotte in der Werft.
       </p>
       <p v-if="queueError" class="menu__error">{{ queueError }}</p>
-    </section>
-
-    <section class="gold-panel menu__panel" aria-label="Perks">
-      <h2 class="gold-panel__title">Perks</h2>
-      <div class="menu__perkslots">
-        <div v-for="slot in PERK_SLOTS" :key="slot" class="menu__perkslot" aria-hidden="true">
-          <span>+</span>
-        </div>
-      </div>
-      <p class="menu__soon">Perks folgen — später ziehst du sie aus dem Inventar hierher.</p>
     </section>
     </div>
 
     <section class="gold-panel menu__panel" aria-label="Ausrüstung">
       <h2 class="gold-panel__title">Ausrüstung</h2>
 
+      <p v-if="werftLoaded && werftShips.length === 0" class="menu__soon">
+        Keine Schiffe in der Werft — dort wartet deine Flotte.
+      </p>
       <ul class="menu__ships">
-        <li v-for="model in PLAYABLE_MODELS" :key="model">
+        <li v-for="ship in werftShips" :key="ship.shipId">
           <button
             type="button"
             class="menu__ship"
             :class="{
-              'menu__ship--selected': effectiveShip === model,
-              'menu__ship--locked': shipLocked(model),
+              'menu__ship--selected': selectedShipId === ship.shipId,
+              'menu__ship--locked': !auslaufbar(ship),
             }"
-            :disabled="shipLocked(model) || waiting"
-            @click="selectShip(model)"
+            :disabled="!auslaufbar(ship) || waiting"
+            @click="selectShip(ship)"
           >
             <img
-              v-if="shipPreviewUrl(model)"
+              v-if="shipPreviewUrl(ship.model)"
               class="menu__ship-img"
-              :src="shipPreviewUrl(model)!"
+              :src="shipPreviewUrl(ship.model)!"
               alt=""
               draggable="false"
             />
-            <span class="menu__ship-name">{{ SHIP_LABELS[model] }}</span>
-            <span v-if="shipLocked(model)" class="menu__ship-status">
-              Ab Level {{ SHIP_ACCESS[model].minLevel }}
+            <span class="menu__ship-name">{{ shipLabel(ship.model) }}</span>
+            <span v-if="sperrGrund(ship)" class="menu__ship-status menu__ship-status--gesperrt">
+              {{ sperrGrund(ship) }}
             </span>
-            <span v-else-if="SHIP_ACCESS[model].sortieCost > 0" class="menu__ship-status">
-              <img class="menu__coin menu__coin--small" src="../../assets/ui/coin.png" alt="" />
-              {{ SHIP_ACCESS[model].sortieCost }} je Einsatz
+            <span v-else class="menu__ship-status hud__num">
+              {{ ship.hp }} / {{ ship.maxHp }} HP
             </span>
-            <span v-else class="menu__ship-status">Kostenlos</span>
           </button>
         </li>
       </ul>
@@ -688,6 +704,11 @@ function cancel(): void {
   opacity: 0.85;
 }
 
+/* Gesperrte Instanzen (Wrack, Reparatur) — der Grund steht in Rot da. */
+.menu__ship-status--gesperrt {
+  color: #f26d6d;
+}
+
 /* --- Ausrüstung: Slots -------------------------------------------------- */
 
 .menu__slots {
@@ -873,21 +894,4 @@ function cancel(): void {
 
 /* --- Perks -------------------------------------------------------------- */
 
-.menu__perkslots {
-  display: flex;
-  gap: 0.6rem;
-  margin-bottom: 0.7rem;
-}
-
-.menu__perkslot {
-  width: 52px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  border: 1px dashed var(--gold-border);
-  background: rgb(0 0 0 / 25%);
-  color: var(--gold);
-  font-size: 1.2rem;
-  opacity: 0.6;
-}
 </style>

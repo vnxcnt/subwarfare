@@ -10,10 +10,8 @@ import type {
 import {
   AMMO_CATEGORIES,
   CHAT_MAX_LENGTH,
-  SHIP_ACCESS,
   WEAPON_FOR_CATEGORY,
   isItemId,
-  isPlayableModel,
   progressionFromXp,
 } from '@subwarfare/shared';
 import type { Server, Socket } from 'socket.io';
@@ -24,6 +22,7 @@ import type { AccountStore } from '../accounts/store.js';
 import type { InventoryStore } from '../economy/store.js';
 import type { FleetStore } from '../fleet/store.js';
 import { dmKey, type SocialStore } from '../social/store.js';
+import type { WerftService } from '../werft/service.js';
 import type { MatchQueue } from './queue.js';
 
 type LobbySocket = Socket<
@@ -39,15 +38,14 @@ const KNOWN_MAPS = new Set(['ocean01']);
 /** Wie oft geprüft wird, ob ein Platz frei geworden ist. */
 const POLL_MS = 1000;
 
-/** Platzreservierung eines ausgestellten Tickets — samt gezahlter Kosten. */
+/** Platzreservierung eines ausgestellten Tickets. */
 interface Reservation {
   expiresAt: number;
-  /** Bezahlte Einsatzkosten — werden bei Verfall ohne Einlösung erstattet. */
-  cost: number;
   /**
    * Abgebuchte Munition dieses Tickets. Verfällt es ungenutzt, geht sie
-   * zusammen mit den Coins zurück — sonst fräße ein Client-Absturz zwischen
-   * Ticketausgabe und Anmeldung den ganzen Vorrat.
+   * zurück — sonst fräße ein Client-Absturz zwischen Ticketausgabe und
+   * Anmeldung den ganzen Vorrat. (Einsatzkosten gibt es seit dem Werft-Umbau
+   * nicht mehr — die Schiffs-Ökonomie sind Kauf und Reparatur.)
    */
   loadout: LoadoutEntryStack[];
 }
@@ -101,6 +99,8 @@ export class LobbyGateway {
     private readonly fleets: FleetStore,
     /** Freundschaften und Verlauf — Gate und Speicher für Privat/Flottille. */
     private readonly social: SocialStore,
+    /** Schiffs-Instanzen — Zustands-Gate und Ticket-Inhalt (Perks, Rest-HP). */
+    private readonly werft: WerftService,
   ) {}
 
   /** Ist das Konto gerade im Hafen (mindestens eine Lobby-Verbindung)? */
@@ -170,7 +170,7 @@ export class LobbyGateway {
     socket.on('queue:join', (payload) => {
       // Explizit fangen: eine DB-Störung in den Konto-Abfragen darf eine
       // Fehlermeldung an den Spieler werden, kein unbehandelter Prozess-Crash.
-      this.handleJoin(socket, payload?.mapId, payload?.shipModel).catch((error) => {
+      this.handleJoin(socket, payload?.mapId, payload?.shipId).catch((error) => {
         console.error('[api] queue:join fehlgeschlagen:', error);
         socket.emit('queue:error', { message: 'Serverfehler — bitte erneut versuchen.' });
       });
@@ -283,39 +283,43 @@ export class LobbyGateway {
     this.io.of('/lobby').emit('chat:message', zeile);
   }
 
-  private async handleJoin(
-    socket: LobbySocket,
-    mapId: unknown,
-    shipModel: unknown,
-  ): Promise<void> {
+  private async handleJoin(socket: LobbySocket, mapId: unknown, shipId: unknown): Promise<void> {
     if (typeof mapId !== 'string' || !KNOWN_MAPS.has(mapId)) {
       socket.emit('queue:error', { message: 'Unbekannte Karte.' });
       return;
     }
 
-    // Fehlendes Feld = alter Client: der fährt die kostenlose Fregatte.
-    const model = shipModel ?? 'fregatte01';
-    if (!isPlayableModel(model)) {
-      socket.emit('queue:error', { message: 'Unbekanntes Schiff.' });
+    // Seit dem Werft-Umbau fährt man eine INSTANZ, kein Modell. Ein fehlendes
+    // Feld heißt: alter Client — Fehler statt Fallback, sonst erfänden wir
+    // ein Instanz-Recht, das es nicht gibt.
+    if (typeof shipId !== 'string' || shipId.length === 0) {
+      socket.emit('queue:error', {
+        message: 'Veralteter Client — bitte Seite neu laden (Strg+F5).',
+      });
       return;
     }
 
-    // Freischaltung und Deckung SOFORT prüfen — wer die Kosten nicht tragen
-    // kann, soll das beim Klick erfahren, nicht nach Minuten in der Schlange.
-    // Bezahlt wird trotzdem erst bei der Ticketausgabe (issueTicket): dort
-    // läuft der Abzug bedingt, gegen den DANN aktuellen Kontostand.
     const account = await this.accounts.byId(socket.data.accountId);
     if (!account) {
       socket.emit('queue:error', { message: 'Konto nicht gefunden.' });
       return;
     }
-    const access = SHIP_ACCESS[model];
-    if (progressionFromXp(account.xp).level < access.minLevel) {
-      socket.emit('queue:error', { message: `Erst ab Level ${access.minLevel}.` });
+
+    // Zustand SOFORT prüfen — wer nicht auslaufen kann, soll das beim Klick
+    // erfahren, nicht nach Minuten in der Schlange. Verbindlich wird die
+    // Prüfung erst bei der Ticketausgabe (issueTicket), gegen den DANN
+    // aktuellen Stand.
+    const ship = await this.werft.shipOf(socket.data.accountId, shipId);
+    if (!ship) {
+      socket.emit('queue:error', { message: 'Schiff nicht gefunden.' });
       return;
     }
-    if (account.coins < access.sortieCost) {
-      socket.emit('queue:error', { message: 'Nicht genug Coins für diesen Einsatz.' });
+    if (ship.repairUntil !== null) {
+      socket.emit('queue:error', { message: 'Schiff ist in Reparatur.' });
+      return;
+    }
+    if (ship.hp <= 0) {
+      socket.emit('queue:error', { message: 'Schiff ist schwer beschädigt — erst reparieren.' });
       return;
     }
 
@@ -356,14 +360,14 @@ export class LobbyGateway {
     // Nur direkt durchlassen, wenn niemand wartet — sonst würde ein neu
     // Eintreffender an den Wartenden vorbeiziehen.
     if (waiting === 0 && freeSlots > 0) {
-      await this.issueTicket(socket.data.accountId, socket.data.name, mapId, model);
+      await this.issueTicket(socket.data.accountId, socket.data.name, mapId, shipId);
       return;
     }
 
     const position = await this.queue.join(mapId, {
       accountId: socket.data.accountId,
       name: socket.data.name,
-      shipModel: model,
+      shipId,
       joinedAt: Date.now(),
     });
     socket.emit('queue:update', { mapId, position, size: await this.queue.size(mapId) });
@@ -387,18 +391,12 @@ export class LobbyGateway {
         this.reservations.delete(accountId);
         this.pendingTickets.delete(accountId);
       } else if (reservation.expiresAt <= now) {
-        // Verfallen ohne Einlösung: Platz wieder frei UND Einsatzkosten
-        // zurück — sonst verbrennte ein Client-Absturz zwischen Ticketausgabe
-        // und Anmeldung die Coins. Fire-and-forget, damit free() synchron
-        // bleibt; ein Fehlschlag wird geloggt statt verschluckt.
+        // Verfallen ohne Einlösung: Platz wieder frei und die abgebuchte
+        // Munition zurück — sie ist nie an Bord gegangen. Fire-and-forget,
+        // damit free() synchron bleibt. (Das Schiff bleibt unversehrt: ohne
+        // Einlösung gab es keinen Einsatz und damit keine Schadensmeldung.)
         this.reservations.delete(accountId);
         this.pendingTickets.delete(accountId);
-        if (reservation.cost > 0) {
-          this.accounts.addCoins(accountId, reservation.cost).catch((error) => {
-            console.error(`[api] Erstattung an ${accountId} fehlgeschlagen:`, error);
-          });
-        }
-        // Die abgebuchte Munition genauso zurück — sie ist nie an Bord gegangen.
         this.returnAmmo(accountId, reservation.loadout);
       }
     }
@@ -426,44 +424,50 @@ export class LobbyGateway {
   }
 
   /**
-   * Stellt das Ticket aus und zieht dabei die Einsatzkosten ein.
+   * Stellt das Ticket aus — nach FRISCHER Prüfung der Schiffs-Instanz.
    *
-   * Liefert false, wenn nicht bezahlt werden konnte — der Aufrufer im
-   * Schlangen-Takt darf den freien Platz dann an den Nächsten geben.
+   * Liefert false, wenn das Schiff nicht (mehr) auslaufen kann — der Aufrufer
+   * im Schlangen-Takt darf den freien Platz dann an den Nächsten geben.
    */
   private async issueTicket(
     accountId: string,
     name: string,
     mapId: string,
-    shipModel: PlayableModel,
+    shipId: string,
   ): Promise<boolean> {
     // Reservierung SOFORT, vor dem ersten await: ab jetzt zählt free() diesen
     // Platz als vergeben, und das Gate in handleJoin blockt weitere Tickets
-    // für dasselbe Konto. Würde sie erst nach Zahlung und Signatur gesetzt,
+    // für dasselbe Konto. Würde sie erst nach Prüfung und Signatur gesetzt,
     // sähen zwei parallele Joins beide den letzten freien Platz.
-    const cost = SHIP_ACCESS[shipModel].sortieCost;
     const expiresAt = Date.now() + env.ticketTtl * 1000;
-    const reservation: Reservation = { expiresAt, cost, loadout: [] };
+    const reservation: Reservation = { expiresAt, loadout: [] };
     this.reservations.set(accountId, reservation);
     this.ensureSweeper();
 
-    // Aus der Schlange — auch bei gescheiterter Zahlung. Bliebe der Eintrag
+    // Aus der Schlange — auch bei gescheiterter Prüfung. Bliebe der Eintrag
     // stehen, würde er als Kopf der Schlange jeden Takt erneut scheitern und
     // alle dahinter blockieren.
     await this.queue.leave(mapId, accountId);
 
-    // Bezahlt wird JETZT, gegen den aktuellen Kontostand: `spendCoins` prüft
-    // und bucht in einem Schritt. Die Vorprüfung beim Einreihen war nur
-    // schnelles Feedback — zwischendurch kann ein Shop-Kauf gelaufen sein.
-    if (cost > 0 && !(await this.accounts.spendCoins(accountId, cost))) {
-      // Nichts bezahlt — Reservierung sofort wieder freigeben.
+    // Die Instanz FRISCH prüfen, nicht den Stand vom Einreihen: im Zweittab
+    // kann inzwischen eine Reparatur gestartet oder das Schiff bereits in
+    // einem anderen Einsatz beschädigt worden sein.
+    const ship = await this.werft.shipOf(accountId, shipId);
+    if (!ship || ship.repairUntil !== null || ship.hp <= 0) {
       this.reservations.delete(accountId);
       this.io
         .of('/lobby')
         .to(`account:${accountId}`)
-        .emit('queue:error', { message: 'Nicht genug Coins für diesen Einsatz.' });
+        .emit('queue:error', {
+          message: !ship
+            ? 'Schiff nicht gefunden.'
+            : ship.repairUntil !== null
+              ? 'Schiff ist in Reparatur.'
+              : 'Schiff ist schwer beschädigt — erst reparieren.',
+        });
       return false;
     }
+    const shipModel = ship.model;
 
     // Rolle FRISCH aus dem Konto, nicht aus der Session — ein Entzug wirkt
     // damit spaetestens beim naechsten Ticket. Fehlt das Konto ganz (zwischen
@@ -540,6 +544,11 @@ export class LobbyGateway {
       // Momentaufnahme wie die Rolle: das Level zum Zeitpunkt der Ausgabe —
       // fremde Spieler sehen es beim Anklicken als Rang auf dem Namensschild.
       level: progressionFromXp(account.xp).level,
+      // Die Instanz selbst: Ziel der Schadensmeldung, Perks für die Wirkung,
+      // Rest-HP als Start-HP — alles api-signiert, nichts davon fälschbar.
+      shipId: ship.id,
+      perks: ship.perks,
+      startHp: ship.hp,
     });
 
     // Fürs idempotente Wieder-Zustellen aufheben (Doppelklick, Reconnect
@@ -592,11 +601,10 @@ export class LobbyGateway {
       while (free > 0) {
         const next = await this.queue.peek(mapId);
         if (!next) break;
-        const model = isPlayableModel(next.shipModel) ? next.shipModel : 'fregatte01';
-        // Nur ein AUSGESTELLTES Ticket belegt einen Platz — wer die Kosten
-        // inzwischen nicht mehr decken kann, fliegt raus (issueTicket räumt
-        // ihn aus der Schlange) und der Platz geht an den Nächsten.
-        if (await this.issueTicket(next.accountId, next.name, mapId, model)) free -= 1;
+        // Nur ein AUSGESTELLTES Ticket belegt einen Platz — wessen Schiff
+        // inzwischen nicht mehr auslaufen kann, fliegt raus (issueTicket
+        // räumt ihn aus der Schlange) und der Platz geht an den Nächsten.
+        if (await this.issueTicket(next.accountId, next.name, mapId, next.shipId)) free -= 1;
       }
 
       // Die Verbliebenen bekommen ihren neuen Platz.
