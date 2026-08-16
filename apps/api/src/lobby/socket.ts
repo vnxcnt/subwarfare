@@ -33,14 +33,23 @@ type LobbySocket = Socket<
   LobbySocketData
 >;
 
-/** Solange es nur eine Karte gibt, steht sie hier. Später kommt sie aus der DB. */
-const KNOWN_MAPS = new Set(['ocean01']);
+/**
+ * Bespielbare Karten — die Schlüssel der Karten-Tabelle aus der Umgebung.
+ * Eine Karte ist genau dann spielbar, wenn wir einen Spielserver für sie kennen.
+ */
+const KNOWN_MAPS = new Set(env.gameMaps.keys());
 
 /** Wie oft geprüft wird, ob ein Platz frei geworden ist. */
 const POLL_MS = 1000;
 
 /** Platzreservierung eines ausgestellten Tickets. */
 interface Reservation {
+  /**
+   * Karte, deren Platz reserviert ist. Ohne sie ließe sich die Reservierung
+   * weder der richtigen Kapazität zuordnen noch am richtigen Spielserver
+   * prüfen — jede Karte ist ein eigener Prozess mit eigenem Status.
+   */
+  mapId: string;
   expiresAt: number;
   /**
    * Abgebuchte Munition dieses Tickets. Verfällt es ungenutzt, geht sie
@@ -75,6 +84,11 @@ export class LobbyGateway {
    * Die Reservierung ist zugleich das Gate gegen Doppel-Abbuchung: solange
    * sie steht, stellt `handleJoin` kein zweites Ticket aus, sondern liefert
    * das offene erneut zu (Doppelklick, zweiter Reiter).
+   *
+   * Der Schlüssel bleibt auch bei mehreren Karten das KONTO, nicht das Paar aus
+   * Konto und Karte: ein Konto fährt einen Einsatz, nicht zwei. Genau deshalb
+   * steht die Karte IM Eintrag — wer sie ignoriert, misst eine Reservierung für
+   * ocean04 am Status von ocean01 und lässt sie dort verfallen.
    */
   private readonly reservations = new Map<string, Reservation>();
   private readonly pendingTickets = new Map<string, PendingTicket>();
@@ -147,12 +161,30 @@ export class LobbyGateway {
         this.sweepTimer = null;
         return;
       }
-      fetchGameServerStatus()
-        .then((status) => {
-          if (status) this.free(status);
-        })
-        .catch((error) => console.error('[api] Reservierungs-Sweep fehlgeschlagen:', error));
+      // Nur die Karten abfragen, für die überhaupt eine Reservierung offen ist
+      // — und jede einzeln: der Status der einen Karte sagt über die Tickets
+      // der anderen nichts aus.
+      const offeneKarten = new Set<string>();
+      for (const reservation of this.reservations.values()) offeneKarten.add(reservation.mapId);
+      for (const mapId of offeneKarten) {
+        fetchGameServerStatus(mapId)
+          .then((status) => {
+            if (status) this.free(mapId, status);
+          })
+          .catch((error) =>
+            console.error(`[api] Reservierungs-Sweep für ${mapId} fehlgeschlagen:`, error),
+          );
+      }
     }, 5_000);
+  }
+
+  /**
+   * Öffentliche Adresse einer Karte für das Ticket. Die Kennung ist zu diesem
+   * Zeitpunkt geprüft (KNOWN_MAPS stammt aus derselben Tabelle) — der leere
+   * Ersatzwert bedeutet „gleiche Herkunft" und kann hier nicht auftreten.
+   */
+  private publicUrl(mapId: string): string {
+    return env.gameMaps.get(mapId)?.publicUrl ?? '';
   }
 
   private async authorize(socket: LobbySocket, next: (error?: Error) => void): Promise<void> {
@@ -194,7 +226,9 @@ export class LobbyGateway {
     });
 
     socket.on('queue:leave', () => {
-      void this.queue.leave('ocean01', socket.data.accountId);
+      // Das Ereignis trägt keine Karte (Protokoll), und ein Konto steht ohnehin
+      // in höchstens einer Schlange — also aus allen austragen, wie beim Trennen.
+      for (const mapId of KNOWN_MAPS) void this.queue.leave(mapId, socket.data.accountId);
     });
 
     /*
@@ -343,10 +377,80 @@ export class LobbyGateway {
       return;
     }
 
-    const status = await fetchGameServerStatus();
+    /*
+     * Der Status ALLER Karten in einer Momentaufnahme, parallel geholt — die
+     * Wartezeit ist damit die der langsamsten Karte und nicht ihre Summe. Drei
+     * Fragen hängen daran, und alle drei wollen denselben Zeitpunkt sehen: die
+     * Kapazität der gewählten Karte, ob dieses Konto anderswo schon auf See
+     * ist, und was aus einer offenen Reservierung auf einer anderen Karte wird.
+     * Bei EINER Karte bleibt es die eine Abfrage von früher.
+     */
+    const karten = [...KNOWN_MAPS];
+    const antworten = await Promise.all(karten.map((id) => fetchGameServerStatus(id)));
+    const statusVon = new Map(karten.map((id, index) => [id, antworten[index] ?? null] as const));
+
+    /*
+     * Fährt das Konto gerade auf einer ANDEREN Karte, gibt es hier kein Ticket.
+     *
+     * Mit nur einer Karte konnte dieser Fall nicht entstehen: der Spielserver
+     * verdrängt die zweite Anmeldung desselben Kontos und bucht den alten
+     * Einsatz als versenkt ab. Zwei Prozesse wissen nichts voneinander — ohne
+     * diese Sperre führe dieselbe Schiffs-INSTANZ auf beiden Karten zugleich,
+     * mit doppelter Beute und zwei Schadensmeldungen auf denselben Rumpf. Die
+     * Reservierung deckt das nicht ab: sobald der Spieler drüben verbunden ist,
+     * räumt free() sie weg — genau ab da stünde der Weg hier offen.
+     *
+     * Schweigt eine Karte, lassen wir durch (Verfügbarkeit vor Perfektion, wie
+     * in der Werft): ein toter ocean04-Prozess darf ocean01 nicht dichtmachen.
+     */
+    for (const [andereKarte, andererStatus] of statusVon) {
+      if (andereKarte === mapId) continue;
+      if (andererStatus?.accounts.includes(socket.data.accountId)) {
+        socket.emit('queue:error', {
+          message: `Dieses Konto ist gerade auf ${andereKarte} im Einsatz — erst dort aussteigen.`,
+        });
+        return;
+      }
+    }
+
+    /*
+     * Eine offene Reservierung auf einer ANDEREN Karte zuerst klären — vor dem
+     * synchronen Abschnitt unten. Ihr Schicksal steht ausschließlich im Status
+     * ihrer eigenen Karte: eingelöst (der Spieler ist dort im Einsatz) oder
+     * ungenutzt verfallen (die Munition kommt zurück). Ohne diesen Schritt
+     * bliebe sie liegen, bis ihre Karte selbst wieder gefragt wird — und die
+     * Ticketausgabe unten überschriebe sie samt Lieferschein, die abgebuchte
+     * Munition wäre für immer weg.
+     */
+    const fremd = this.reservations.get(socket.data.accountId);
+    if (fremd && fremd.mapId !== mapId) {
+      const fremdStatus = statusVon.get(fremd.mapId) ?? null;
+      if (!fremdStatus) {
+        // Schweigt die andere Karte, wissen wir nicht, ob ihr Ticket noch lebt.
+        // Dann lieber hier abweisen als drüben doppelt buchen.
+        socket.emit('queue:error', {
+          message: `Karte ${fremd.mapId} ist nicht erreichbar — dort steht noch ein Ticket offen.`,
+        });
+        return;
+      }
+      this.free(fremd.mapId, fremdStatus);
+    }
+
+    const status = statusVon.get(mapId) ?? null;
     if (!status) {
       socket.emit('queue:error', { message: 'Spielserver ist nicht erreichbar.' });
       return;
+    }
+
+    /*
+     * Aus den Schlangen der anderen Karten austragen: ein Konto steht in
+     * höchstens EINER. Der Takt jener Karte fragt handleJoin nicht — bliebe der
+     * alte Eintrag stehen, stellte er später ein zweites Ticket zu, während der
+     * Spieler hier längst auf See ist (die Sperre oben greift nur beim Klick,
+     * nicht im Takt). `queue:leave` trägt aus demselben Grund aus allen aus.
+     */
+    for (const andereKarte of KNOWN_MAPS) {
+      if (andereKarte !== mapId) await this.queue.leave(andereKarte, socket.data.accountId);
     }
 
     const waiting = await this.queue.size(mapId);
@@ -356,7 +460,7 @@ export class LobbyGateway {
     // Ticket-Gate und das Setzen der neuen Reservierung liegen in EINEM
     // synchronen Abschnitt — zwei gleichzeitige Joins können so weder den
     // letzten Platz noch dasselbe Konto doppelt belegen.
-    const freeSlots = this.free(status);
+    const freeSlots = this.free(mapId, status);
 
     // Steht noch ein offenes Ticket aus, wird es erneut zugestellt statt
     // erneut kassiert — Doppelklick und zweiter Reiter sind damit idempotent.
@@ -364,10 +468,20 @@ export class LobbyGateway {
     if (reservation && reservation.expiresAt > Date.now()) {
       const pending = this.pendingTickets.get(socket.data.accountId);
       if (pending && pending.expiresAt > Date.now()) {
+        if (pending.mapId !== mapId) {
+          // Das offene Ticket gehört einer anderen Karte. Es hier erneut
+          // zuzustellen schickte den Spieler heimlich dorthin, ein zweites
+          // auszustellen buchte seine Munition ein zweites Mal ab — also
+          // beides nicht, sondern eine Ansage.
+          socket.emit('queue:error', {
+            message: `Es steht noch ein Ticket für ${pending.mapId} offen — erst nutzen oder ablaufen lassen.`,
+          });
+          return;
+        }
         socket.emit('queue:ticket', {
           mapId: pending.mapId,
           ticket: pending.ticket,
-          gameUrl: env.gamePublicUrl,
+          gameUrl: this.publicUrl(pending.mapId),
           expiresIn: Math.max(1, Math.ceil((pending.expiresAt - Date.now()) / 1000)),
         });
       } else {
@@ -394,11 +508,26 @@ export class LobbyGateway {
     this.ensureTimer();
   }
 
-  /** Freie Plätze abzüglich der bereits vergebenen, noch offenen Tickets. */
-  private free(status: GameServerStatus): number {
+  /**
+   * Freie Plätze DIESER Karte, abzüglich der für sie vergebenen, noch offenen
+   * Tickets — und räumt dabei ihre erledigten Reservierungen.
+   *
+   * `status` beschreibt genau EINEN Spielserver, deshalb bleiben Reservierungen
+   * fremder Karten hier unangetastet — auch die längst abgelaufenen. Denn
+   * „abgelaufen" heißt für sich genommen nicht „ungenutzt": ob ein Ticket
+   * eingelöst wurde, steht ALLEIN in `accounts`/`redeemed` seiner eigenen
+   * Karte. Wer alle Reservierungen über einen Kamm schöre, erstattete einem
+   * Spieler auf ocean04 die Munition, während er sie gerade verschießt — und
+   * rechnete sie obendrein gegen die Kapazität von ocean01. Jede Reservierung
+   * wird darum ausschließlich am Status ihrer Karte gemessen; wer sie sonst
+   * anfassen will, holt sich vorher deren Status (siehe handleJoin, Sweeper).
+   */
+  private free(mapId: string, status: GameServerStatus): number {
     const now = Date.now();
     const eingeloest = new Set(status.redeemed);
+    let vergeben = 0;
     for (const [accountId, reservation] of this.reservations) {
+      if (reservation.mapId !== mapId) continue;
       const pending = this.pendingTickets.get(accountId);
       // Zwei Wege, dieselbe Feststellung: das Konto ist gerade verbunden ODER
       // seine Ticketkennung steht in der Verbrauchsliste. Der zweite Weg ist
@@ -418,9 +547,11 @@ export class LobbyGateway {
         this.reservations.delete(accountId);
         this.pendingTickets.delete(accountId);
         this.returnAmmo(accountId, reservation.loadout);
+      } else {
+        vergeben += 1;
       }
     }
-    return status.capacity - status.players - this.reservations.size;
+    return status.capacity - status.players - vergeben;
   }
 
   /**
@@ -455,12 +586,37 @@ export class LobbyGateway {
     mapId: string,
     shipId: string,
   ): Promise<boolean> {
+    /*
+     * Hält das Konto schon einen Platz auf einer ANDEREN Karte, gibt es hier
+     * kein Ticket. Der Schlangen-Takt kommt sonst an handleJoin vorbei in diese
+     * Lage: wer auf ocean04 wartet und im Zweittab ocean01 sofort betritt, steht
+     * weiter in der Schlange von ocean04 — deren nächster Takt überschriebe die
+     * frische ocean01-Reservierung samt Lieferschein, und die abgebuchte
+     * Munition käme nie zurück. Ausgereiht wird er trotzdem, sonst scheiterte er
+     * als Kopf der Schlange in jedem Takt aufs Neue und hielte alle dahinter auf.
+     *
+     * Auch eine ABGELAUFENE fremde Reservierung blockt: ob ihr Ticket eingelöst
+     * wurde, weiß nur der Spielserver ihrer Karte. Der Sweeper klärt das
+     * innerhalb von 5 Sekunden, danach ist der Weg frei.
+     */
+    const fremd = this.reservations.get(accountId);
+    if (fremd && fremd.mapId !== mapId) {
+      await this.queue.leave(mapId, accountId);
+      this.io
+        .of('/lobby')
+        .to(`account:${accountId}`)
+        .emit('queue:error', {
+          message: `Es steht noch ein Ticket für ${fremd.mapId} offen — erst nutzen oder ablaufen lassen.`,
+        });
+      return false;
+    }
+
     // Reservierung SOFORT, vor dem ersten await: ab jetzt zählt free() diesen
     // Platz als vergeben, und das Gate in handleJoin blockt weitere Tickets
     // für dasselbe Konto. Würde sie erst nach Prüfung und Signatur gesetzt,
     // sähen zwei parallele Joins beide den letzten freien Platz.
     const expiresAt = Date.now() + env.ticketTtl * 1000;
-    const reservation: Reservation = { expiresAt, loadout: [] };
+    const reservation: Reservation = { mapId, expiresAt, loadout: [] };
     this.reservations.set(accountId, reservation);
     this.ensureSweeper();
 
@@ -581,10 +737,12 @@ export class LobbyGateway {
     // eingelöst wurde oder verfallen ist.
     this.pendingTickets.set(accountId, { mapId, ticket, jti, expiresAt });
 
+    // Die öffentliche Adresse GENAU DIESER Karte — sie entscheidet, mit welchem
+    // Spielserver-Prozess sich der Client gleich verbindet.
     this.io.of('/lobby').to(`account:${accountId}`).emit('queue:ticket', {
       mapId,
       ticket,
-      gameUrl: env.gamePublicUrl,
+      gameUrl: this.publicUrl(mapId),
       expiresIn: env.ticketTtl,
     });
     return true;
@@ -602,7 +760,9 @@ export class LobbyGateway {
    * Ein Durchlauf der Warteschlange.
    *
    * Fragt den Spielserver einmal je Karte — nicht einmal je Wartendem — und
-   * gibt so viele Tickets aus, wie Plätze frei sind.
+   * gibt so viele Tickets aus, wie Plätze frei sind. Jede Karte hat ihren
+   * eigenen Prozess: Kapazität, Status und Warteschlange bleiben getrennt,
+   * eine unerreichbare Karte hält die anderen nicht auf.
    */
   private async tick(): Promise<void> {
     let anyWaiting = false;
@@ -619,10 +779,10 @@ export class LobbyGateway {
         if ((room?.size ?? 0) > 0) await this.queue.touch(mapId, entry.accountId);
       }
 
-      const status = await fetchGameServerStatus();
+      const status = await fetchGameServerStatus(mapId);
       if (!status) continue;
 
-      let free = this.free(status);
+      let free = this.free(mapId, status);
       while (free > 0) {
         const next = await this.queue.peek(mapId);
         if (!next) break;

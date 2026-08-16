@@ -204,6 +204,107 @@ Spuren; ein versenkter Frachter läuft nach 5 Minuten am Routeneinstieg
 seiner Richtung wieder ein. Frachter spawnen ausschließlich über diese
 Route — der übrige Zufallsverkehr fährt keine Tanker.
 
+## Karte `ocean04` — „Mittelmeer"
+
+30.000 × 30.000 Units mit den **Balearen** als Landmassen, ebenfalls ein
+Torus; Wetterlage „klarer Tag" (hoher Mittag, ruhige See — der niedrige
+Seegang hält die Sonarreichweite oben und macht das Auftauchen in einer Enge
+zur Entscheidung).
+
+Die Umrisse sind **echte Küstenlinien aus OpenStreetMap** (ODbL), äquidistant
+projiziert und mit `tools/balearen-import.py` nach
+`apps/game-server/src/maps/ocean04-islands.ts` erzeugt — generierter
+Quelltext, nicht von Hand gepflegt. Die Formen stehen 1:9, die Abstände
+zwischen den Inseln zusätzlich auf 62 % gestaucht, damit der Archipel mit
+Wasserrand auf die Karte passt: Mallorca 10,8 km, Menorca 5,1 km, Ibiza
+3,9 km, dazu 4,9 km Wasser im Westen und Osten und 9,4 km im Norden und
+Süden. Der Rand ist kein Zierwerk — er hält die Inseln von der Torus-Naht
+fern, denn die gesamte Polygon-Mathematik rechnet in der gewöhnlichen Ebene.
+
+Das **Polygon ist die einzige Wahrheit über die Form**: der Server kollidiert
+dagegen (Grundberührung wie ein Rammstoß, Geschosse detonieren an der Küste),
+der Client zeichnet daraus die Minimap und rechnet sich beim Kartenladen das
+Abstandsfeld für Strand, Brandung und Flachwasser selbst aus. Es gibt bewusst
+keine gebackene Küsten-Textur, die auseinanderlaufen könnte.
+
+| Typ | ID | Position | Abstand zur Küste |
+| --- | --- | --- | --- |
+| Spawn | `spawn-nord` | 15.000 / 3.500 | 6.439 m |
+| Spawn | `spawn-ost` | 28.000 / 19.000 | 6.919 m (Ibiza über die Naht) |
+| Spawn | `spawn-sued` | 15.000 / 26.500 | 8.664 m |
+| Spawn | `spawn-west` | 2.500 / 13.500 | 5.547 m |
+| Extraktion | `exit-menorca-strasse` | 19.400 / 9.300 | 1.086 m (Radius 400) |
+| Extraktion | `exit-mallorca-sued` | 14.900 / 19.000 | 2.035 m (Radius 400) |
+
+Alle Punkte sind **gemessen, nicht geschätzt** — torus-bewusst gegen die
+Polygone geprüft. Die Frachtroute läuft im Uhrzeigersinn außen um den
+Archipel und einmal durch die Straße von Ibiza; ihre engste Stelle liegt bei
+1.124 m Wasser (9.598 / 16.789), genug für den Spurversatz der Frachter
+(±350 m) und einen 180 m langen Rumpf. Die Straße von Menorca bleibt frei:
+dort liegt die Extraktionszone, und für Frachter ist sie zu eng.
+
+### Zweiter Spielserver
+
+Eine Karte ist **ein eigener Prozess** — `MAP_ID` wählt sie, `PORT` trennt
+sie. Lokal reicht dafür der Port:
+
+```bash
+MAP_ID=ocean04 PORT=8081 pnpm --filter @subwarfare/game-server dev
+```
+
+Die api kennt ihre Karten über `GAME_MAPS` (Vorgabe `ocean01,ocean04`) und je
+Karte ein Adresspaar `GAME_INTERNAL_URL_<KARTE>` / `GAME_PUBLIC_URL_<KARTE>`.
+Auf dem VPS teilen sich alle Spielserver **eine Herkunft**, unterscheidbar
+sind sie dort nur am Pfad — die öffentliche Adresse trägt ihn deshalb mit, und
+der Client spaltet sie in Herkunft und Socket-Pfad:
+
+```
+GAME_MAPS=ocean01,ocean04
+GAME_INTERNAL_URL_OCEAN01=http://127.0.0.1:8080
+GAME_PUBLIC_URL_OCEAN01=                       # leer = gleiche Herkunft, /game/socket.io
+GAME_INTERNAL_URL_OCEAN04=http://127.0.0.1:8081
+GAME_PUBLIC_URL_OCEAN04=https://dev.subwarfare.com/game-ocean04
+```
+
+Damit der Proxy eine **reine Weiterleitung** bleibt, lauscht jeder Spielserver
+gleich unter dem Pfad, den der Client bei ihm sucht — `SOCKET_PATH`. Er muss
+zum Pfadanteil der öffentlichen Adresse passen; eine Abweichung scheitert
+still im Handshake. Deshalb schreibt der Server seinen Pfad beim Start ins
+Log (`hört auf 0.0.0.0:8081/game-ocean04/socket.io`), dort lässt sich das in
+einer Zeile abgleichen.
+
+Auf dem VPS sind es fünf Schritte, **alle als root** — der Deploy-Benutzer
+darf bewusst nur `/srv/subwarfare` schreiben und genau
+`systemctl restart subwarfare-game subwarfare-api`:
+
+1. `/etc/subwarfare/game-ocean04.env` mit `PORT=8081`, `MAP_ID=ocean04` und
+   `SOCKET_PATH=/game-ocean04/socket.io`. Nur die kartenspezifischen Werte —
+   die Secrets bleiben in `game.env`, die Unit lädt beide Dateien und die
+   zweite gewinnt bei gleichen Namen.
+2. `/etc/systemd/system/subwarfare-game-ocean04.service` als Kopie der
+   bestehenden Unit, ergänzt um die zweite `EnvironmentFile=`-Zeile.
+3. In `/etc/subwarfare/api.env`: `GAME_MAPS=ocean01,ocean04` plus das
+   Adresspaar `GAME_INTERNAL_URL_OCEAN04=http://127.0.0.1:8081` und
+   `GAME_PUBLIC_URL_OCEAN04=https://dev.subwarfare.com/game-ocean04`.
+4. `/etc/sudoers.d/subwarfare-deploy` um die neue Unit erweitern. **Ohne das
+   bricht der nächste Deploy ab**: der Hook läuft mit `set -euo pipefail`, und
+   ein `systemctl restart` auf eine nicht freigegebene Unit scheitert.
+5. Caddy, im Site-Block neben der bestehenden `/game/*`-Regel — **kein**
+   `handle_path`, der Pfad muss unverändert durchgereicht werden:
+
+```
+handle /game-ocean04/* {
+  reverse_proxy 127.0.0.1:8081
+}
+```
+
+Reihenfolge: erst diese fünf Schritte, dann **einmal deployen**, und erst
+danach `systemctl enable --now subwarfare-game-ocean04` — vorher käme der
+Dienst mit altem Code hoch, der `MAP_ID` noch nicht kennt.
+
+⚠️ Ohne diese Schritte bietet die Lobby „Mittelmeer" an, ohne dass ein Server
+dahinter steht — Wartende kämen nie an Bord.
+
 ## Vorbild
 
 Sub Warfare ist die Neuauflage von **Silent Wolves** (Browsergame, 2009) —

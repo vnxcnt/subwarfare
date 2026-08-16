@@ -170,36 +170,66 @@ await app.register(
       return { ok: true };
     });
 
-    // Kartenauslastung fürs Hauptmenü. Kurz gecacht UND mit geteiltem
-    // In-flight-Promise: läuft die Abfrage gerade (bis zu 2 s bei hängendem
-    // Spielserver), hängen sich weitere Anfragen an dieselbe — sonst würde
-    // genau im Störfall jede Menü-Anfrage einen eigenen Upstream-Fetch starten.
-    let mapsCache: { at: number; payload: MapsStatusPayload } | null = null;
-    let mapsInFlight: Promise<MapsStatusPayload> | null = null;
-    scope.get('/maps/status', (): Promise<MapsStatusPayload> | MapsStatusPayload => {
-      if (mapsCache && Date.now() - mapsCache.at < 3_000) return mapsCache.payload;
-      mapsInFlight ??= (async () => {
+    /*
+     * Kartenauslastung fürs Hauptmenü — je Karte ein eigener Spielserver, also
+     * je Karte eine eigene Abfrage. Kurz gecacht UND mit geteiltem
+     * In-flight-Promise: läuft die Abfrage gerade (bis zu 2 s bei hängendem
+     * Spielserver), hängen sich weitere Anfragen an dieselbe — sonst würde
+     * genau im Störfall jede Menü-Anfrage einen eigenen Upstream-Fetch starten.
+     *
+     * Beides liegt JE KARTE vor: ein globaler Cache würde eine langsame Karte
+     * mit einer schnellen verrechnen, und ein globales Promise ließe die Anfrage
+     * für ocean01 auf den hängenden ocean04-Server warten. Auch das Fehlschlagen
+     * wird gecacht (Eintrag `null`) — ein toter Spielserver soll nicht bei jeder
+     * Menü-Anfrage erneut ins Zeitlimit laufen.
+     */
+    const mapsCache = new Map<string, { at: number; entry: MapStatusEntry | null }>();
+    const mapsInFlight = new Map<string, Promise<MapStatusEntry | null>>();
+    const mapStatus = (mapId: string): Promise<MapStatusEntry | null> | MapStatusEntry | null => {
+      const cached = mapsCache.get(mapId);
+      if (cached && Date.now() - cached.at < 3_000) return cached.entry;
+
+      const laufend = mapsInFlight.get(mapId);
+      if (laufend) return laufend;
+
+      const abfrage = (async () => {
         try {
-          const status = await fetchGameServerStatus();
-          const payload: MapsStatusPayload = {
-            maps: status
-              ? [{ mapId: status.mapId, players: status.players, capacity: status.capacity }]
-              : [],
-          };
-          mapsCache = { at: Date.now(), payload };
-          return payload;
+          const status = await fetchGameServerStatus(mapId);
+          // Die Kennung aus der Tabelle, nicht die gemeldete: der Client wählt
+          // seine Karte über genau diesen Schlüssel. (Meldet der Spielserver
+          // eine andere, liefert fetchGameServerStatus ohnehin null.)
+          const entry: MapStatusEntry | null = status
+            ? { mapId, players: status.players, capacity: status.capacity }
+            : null;
+          mapsCache.set(mapId, { at: Date.now(), entry });
+          return entry;
         } finally {
-          mapsInFlight = null;
+          mapsInFlight.delete(mapId);
         }
       })();
-      return mapsInFlight;
+      mapsInFlight.set(mapId, abfrage);
+      return abfrage;
+    };
+
+    scope.get('/maps/status', async (): Promise<MapsStatusPayload> => {
+      // Alle Karten parallel: die Anzeige soll so lange brauchen wie die
+      // langsamste, nicht wie ihre Summe.
+      const eintraege = await Promise.all([...env.gameMaps.keys()].map((id) => mapStatus(id)));
+      return { maps: eintraege.filter((eintrag): eintrag is MapStatusEntry => eintrag !== null) };
     });
   },
   { prefix: '/api' },
 );
 
+/** Auslastung EINER Karte. Fehlt sie in der Antwort, ist ihr Server stumm. */
+interface MapStatusEntry {
+  mapId: string;
+  players: number;
+  capacity: number;
+}
+
 interface MapsStatusPayload {
-  maps: Array<{ mapId: string; players: number; capacity: number }>;
+  maps: MapStatusEntry[];
 }
 
 // socket.io hängt sich an den fertigen HTTP-Server von Fastify. Das geht erst
@@ -218,9 +248,10 @@ const lobby = new LobbyGateway(io, new MemoryQueue(), accounts, inventory, fleet
 lobby.register();
 
 await app.listen({ port: env.port, host: env.host });
-app.log.info(
-  `Backend bereit — Spielserver ${env.gameInternalUrl} (öffentlich ${env.gamePublicUrl})`,
-);
+const karten = [...env.gameMaps]
+  .map(([mapId, ziel]) => `${mapId} → ${ziel.internalUrl} (öffentlich ${ziel.publicUrl || '—'})`)
+  .join(', ');
+app.log.info(`Backend bereit — Spielserver: ${karten}`);
 
 let shuttingDown = false;
 const shutdown = async (signal: string): Promise<void> => {

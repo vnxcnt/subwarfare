@@ -436,4 +436,16 @@ export const MIGRATIONS: readonly Migration[] = [
       `UPDATE ships SET size = 1.50 WHERE model = 'destroyer03'`,
     ],
   },
+  {
+    id: 22,
+    name: 'carrier',
+    statements: [
+      // Flugzeugtraeger (NPC, Typ 1): groesstes Ziel auf See — Groesse 4 auf
+      // der Ueberwasser-Basis = 560 m. Bewaffnung ist Daten fuer eine
+      // spaetere NPC-Feuerlogik. Seed = Code-Katalog, danach fuehrt die DB.
+      `INSERT INTO ships (model, hp, type, armament, speed, price, perk_slots, size) VALUES
+         ('carrier01', 4500, 1, '["torpedo","geschuetz"]', 0.45, 0, 0, 4.00)
+       ON DUPLICATE KEY UPDATE model = model`,
+    ],
+  },
 ];

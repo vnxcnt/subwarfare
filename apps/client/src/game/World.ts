@@ -151,6 +151,10 @@ export class World {
   setMap(map: GameMap): void {
     this.map = map;
     this.ocean?.resizeTo(map);
+    // Landmassen: der Ozean baut daraus sein Küsten-Abstandsfeld. Karten ohne
+    // Inseln schalten den Küstenblock im Shader ab — offenes Wasser sieht
+    // danach unverändert aus.
+    this.ocean?.setIslands(map);
     // Die Bojen der Extraktionszonen brauchen die Kartengröße für die
     // Torus-Darstellung (nächste Kopie relativ zur Sicht).
     this.entities.setMapSize(map.width, map.height);

@@ -62,7 +62,12 @@ const MAPS = [
     detail: 'PVP · PVE · Gruppenevents',
     comingSoon: true,
   },
-  { id: 'ocean04', label: mapLabel('ocean04'), detail: 'PVE', comingSoon: true },
+  {
+    id: 'ocean04',
+    label: mapLabel('ocean04'),
+    detail: '30 × 30 km · Balearen · Küstenreviere',
+    comingSoon: false,
+  },
   { id: 'ocean05', label: mapLabel('ocean05'), detail: 'Flottillen-PVP', comingSoon: true },
 ] as const;
 

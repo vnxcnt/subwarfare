@@ -52,10 +52,24 @@ export class GameSocket {
   connect(gameUrl: string, ticket: string, handlers: GameSocketHandlers): void {
     if (this.socket) throw new Error('GameSocket ist bereits verbunden.');
 
-    // Leeres gameUrl bedeutet gleiche Herkunft — auf dem VPS führt der
-    // Reverse-Proxy den Pfad /game/socket.io an den Spielserver weiter.
-    const socket = io(gameUrl || window.location.origin, {
-      path: '/game/socket.io',
+    /*
+     * Leeres gameUrl bedeutet gleiche Herkunft — auf dem VPS führt der
+     * Reverse-Proxy den Pfad /game/socket.io an den Spielserver weiter.
+     *
+     * Seit es mehrere Karten gibt, ist EIN fester Pfad zu wenig: hinter dem
+     * Reverse-Proxy teilen sich alle Spielserver eine Herkunft, unterscheidbar
+     * sind sie dort nur am Pfad. Deshalb darf die Adresse aus dem Ticket einen
+     * tragen (GAME_PUBLIC_URL_<KARTE>=https://…/game-ocean04) — wir spalten sie
+     * in Herkunft und Pfad und hängen socket.io daran.
+     *
+     * Ohne Pfadanteil bleibt alles wie bisher: die leere Adresse und auch
+     * http://localhost:8081 (lokal trennt der PORT die Karten, nicht der Pfad)
+     * landen beide auf /game/socket.io.
+     */
+    const adresse = new URL(gameUrl || window.location.origin);
+    const basis = adresse.pathname.replace(/\/+$/, '');
+    const socket = io(adresse.origin, {
+      path: `${basis || '/game'}/socket.io`,
       auth: { ticket },
       transports: ['websocket'],
       reconnection: false,

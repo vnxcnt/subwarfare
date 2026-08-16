@@ -18,15 +18,28 @@ export interface GameServerStatus {
   redeemed: string[];
 }
 
+/** Einmal je Karte warnen reicht — der Takt fragt im Sekundentakt. */
+const verdrahtungGemeldet = new Set<string>();
+
 /**
- * Fragt den Spielserver nach seiner Auslastung.
+ * Fragt den Spielserver EINER Karte nach seiner Auslastung.
+ *
+ * Jede Karte ist ein eigener Prozess mit eigener Adresse (env.gameMaps) —
+ * deshalb gibt der Aufrufer an, welche er meint. Die Karte ist trotzdem
+ * optional: es gibt Aufrufer, die kartenunabhängig fragen (die Werft prüft nur
+ * „ist dieses Konto gerade auf See?"), und die sehen weiterhin die erste Karte.
  *
  * Mit Zeitlimit: ohne das würde ein hängender Spielserver die gesamte
  * Warteschlangen-Prüfung blockieren und damit die Lobby für alle einfrieren.
  */
-export async function fetchGameServerStatus(): Promise<GameServerStatus | null> {
+export async function fetchGameServerStatus(
+  mapId: string = env.defaultMapId,
+): Promise<GameServerStatus | null> {
+  const ziel = env.gameMaps.get(mapId);
+  if (!ziel) return null;
+
   try {
-    const response = await fetch(`${env.gameInternalUrl}/status`, {
+    const response = await fetch(`${ziel.internalUrl}/status`, {
       headers: { 'x-internal-key': env.internalKey },
       signal: AbortSignal.timeout(2000),
     });
@@ -38,6 +51,23 @@ export async function fetchGameServerStatus(): Promise<GameServerStatus | null> 
       typeof data.players !== 'number' ||
       typeof data.capacity !== 'number'
     ) {
+      return null;
+    }
+    if (data.mapId !== mapId) {
+      /*
+       * Falsch verdrahtet: an dieser Adresse läuft eine andere Karte (drüben
+       * fehlt MAP_ID, oder zwei Einträge zeigen auf denselben Prozess). Lieber
+       * „nicht erreichbar" melden als weiterrechnen — sonst zählten wir die
+       * Plätze der einen Karte gegen die Reservierungen der anderen und
+       * schickten den Spieler auf eine Karte, die er nicht gewählt hat.
+       */
+      if (!verdrahtungGemeldet.has(mapId)) {
+        verdrahtungGemeldet.add(mapId);
+        console.warn(
+          `[api] ⚠️  ${ziel.internalUrl} liefert Karte ${data.mapId}, erwartet war ${mapId} — ` +
+            'Adressen in GAME_MAPS bzw. MAP_ID des Spielservers prüfen.',
+        );
+      }
       return null;
     }
     return {

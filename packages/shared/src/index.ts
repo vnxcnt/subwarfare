@@ -1,6 +1,7 @@
 export * from './types/Player.js';
 export * from './types/SpawnPoint.js';
 export * from './types/ExitPoint.js';
+export * from './types/Island.js';
 export * from './types/Map.js';
 
 // Wire-Protokoll als typisierte socket.io-Event-Maps.
@@ -60,6 +61,7 @@ export * from './sim/telegraph.js';
 export * from './sim/profiles.js';
 export * from './sim/Vessel.js';
 export * from './sim/torus.js';
+export * from './sim/polygon.js';
 
 /**
  * Version des Wire-Protokolls. Client und Server müssen übereinstimmen —
@@ -117,8 +119,13 @@ export * from './sim/torus.js';
  * 22: Schiffsgröße aus der DB (ships.size × Klassen-Basis) — `welcome.ships`
  *     trägt `size`, Kollision und Billboards skalieren damit. Alte Clients
  *     zeichneten die Schiffe kleiner, als der Server kollidiert.
+ * 23: Neues NPC-Modell `carrier01` (Flugzeugträger, Größe 4) — alte Clients
+ *     haben den Atlas nicht.
+ * 24: Landmassen — `GameMap.islands` trägt die Inselumrisse zum Client
+ *     (Minimap, Küstendarstellung). Alte Clients würden die Karte ocean04 als
+ *     offenes Wasser zeichnen und Schiffe an unsichtbarem Land auflaufen sehen.
  */
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 24;
 
 /**
  * Sichtbare Spielversion (Patch-Stand) — unten im Hauptmenü eingeblendet und

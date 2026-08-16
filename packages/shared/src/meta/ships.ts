@@ -154,6 +154,18 @@ export const DEFAULT_SHIP_STATS: Record<VesselModel, ShipStats> = {
     armament: ['torpedo', 'taeuschkoerper'],
     speedFactor: 0.75,
   },
+  /**
+   * Flugzeugträger (NPC): das größte Ziel auf See (ships.size 4 → 560 m).
+   * Bewaffnung ist DATEN für eine spätere NPC-Feuerlogik — heute schießen
+   * NPCs dieser Route nicht.
+   */
+  carrier01: {
+    model: 'carrier01',
+    hp: 4500,
+    type: SHIP_TYPE_NPC,
+    armament: ['torpedo', 'geschuetz'],
+    speedFactor: 0.45,
+  },
 };
 
 /**

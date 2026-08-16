@@ -1,4 +1,5 @@
 import type { ExitPoint } from './ExitPoint.js';
+import type { Island } from './Island.js';
 import type { SpawnPoint } from './SpawnPoint.js';
 
 /** Eindeutige Kennung einer Map, z. B. `ocean01`. */
@@ -31,4 +32,10 @@ export interface GameMap {
    * zeichnet die Linie auf der Minimap.
    */
   route?: RoutePoint[];
+  /**
+   * Landmassen dieser Karte. Fehlt das Feld, ist die Karte offenes Wasser
+   * (ocean01). Die Umrisse reisen in der `welcome` mit — die Minimap zeichnet
+   * sie, und der Client kann damit rechnen, ohne eine zweite Kopie zu pflegen.
+   */
+  islands?: Island[];
 }

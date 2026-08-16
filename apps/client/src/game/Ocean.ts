@@ -2,6 +2,8 @@ import type { Atmosphere, GameMap } from '@subwarfare/shared';
 import { Geometry, Mesh, Shader, Texture } from 'pixi.js';
 import { WATER } from '../config';
 import { oceanWaterTexture } from './fx-textures';
+import type { IslandField } from './IslandField';
+import { buildIslandField, loadTerrainTextures } from './IslandField';
 import { getTilt } from './Projection';
 
 /*
@@ -70,6 +72,12 @@ uniform vec2 uOffWeit;
 uniform vec2 uOffGrob;
 uniform vec2 uOffFein;
 uniform vec2 uOffTiefe;
+uniform vec2 uOffLand;
+uniform vec2 uOffBrandung;
+uniform vec2 uOffStrand;
+uniform vec2 uOffSand;
+uniform vec2 uOffSand2;
+uniform vec2 uOffGras;
 
 /**
  * Die Wasseroberfläche als FARBIGE Kachel — eine echte Wasseraufnahme, von
@@ -77,6 +85,25 @@ uniform vec2 uOffTiefe;
  * nachgerechnet: Wellen, Kämme und Schaum stecken bereits darin.
  */
 uniform sampler2D uWater;
+
+/**
+ * KÜSTE. 0 auf Karten ohne Landmassen (ocean01) — dann läuft kein einziger
+ * Schritt des Küstenblocks, und das Wasserbild ist Zahl für Zahl das alte.
+ * Der Zweig hängt an einem UNIFORM und ist damit für alle Bildpunkte gleich;
+ * es gibt keine auseinanderlaufenden Lanes und keine kaputten Ableitungen.
+ */
+uniform float uLandAn;
+/** Abstandsfeld der Küste — siehe game/IslandField.ts. */
+uniform sampler2D uLand;
+/** Kehrwert der Kartengröße: Weltkoordinate -> Feld-UV. */
+uniform vec2 uLandInv;
+/** Feldgröße in Zellen — für die von Hand gerechnete bilineare Mischung. */
+uniform vec2 uLandZellen;
+/** Abstandsbereich der Kodierung in Metern (±). */
+uniform float uLandReichweite;
+/** Bodentexturen des Landes, in Weltkoordinaten gekachelt. */
+uniform sampler2D uSand;
+uniform sampler2D uGras;
 
 /** Dreht einen Punkt um den Ursprung — bricht die Ausrichtung der Lagen auf. */
 vec2 dreh(vec2 p, float w) {
@@ -96,6 +123,106 @@ vec2 dreh(vec2 p, float w) {
 vec3 nurFarbe(vec3 c) {
   float l = max(dot(c, vec3(0.299, 0.587, 0.114)), 0.001);
   return c / l;
+}
+
+/*
+ * DAS KÜSTENBILD, in Metern Abstand zur Wasserlinie. Vorzeichen wie in shared:
+ * POSITIV seewärts, NEGATIV landeinwärts.
+ *
+ * Die Werte stammen aus einem abgenommenen Mockup. Sie stehen hier und nicht in
+ * config, weil sie EIN Bild beschreiben und nur zusammen sinnvoll sind — wer am
+ * Strand dreht, muss den Bewuchs mitdrehen, sonst wandert die Grenze ins Wasser.
+ */
+/** Farbsaum über dem Schelf: so weit steht das Wasser sichtbar heller. */
+const float KUESTE_FLACHWASSER = 430.0;
+/** Brandungsband, seewärtiges und landeinwärtiges Ende. */
+const float KUESTE_BRANDUNG_SEE = 34.0;
+const float KUESTE_BRANDUNG_LAND = -4.0;
+/** Breite des weichen Übergangs zwischen Wasser und Land. */
+const float KUESTE_WASSERLINIE = 16.0;
+/** So weit landeinwärts hält die auflaufende See den Sand dunkel. */
+const float KUESTE_NASS = 70.0;
+/** Nasser Sand ist rund 30 % dunkler als trockener. */
+const float KUESTE_NASS_DUNKEL = 0.70;
+/** Strandbreite bis zum Bewuchs und die Breite des Übergangs dorthin. */
+const float KUESTE_STRAND = 95.0;
+const float KUESTE_GRAS_UEBERGANG = 55.0;
+/** Streuung der Strandbreite — ohne sie läuft die Bewuchsgrenze wie gezirkelt. */
+const float KUESTE_STRAND_RAUSCHEN = 55.0;
+/** Kantenlänge der Boden-Kacheln in Metern. */
+const float KUESTE_KACHEL = 520.0;
+/** Gesamthelligkeit des Bodens gegenüber der Vorlage. */
+const float KUESTE_BODEN_HELL = 0.85;
+
+/**
+ * Wertrauschen aus der Weltkoordinate, 0..1.
+ *
+ * ⚠️ NICHT die Wasserkachel nehmen, so wie es die Wellenlagen tun. Für die
+ * Wellenlängen der Küste (165 m und 2600 m) wird sie stark VERKLEINERT
+ * abgetastet, und die Mip-Stufen mitteln ihre Streuung weg: gemessen 0,028
+ * Standardabweichung roh, 0,011 auf Stufe 3. Von den gewollten ±55 m
+ * Strandbreite blieben damit ±3 m übrig — die Bewuchsgrenze lief exakt parallel
+ * zur Küste, also genau der Zirkelstrich, den das Rauschen verhindern soll.
+ * Schlimmer noch: wie stark gemittelt wird, hängt am ZOOM, der Strand hätte
+ * beim Heranfahren seine Breite geändert.
+ */
+float hashRauschen(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float wertRauschen(vec2 p) {
+  vec2 gitter = floor(p);
+  vec2 f = p - gitter;
+  // Smootherstep statt smoothstep: auch die zweite Ableitung ist stetig. Sonst
+  // zeichnen sich die Gitterlinien des Rauschens als Knicke im Strand ab.
+  vec2 w = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  float a = hashRauschen(gitter);
+  float b = hashRauschen(gitter + vec2(1.0, 0.0));
+  float c = hashRauschen(gitter + vec2(0.0, 1.0));
+  float d = hashRauschen(gitter + vec2(1.0, 1.0));
+  return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
+}
+
+/**
+ * Zwei Oktaven, auf die volle Breite 0..1 gespreizt.
+ *
+ * ⚠️ Die Spreizung ist nötig, nicht kosmetisch: interpoliertes Wertrauschen
+ * drängt sich um 0,5 (Standardabweichung rund 0,17), und zwei gemittelte
+ * Oktaven noch enger. Ohne den Faktor käme von einer verlangten Streuung nur
+ * etwa ein Drittel an.
+ */
+float rauschenFbm(vec2 p) {
+  float r = wertRauschen(p) * 0.65 + wertRauschen(p * 2.17 + vec2(19.3, 7.7)) * 0.35;
+  return clamp((r - 0.5) * 3.4 + 0.5, 0.0, 1.0);
+}
+
+/** Einen Feldwert dekodieren: zwei Bytes -> Meter. */
+float landWert(vec2 uv) {
+  vec2 rg = texture(uLand, uv).rg;
+  return (dot(rg, vec2(65280.0, 255.0) / 65535.0) * 2.0 - 1.0) * uLandReichweite;
+}
+
+/**
+ * Abstand zur Küste in Metern — negativ an Land, positiv auf Wasser.
+ *
+ * ⚠️ Die vier Nachbarn werden hier VON HAND gemischt, und das Feld wird
+ * punktgenau abgetastet. Der Wert steckt in zwei Bytes; ein bilinearer Sampler
+ * würde hohes und niedriges Byte getrennt mitteln, und wo das niedrige von 255
+ * auf 0 überspringt, käme ein Sprung über den halben Wertebereich heraus — ein
+ * Ring aus Sprenkeln entlang jeder Küste.
+ */
+float landAbstand(vec2 welt) {
+  vec2 uv = welt * uLandInv + uOffLand;
+  vec2 zelle = uv * uLandZellen - 0.5;
+  vec2 basis = floor(zelle);
+  vec2 anteil = zelle - basis;
+  vec2 schritt = 1.0 / uLandZellen;
+  vec2 uv0 = (basis + 0.5) * schritt;
+  float a = landWert(uv0);
+  float b = landWert(uv0 + vec2(schritt.x, 0.0));
+  float c = landWert(uv0 + vec2(0.0, schritt.y));
+  float d = landWert(uv0 + schritt);
+  return mix(mix(a, b, anteil.x), mix(c, d, anteil.x), anteil.y);
 }
 
 void main() {
@@ -221,10 +348,16 @@ void main() {
    * Faktor aus uSunStrength unterschied sich ein klarer Mittag von einem
    * geschlossen bewölkten Himmel um unter 2 % je Farbkanal.
    */
-  vec3 col = wasser * mix(vec3(1.0), tint, 0.28)
-           * pow(max(uLightLevel, 0.001), 0.8)
-           * (0.72 + 0.38 * uSunStrength)
-           * 1.15;
+  /*
+   * Der gemeinsame Lichtfaktor. Als eigene Größe herausgezogen, weil das LAND
+   * weiter unten exakt dasselbe Licht bekommen muss: sonst steht bei Nacht oder
+   * im Sturm eine taghell beleuchtete Insel in dunkler See.
+   */
+  vec3 licht = mix(vec3(1.0), tint, 0.28)
+             * pow(max(uLightLevel, 0.001), 0.8)
+             * (0.72 + 0.38 * uSunStrength)
+             * 1.15;
+  vec3 col = wasser * licht;
 
   /*
    * Sonnenglanz auf den Kämmen. Der Blickvektor ist bei einer Parallel-
@@ -237,7 +370,94 @@ void main() {
 
   // Diffuses Himmelslicht — ohne diesen Anteil wirkt Wasser abseits von Sonne
   // und Spiegelung wie Tinte statt wie See.
-  col += mix(uSkyZenith, uSkyHorizon, 0.5) * 0.07;
+  vec3 umgebung = mix(uSkyZenith, uSkyHorizon, 0.5) * 0.07;
+  col += umgebung;
+
+  /*
+   * KÜSTE. Alles ab hier hängt an einer einzigen Zahl: dem vorzeichenbehafteten
+   * Abstand zur Wasserlinie. Es wird keine Kante gezeichnet und keine Geometrie
+   * angefasst — Flachwasser, Brandung, Strand und Bewuchs sind Bänder um die
+   * Null dieses Feldes.
+   */
+  if (uLandAn > 0.5) {
+    float kueste = landAbstand(vWorld);
+
+    /*
+     * FLACHWASSER. Über dem Schelf steht weniger Wasser über dem Grund, die
+     * Rückstreuung wird heller und grüner. Das ist der Saum, an dem man eine
+     * Insel schon erkennt, bevor sie überhaupt im Bild ist — und damit die
+     * einzige Vorwarnung, die ein Kapitän auf Sicht bekommt.
+     */
+    float flach = 1.0 - smoothstep(0.0, KUESTE_FLACHWASSER, max(kueste, 0.0));
+    col = mix(col, col * nurFarbe(uShallow) * 1.30, flach * 0.55);
+
+    /*
+     * RAUSCHEN für Brandung und Strandbreite. Beide Gitter sind gegen die
+     * Weltachsen gedreht — ein achsenparalleles Rauschgitter sieht man als
+     * Karomuster, daran ist schon der erste Schaum dieses Shaders gescheitert
+     * (siehe Sackgasse 1 unten).
+     */
+    float wellen = rauschenFbm(dreh(vWorld, 0.6) * (1.0 / 165.0)
+                 + vec2(0.0290, -0.0165) * zeit + uOffBrandung);
+    float streuung = rauschenFbm(dreh(vWorld, 2.1) * (1.0 / 2600.0) + uOffStrand);
+
+    /*
+     * SAND UND GRAS, in WELTkoordinaten gekachelt — nicht in Bildschirm-
+     * koordinaten, sonst wanderte der Boden beim Scrollen unter der Insel weg.
+     *
+     * ⚠️ Die Sandkachel hat eine schwache Naht. Eine zweite, gedrehte und
+     * deutlich anders skalierte Abtastung derselben Kachel bricht sie auf —
+     * derselbe Kunstgriff wie bei den Wasserlagen. Der Kontrastverlust durch das
+     * Mischen ist hier ANDERS als beim Wasser unbedenklich: er ist konstant und
+     * fällt deshalb niemandem als Zoomstufe auf, in der die Insel flauer aussieht.
+     */
+    vec2 sandUV = vWorld * (1.0 / KUESTE_KACHEL) + uOffSand;
+    vec2 sandUV2 = dreh(vWorld, 2.35) * (1.0 / (KUESTE_KACHEL * 0.61))
+                 + vec2(0.37, 0.14) + uOffSand2;
+    vec3 sand = mix(texture(uSand, sandUV).rgb, texture(uSand, sandUV2).rgb, 0.45);
+    vec3 gras = texture(uGras, dreh(vWorld, -0.4) * (1.0 / KUESTE_KACHEL) + uOffGras).rgb;
+
+    /*
+     * STRANDBREITE mit Rauschen. Ohne sie läuft die Bewuchsgrenze exakt
+     * parallel zur Küste — daran erkennt man ein Abstandsfeld auf den ersten
+     * Blick, und keine Insel der Welt sieht so aus.
+     */
+    float strandAbstand = kueste + (streuung - 0.5) * 2.0 * KUESTE_STRAND_RAUSCHEN;
+    float grasAnteil = 1.0 - smoothstep(
+      -(KUESTE_STRAND + KUESTE_GRAS_UEBERGANG), -KUESTE_STRAND, strandAbstand);
+    vec3 boden = mix(sand, gras, grasAnteil);
+
+    // NASSER SAND: der dunkle Saum, den die auflaufende See hinterlässt.
+    float nass = smoothstep(-KUESTE_NASS, -KUESTE_NASS * 0.08, kueste);
+    boden *= mix(1.0, KUESTE_NASS_DUNKEL, nass) * KUESTE_BODEN_HELL;
+
+    /*
+     * Das Land bekommt DASSELBE Licht wie das Wasser, dazu einen milden
+     * gerichteten Anteil aus der Sonnenhöhe. Bewusst kein Glanz: Sand und
+     * Bewuchs sind matt, ein Streiflicht wie auf den Wellenkämmen sähe aus wie
+     * nasser Fels.
+     */
+    vec3 landCol = boden * licht * (0.80 + 0.40 * uSunStrength * sonnenhoehe) + umgebung;
+
+    /*
+     * WASSERLINIE. Bewusst weich: bei 14,6 m Feldauflösung wäre eine harte
+     * Kante eine sichtbare Treppe, und die Brandung deckt den Saum ohnehin ab.
+     */
+    float landMaske = 1.0 - smoothstep(
+      -KUESTE_WASSERLINIE * 0.5, KUESTE_WASSERLINIE * 0.5, kueste);
+    col = mix(col, landCol, landMaske);
+
+    /*
+     * BRANDUNG ZULETZT — sie läuft über die Wasserlinie hinaus auf den nassen
+     * Sand, muss also über dem Land liegen. Das Rauschen verschiebt das Band
+     * gegen die Küste, sonst liegt es als gleichmäßiger Reif um die Insel.
+     */
+    float brandungAbstand = kueste + (wellen - 0.5) * 26.0;
+    float brandung =
+      (1.0 - smoothstep(KUESTE_BRANDUNG_SEE * 0.35, KUESTE_BRANDUNG_SEE, brandungAbstand))
+      * smoothstep(KUESTE_BRANDUNG_LAND, KUESTE_BRANDUNG_LAND + 9.0, brandungAbstand);
+    col = mix(col, licht * 0.90, brandung * 0.85);
+  }
 
   // Belichtung ganz zuletzt: sie hebt alles gemeinsam an und lässt die
   // Verhältnisse untereinander unberührt — sonst wäre eine Nachtszene
@@ -281,6 +501,10 @@ export class Ocean {
   private readonly geometry: Geometry;
   private readonly shader: Shader;
   private elapsed = 0;
+  /** Abstandsfeld der Küste — `null` auf Karten ohne Landmassen. */
+  private field: IslandField | null = null;
+  /** Wache gegen das Nachreichen der Bodentexturen in einen toten Shader. */
+  private destroyed = false;
 
   constructor(map: GameMap) {
     this.geometry = new Geometry({
@@ -324,6 +548,17 @@ export class Ocean {
           uOffGrob: { value: new Float32Array(2), type: 'vec2<f32>' },
           uOffFein: { value: new Float32Array(2), type: 'vec2<f32>' },
           uOffTiefe: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffLand: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffBrandung: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffStrand: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffSand: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffSand2: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uOffGras: { value: new Float32Array(2), type: 'vec2<f32>' },
+          // Küste: aus bis `setIslands` eine Karte MIT Landmassen bringt.
+          uLandAn: { value: 0, type: 'f32' },
+          uLandInv: { value: new Float32Array(2), type: 'vec2<f32>' },
+          uLandZellen: { value: new Float32Array([1, 1]), type: 'vec2<f32>' },
+          uLandReichweite: { value: 1, type: 'f32' },
         },
         // Texturen sind in Pixi 8 RESSOURCEN, keine Uniforms: Quelle und
         // Abtaststil gehen getrennt hinein. `loadFxTextures` läuft in
@@ -332,6 +567,22 @@ export class Ocean {
         // Wasser eine flache Fläche, das Spiel bleibt aber lauffähig.
         uWater: (oceanWaterTexture() ?? Texture.WHITE).source,
         uWaterStyle: (oceanWaterTexture() ?? Texture.WHITE).source.style,
+        /*
+         * Küstentexturen als Platzhalter. Sie entstehen erst beim Kartenladen
+         * (Abstandsfeld) bzw. werden dann erst geholt (Boden) — der Ozean
+         * dagegen existiert schon, bevor die erste Karte da ist.
+         *
+         * Das Nachreichen ist in Pixi 8 vorgesehen: `shader.resources.uLand = …`
+         * tauscht den Eintrag in der Bindegruppe, und die Bindefunktion liest
+         * ihn bei JEDEM Zeichnen neu. Nur die Zuordnung Name -> Texturplatz
+         * steht fest, und die ändert sich dabei nicht.
+         */
+        uLand: Texture.WHITE.source,
+        uLandStyle: Texture.WHITE.source.style,
+        uSand: Texture.WHITE.source,
+        uSandStyle: Texture.WHITE.source.style,
+        uGras: Texture.WHITE.source,
+        uGrasStyle: Texture.WHITE.source.style,
       },
     });
 
@@ -345,6 +596,79 @@ export class Ocean {
     const buffer = this.geometry.getBuffer('aPosition');
     (buffer.data as Float32Array).set(quadVertices(map));
     buffer.update();
+  }
+
+  /**
+   * Landmassen der Karte übernehmen: Abstandsfeld bauen und den Küstenblock
+   * scharfschalten. Karten ohne Inseln (ocean01) legen ihn still — dort läuft
+   * anschließend kein einziger Küstenschritt.
+   *
+   * Der Bau blockiert für ein paar hundert Millisekunden. Das ist Absicht: er
+   * läuft im Ladebildschirm, und ein halb aufgebautes Küstenfeld wäre schlimmer
+   * als ein etwas längerer Balken.
+   */
+  setIslands(map: GameMap): void {
+    const uniforms = this.shader.resources['oceanUniforms'].uniforms;
+
+    /*
+     * ⚠️ Die Bodenkacheln VOR dem Bau anfordern, nicht danach. Der Bau blockiert
+     * den Hauptthread eine halbe Sekunde; der Netzabruf läuft daneben weiter und
+     * ist hinterher meist schon da. Fordert man sie erst nach dem Bau an, beginnt
+     * die Leitung erst zu arbeiten, wenn der Ladebalken durch ist — und die Insel
+     * erscheint erst ein paar Bilder nach dem Spawn (bis dahin steht dort Wasser,
+     * denn scharf geschaltet wird erst mit dem Boden, siehe unten).
+     *
+     * `buildIslandField` gibt genau dann `null` zurück, wenn die Karte keine
+     * Umrisse trägt — dieselbe Bedingung, also holt ocean01 die Kacheln weiterhin
+     * nicht.
+     */
+    const bodenLauf = (map.islands?.length ?? 0) > 0 ? loadTerrainTextures() : null;
+
+    const vorheriges = this.field;
+    this.field = buildIslandField(map);
+
+    // Zurück auf null: ein Rebase-Ausgleich der VORIGEN Karte würde die Küste
+    // sonst um eine Kartenlänge daneben zeichnen.
+    (uniforms.uOffLand as Float32Array).set([0, 0]);
+    uniforms.uLandAn = 0;
+
+    const feld = this.field;
+    /*
+     * ⚠️ ERST umhängen, DANN das alte Feld freigeben — nie umgekehrt.
+     * `TextureSource.destroy` meldet ein "change", und die Bindegruppe wirft
+     * daraufhin ihren GESAMTEN Inhalt weg (BindGroup.onResourceChange prüft
+     * `resource.destroyed`). Eine zerstörte Quelle, die noch eingehängt ist,
+     * reißt also nicht nur sich selbst mit, sondern auch das Wasser und
+     * sämtliche Uniforms des Ozeans.
+     */
+    const landQuelle = feld ? feld.texture.source : Texture.WHITE.source;
+    this.shader.resources['uLand'] = landQuelle;
+    this.shader.resources['uLandStyle'] = landQuelle.style;
+    vorheriges?.texture.destroy(true);
+
+    if (!feld) return;
+
+    (uniforms.uLandInv as Float32Array).set([1 / map.width, 1 / map.height]);
+    (uniforms.uLandZellen as Float32Array).set([feld.breite, feld.hoehe]);
+    uniforms.uLandReichweite = feld.reichweite;
+
+    /*
+     * Scharf geschaltet wird erst, wenn auch der Boden da ist. Sonst stünde für
+     * die paar Bilder bis zum Eintreffen der Kacheln eine kreideweiße Insel im
+     * Wasser — sichtbar genau in dem Moment, in dem der Ladebildschirm geht.
+     * Schlägt das Laden fehl, wird trotzdem eingeschaltet: eine weiße Insel ist
+     * immer noch besser als eine unsichtbare.
+     */
+    void (bodenLauf ?? loadTerrainTextures()).then((boden) => {
+      if (this.destroyed || this.field !== feld) return;
+      if (boden) {
+        this.shader.resources['uSand'] = boden.sand.source;
+        this.shader.resources['uSandStyle'] = boden.sand.source.style;
+        this.shader.resources['uGras'] = boden.gras.source;
+        this.shader.resources['uGrasStyle'] = boden.gras.source.style;
+      }
+      uniforms.uLandAn = 1;
+    });
   }
 
   /**
@@ -363,6 +687,15 @@ export class Ocean {
       { ziel: 'uOffGrob', winkel: 0, inv: 1 / 255 },
       { ziel: 'uOffFein', winkel: 1.05, inv: 1 / 61 },
       { ziel: 'uOffTiefe', winkel: 0, inv: 1 / 5200 },
+      // Küste: Rauschlagen und Bodenkacheln. Ohne diese vier Zeilen SPRÄNGE
+      // der Strand beim Nahtwechsel — die Kachelgröße (520 m) ist kein Teiler
+      // der Kartenlänge, eine Kartenlänge weiter läge also ein anderer Ausschnitt
+      // der Kachel unter derselben Küste.
+      { ziel: 'uOffBrandung', winkel: 0.6, inv: 1 / 165 },
+      { ziel: 'uOffStrand', winkel: 2.1, inv: 1 / 2600 },
+      { ziel: 'uOffSand', winkel: 0, inv: 1 / 520 },
+      { ziel: 'uOffSand2', winkel: 2.35, inv: 1 / (520 * 0.61) },
+      { ziel: 'uOffGras', winkel: -0.4, inv: 1 / 520 },
     ];
     for (const lage of lagen) {
       const c = Math.cos(lage.winkel);
@@ -373,6 +706,19 @@ export class Ocean {
       offset[0] = (offset[0] ?? 0) - (dx * c - dy * s) * lage.inv;
       offset[1] = (offset[1] ?? 0) - (dx * s + dy * c) * lage.inv;
     }
+
+    /*
+     * Das Abstandsfeld deckt GENAU eine Karte ab und wiederholt sich; ein
+     * Rebase ist damit exakt eine UV-Einheit, und die Küste stünde auch ohne
+     * Ausgleich richtig. Der Ausgleich hält die abgetastete Koordinate trotzdem
+     * nahe bei null — dort ist die Auflösung der Gleitkommazahl am größten, und
+     * die Zellsuche in `landAbstand` rechnet mit dem Zweitausendfachen davon.
+     * Eigene Skalierung je Achse, weil das Feld nicht quadratisch sein muss.
+     */
+    const landInv = uniforms.uLandInv as Float32Array;
+    const landOff = uniforms.uOffLand as Float32Array;
+    landOff[0] = (landOff[0] ?? 0) - dx * (landInv[0] ?? 0);
+    landOff[1] = (landOff[1] ?? 0) - dy * (landInv[1] ?? 0);
   }
 
   /** Seegang von 0 (spiegelglatt) bis 1. Kommt vom Server (Karten-Wetter). */
@@ -407,12 +753,20 @@ export class Ocean {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.mesh.removeFromParent();
     this.mesh.destroy();
     // Geometry und Shader hängen NICHT an den DestroyOptions des Containers —
     // ohne diese beiden Zeilen bleiben Buffer und Programm auf der GPU liegen.
     this.geometry.destroy(true);
     this.shader.destroy(true);
+    /*
+     * Das Abstandsfeld gehört dem Ozean: es ist zur Laufzeit gebaut und hängt an
+     * keinem Asset-Cache, der es sonst abräumen würde. ZULETZT freigeben, erst
+     * nach dem Shader — siehe die Warnung in `setIslands`.
+     */
+    this.field?.texture.destroy(true);
+    this.field = null;
   }
 }
 

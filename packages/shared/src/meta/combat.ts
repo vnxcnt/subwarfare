@@ -145,13 +145,17 @@ export const HULL_DIMENSIONS: Record<VesselModel, { length: number; beam: number
   destroyer03: { length: 140, beam: 25 },
   submarine03: { length: 110, beam: 13 },
   submarine04: { length: 110, beam: 13 },
+  // NPC auf der Überwasser-Basis: die Größe kommt wie bei den spielbaren
+  // Schiffen aus ships.size (Träger: 4 → 560 m).
+  carrier01: { length: 140, beam: 25 },
 };
 
 /**
  * Code-Default der Größenfaktoren (ships.size) — dieselben Zahlen wie der
  * Migrations-Seed; danach führt die DB (Admin-DB-Editor, greift mit
  * Dienst-Neustart). Basis 1 = fregatte01 (Überwasser) bzw. submarine01
- * (U-Boote). Modelle ohne Eintrag (NPCs) fahren 1.
+ * (U-Boote). Modelle ohne Eintrag (Alt-NPCs mit eigenen Basis-Maßen)
+ * fahren 1.
  */
 export const DEFAULT_SHIP_SIZES: Partial<Record<VesselModel, number>> = {
   fregatte01: 1,
@@ -163,6 +167,7 @@ export const DEFAULT_SHIP_SIZES: Partial<Record<VesselModel, number>> = {
   destroyer01: 1.3,
   destroyer02: 1.9,
   destroyer03: 1.5,
+  carrier01: 4,
 };
 
 /**

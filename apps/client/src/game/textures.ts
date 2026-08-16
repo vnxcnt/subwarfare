@@ -40,6 +40,8 @@ import buoyData from '../assets/vessels/buoy01/atlas.json';
 import buoyUrl from '../assets/vessels/buoy01/atlas.webp';
 import yachtgunData from '../assets/vessels/yachtgun01/atlas.json';
 import yachtgunUrl from '../assets/vessels/yachtgun01/atlas.webp';
+import carrierData from '../assets/vessels/carrier01/atlas.json';
+import carrierUrl from '../assets/vessels/carrier01/atlas.webp';
 
 /**
  * Richtungs-Atlanten aller Schiffsmodelle: je Modell EIN Bild mit 64 Frames
@@ -142,6 +144,15 @@ const DEFINITIONS: Record<string, ModelDefinition> = {
     url: submarine4Url,
     lengthMetres: HULL_DIMENSIONS.submarine04.length,
     sideProfilePx: 804,
+  },
+  // Träger-Atlas bewusst auf HALBER Render-Auflösung gebaut (Quellbilder +
+  // Metadaten-Anker halbiert): voll wären es 11570x8332 px — über dem
+  // 8192er-Texturlimit älterer GPUs und ~370 MB dekodiert.
+  carrier01: {
+    data: carrierData as unknown as SpritesheetData,
+    url: carrierUrl,
+    lengthMetres: HULL_DIMENSIONS.carrier01.length,
+    sideProfilePx: 758,
   },
   // Projektile: gleiche Atlas-Pipeline, nur kein fahrbares Schiff. Länge ist
   // Spielsichtbarkeit (echte Torpedos wären auf Kartenzoom unsichtbar klein).

@@ -2,9 +2,11 @@ import type {
   ArmorHitKind,
   ArmorState,
   ArmorStats,
+  Bounds,
   CrateState,
   ExitPoint,
   GameMap,
+  Island,
   PlayerId,
   ProjectileState,
   SpawnPoint,
@@ -21,13 +23,18 @@ import {
   DEPTH_CHARGE,
   GUN,
   SHIP_TYPE_SUBMARINE,
+  TELEGRAPH_STOP,
   TORPEDO,
   Vessel,
   aimSpreadDeg,
   armorHitCost,
+  capsuleHitsPolygon,
+  inBounds,
   norm360,
+  polygonBounds,
   salvoSpread,
   scaledHull,
+  segmentHitsPolygon,
   smokeLevelForHp,
   splitDamage,
   torusDelta,
@@ -86,6 +93,21 @@ interface ArmorSlot {
   stats: ArmorStats;
   /** Restintegrität in Prozent, 0..100. */
   integrity: number;
+}
+
+/**
+ * Eine Landmasse, wie die laufende Welt sie braucht: der Umriss aus der Karte
+ * plus seine EINMAL berechnete Hülle.
+ *
+ * Die Hülle ist kein Luxus, sondern die Bedingung dafür, dass Landkollision
+ * überhaupt in einen Tick passt: die Balearen haben zusammen 470 Stützpunkte,
+ * Mallorca allein 228. Jedes Fahrzeug und jedes Geschoss gegen jede dieser
+ * Kanten zu rechnen wäre pro Tick nicht zu bezahlen — der Hüllen-Test wirft
+ * praktisch alle Paare mit vier Vergleichen weg.
+ */
+interface Landmasse {
+  polygon: Island['polygon'];
+  bounds: Bounds;
 }
 
 /** Projektilart → Waffen-Kennung, für den Schaden aus der geladenen Sorte. */
@@ -153,6 +175,25 @@ export class World {
    * Kennung und Position, was drin ist, erfährt man beim Aufsammeln.
    */
   private readonly crates = new Map<string, { id: string; x: number; y: number; coins: number }>();
+  /**
+   * Landmassen dieser Karte, beim Kartenladen aufbereitet. Leer auf Karten
+   * ohne `islands` (ocean01) — dort kostet jede Landprüfung nur den Blick auf
+   * die Länge.
+   */
+  private readonly landmassen: readonly Landmasse[];
+  /**
+   * Wer gerade AUF GRUND liegt — also wessen letzter Schritt zurückgenommen
+   * wurde. Nur für die Schadensabrechnung: Auflaufen kostet EINMAL, nicht in
+   * jedem Tick, in dem das Fahrzeug noch am Strand klebt.
+   *
+   * Ohne diesen Merker wird das Ruder zur Todesfalle: ein aufgelaufenes Boot
+   * hat zwar Maschine stopp, dreht sich über `thrusterRate` aber weiter — und
+   * jede dieser Winzdrehungen ist eine NEUE Grundberührung mit eigener
+   * Rücknahme. Wer nach dem Auflaufen das Ruder legt (die naheliegendste
+   * Reaktion überhaupt), zahlte damit 10 % Rumpf je Sekunde und sank in einer
+   * knappen Minute, ohne sich einen Grad gedreht zu haben.
+   */
+  private readonly aufGrund = new Set<PlayerId>();
   private nextSpawnIndex = 0;
   private nextProjectileId = 1;
   private nextCrateId = 1;
@@ -167,6 +208,12 @@ export class World {
     private readonly ships: ShipCatalog,
   ) {
     this.map = map;
+    // Die Umrisse sind statisch, ihre Hüllen damit auch — einmal hier, nie
+    // wieder im Tick.
+    this.landmassen = (map.islands ?? []).map((insel) => ({
+      polygon: insel.polygon,
+      bounds: polygonBounds(insel.polygon),
+    }));
   }
 
   /**
@@ -250,6 +297,7 @@ export class World {
     this.armor.delete(id);
     this.weaponDamage.delete(id);
     this.profileOverrides.delete(id);
+    this.aufGrund.delete(id);
     return this.vessels.delete(id);
   }
 
@@ -641,7 +689,22 @@ export class World {
    * fx-Meldungen, Versenkungen und Respawns.
    */
   update(deltaSeconds: number): WorldEvents {
+    const events: WorldEvents = { impacts: [], destroyed: [] };
+    /** In DIESEM Schritt versenkt — ein Wrack fängt keinen zweiten Torpedo. */
+    const sunkThisStep = new Set<PlayerId>();
+    // Beide werden schon von der Grundberührung (Schritt 0a) und von
+    // `detonate` (Schritt 1) mitbefüllt — deshalb stehen sie ganz vorn.
+
+    // 0a) Fahren, einwrappen, und wer dabei auf Grund läuft, zahlt dafür.
     for (const vessel of this.vessels.values()) {
+      // Lage VOR dem Schritt — dorthin geht es bei Grundberührung zurück. Der
+      // KURS gehört dazu: der Rumpf ist eine längliche Kapsel, ein Boot kann
+      // sich auch bei stehender Maschine noch in die Küste hineindrehen
+      // (Querstrahlruder). Ohne den Kurs zurückzunehmen bliebe es in genau
+      // dieser Lage stecken und nähme jeden Tick weiter Schaden, bis es sinkt.
+      const vorX = vessel.x;
+      const vorY = vessel.y;
+      const vorKurs = vessel.rotation;
       vessel.simulate(deltaSeconds);
       // ENDLOS-KARTE: die frühere Randwand ist weg — wer über eine Kante
       // fährt, kommt auf der Gegenseite wieder herein. Der Wegpunkt (Bots)
@@ -655,13 +718,47 @@ export class World {
         vessel.waypoint.x += vessel.x - rohX;
         vessel.waypoint.y += vessel.y - rohY;
       }
-    }
 
-    const events: WorldEvents = { impacts: [], destroyed: [] };
-    /** In DIESEM Schritt versenkt — ein Wrack fängt keinen zweiten Torpedo. */
-    const sunkThisStep = new Set<PlayerId>();
-    // Beide werden von `detonate` (Schritt 1) mitbefüllt — deshalb stehen sie
-    // vor der Projektilschleife.
+      if (!this.touchesLand(vessel)) {
+        // Wieder frei: die nächste Grundberührung ist eine neue und kostet
+        // wieder. Der Merker darf NUR hier fallen — er hängt an der Lage, nicht
+        // an der Zeit.
+        this.aufGrund.delete(vessel.id);
+        continue;
+      }
+
+      /*
+       * GRUNDBERÜHRUNG. Der Schritt wird zurückgenommen — das Fahrzeug liegt
+       * wieder so, wie es vor `simulate` lag, und das war freies Wasser. Damit
+       * gilt durchgehend: kein Fahrzeug steht je auf Land. Genau davon lebt
+       * die Rücknahme, sie hat sonst kein Ziel, auf das sie zurücksetzen kann.
+       *
+       * Die Rücknahme allein reicht nicht: mit laufender Maschine liefe es im
+       * nächsten Tick sofort wieder auf und klebte unter Dauerschaden an der
+       * Küste, bis es sinkt. Deshalb auch Maschine stopp UND Wegpunkt weg —
+       * sonst hielte der Autopilot (Bots, Frachter) stur auf das Ziel hinter
+       * der Insel. Beide kommen von selbst wieder frei: sie befehlen ein neues
+       * Ziel, sobald keines mehr steht. Der Spieler setzt zurück (die
+       * Rückwärtsstufen bleiben ihm), dreht ab und fährt weiter.
+       *
+       * Der Schaden läuft über denselben Weg wie das Rammen — Auflaufen IST
+       * ein Zusammenstoß, nur eben mit der Küste, und die ist niemandes Kill
+       * (`killerId` null). Er fällt aber nur beim ERSTKONTAKT an (siehe
+       * `aufGrund`): die Rücknahme selbst läuft weiter in jedem Tick, sonst
+       * stünde das Boot am Ende doch an Land.
+       */
+      const erstkontakt = !this.aufGrund.has(vessel.id);
+      this.aufGrund.add(vessel.id);
+      vessel.x = vorX;
+      vessel.y = vorY;
+      vessel.rotation = vorKurs;
+      vessel.speed = 0;
+      vessel.setTelegraph(TELEGRAPH_STOP);
+      vessel.clearOrder();
+      if (erstkontakt) {
+        this.applyCollisionDamage(vessel, null, deltaSeconds, events, sunkThisStep);
+      }
+    }
 
     // 0b) Rammschaden: überlappende Rümpfe schleifen sich gegenseitig auf.
     this.applyCollisions(deltaSeconds, events, sunkThisStep);
@@ -669,19 +766,37 @@ export class World {
     // 1) Bewegen; Blindgänger (Laufstrecke erschöpft, weit hinterm Kartenrand)
     //    verschwinden lautlos. Die Wasserbombe ist die Ausnahme: bei
     //    erschöpfter Wurfweite bleibt sie liegen und zündet ihren Sinkzünder.
+    //    Danach endet, wer in diesem Schritt Land getroffen hat.
     for (const projectile of this.projectiles.values()) {
       const sinking = projectile.fuseSeconds !== null;
+      /*
+       * Strecke dieses Schritts für die Landprüfung. Anfang und Ende stehen
+       * beide UNGEWRAPPT: nur so beschreibt die Strecke die echte Bahn. Mit
+       * der eingewrappten Endposition spannte ein Geschoss, das gerade die
+       * Naht kreuzt, eine Strecke quer über die halbe Karte auf — und die
+       * führte mitten durch Inseln, an denen es nie vorbeikam.
+       */
+      const vonX = projectile.x;
+      const vonY = projectile.y;
+      let bisX = projectile.x;
+      let bisY = projectile.y;
       if (!sinking) {
         const step = projectile.speed * deltaSeconds;
         const heading = projectile.rotation * DEG;
+        bisX = projectile.x + Math.sin(heading) * step;
+        bisY = projectile.y - Math.cos(heading) * step;
         // Auch Munition fährt über die Naht — die Endlos-Karte kennt kein
         // „draußen" mehr; begrenzt wird nur noch über die Laufstrecke.
-        projectile.x = wrapCoord(projectile.x + Math.sin(heading) * step, this.map.width);
-        projectile.y = wrapCoord(projectile.y - Math.cos(heading) * step, this.map.height);
+        projectile.x = wrapCoord(bisX, this.map.width);
+        projectile.y = wrapCoord(bisY, this.map.height);
         projectile.travelled += step;
       }
 
       if (projectile.kind === 'depthcharge') {
+        // Die Wasserbombe wirkt UNTER Wasser: sie fliegt ihren kurzen Wurf,
+        // sinkt und zündet auf Zeit. Land ist für sie ohne Belang, solange
+        // sie über Wasser liegt — hier wird deshalb bewusst NICHT auf
+        // Landkontakt geprüft.
         if (!sinking) {
           // Wurf beendet: ab hier sinkt sie an Ort und Stelle.
           if (projectile.travelled >= projectile.rangeMetres) {
@@ -697,7 +812,19 @@ export class World {
         continue;
       }
 
-      if (projectile.travelled >= projectile.rangeMetres) this.projectiles.delete(projectile.id);
+      if (projectile.travelled >= projectile.rangeMetres) {
+        this.projectiles.delete(projectile.id);
+        continue;
+      }
+
+      // Küste getroffen: der Lauf endet dort. Torpedo und Granate detonieren
+      // dabei — derselbe Einschlag wie beim Aufschlag auf einen Rumpf, nur
+      // ohne Opfer. Der Täuschkörper strandet lautlos, genau wie am Ende
+      // seiner Laufstrecke: er zündet ja auch sonst nichts.
+      const land = this.landContact(vonX, vonY, bisX, bisY);
+      if (!land) continue;
+      this.projectiles.delete(projectile.id);
+      if (projectile.kind !== 'decoy') events.impacts.push(land);
     }
 
     // 2) Annäherungszündung VOR dem Rumpftreffer: der Täuschkörper soll den
@@ -849,7 +976,96 @@ export class World {
   }
 
   /**
-   * Rammschaden für EINE Seite des Paars, mit dem Tick skaliert.
+   * Steht der Rumpf dieses Fahrzeugs auf Land?
+   *
+   * Der Rumpf ist dieselbe KAPSEL wie in `hullsOverlap`: Strecke der Länge
+   * (length − beam) längs des Kurses, verdickt um beam/2. Damit läuft ein
+   * Zerstörer genau dort auf, wo ihn auch ein zweiter Zerstörer rammen würde —
+   * eine zweite Rumpfform wären zwei Wahrheiten über dasselbe Schiff.
+   *
+   * TORUS: gerechnet wird in der gewöhnlichen Ebene mit den eingewrappten
+   * Koordinaten, so wie es die Polygon-Mathematik verlangt. Eine Naht-Kopie des
+   * Rumpfes zu prüfen wäre falsch, und sie kann hier auch nicht entstehen: die
+   * Inseln liegen mit Kilometern Abstand zur Naht (ocean04: 4,9 km im Westen
+   * und Osten), die Hüllen-Vorprüfung wirft ein Fahrzeug an der Naht deshalb
+   * sicher aus.
+   */
+  private touchesLand(vessel: Vessel): boolean {
+    if (this.landmassen.length === 0) return false;
+
+    const dims = this.hull(vessel.model);
+    const heading = vessel.rotation * DEG;
+    const half = Math.max(dims.length / 2 - dims.beam / 2, 0);
+    const heckX = vessel.x - Math.sin(heading) * half;
+    const heckY = vessel.y + Math.cos(heading) * half;
+    const bugX = vessel.x + Math.sin(heading) * half;
+    const bugY = vessel.y - Math.cos(heading) * half;
+
+    for (const land of this.landmassen) {
+      // Weiter als eine halbe Rumpflänge von der Hülle weg reicht die Kapsel
+      // nicht — vier Vergleiche statt 228 Kanten.
+      if (!inBounds(land.bounds, vessel.x, vessel.y, dims.length / 2)) continue;
+      if (capsuleHitsPolygon(land.polygon, heckX, heckY, bugX, bugY, dims.beam / 2)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Erster Landkontakt auf der Strecke von→bis, oder `null`.
+   *
+   * Zwei Stufen: `segmentHitsPolygon` über die GANZE Strecke sagt, OB Land im
+   * Weg liegt (und deckt dabei auch die Strecke ab, die vollständig im Inneren
+   * verläuft). Erst wenn das anschlägt, wird die Stelle eingekreist — in
+   * denselben Unterproben, mit denen auch die Rumpftreffer abgetastet werden.
+   * Das ist die Mühe wert: das Geschoss soll an der KÜSTE detonieren, nicht
+   * dort, wo es am Tickende steht — und das kann tief im Inland sein.
+   *
+   * Die Strecke erwartet UNGEWRAPPTE Koordinaten (echte Bahn); dass dabei
+   * keine Naht-Kopie geprüft wird, sichert die Hüllen-Vorprüfung.
+   */
+  private landContact(
+    vonX: number,
+    vonY: number,
+    bisX: number,
+    bisY: number,
+  ): { x: number; y: number } | null {
+    if (this.landmassen.length === 0) return null;
+
+    const dx = bisX - vonX;
+    const dy = bisY - vonY;
+    const laenge = Math.hypot(dx, dy);
+
+    for (const land of this.landmassen) {
+      // Jeder Punkt der Strecke liegt je Achse höchstens eine halbe
+      // Streckenlänge von ihrer Mitte entfernt — greift die so erweiterte
+      // Hülle nicht, kann die Strecke das Polygon nicht berühren.
+      if (!inBounds(land.bounds, vonX + dx / 2, vonY + dy / 2, laenge / 2)) continue;
+      if (!segmentHitsPolygon(land.polygon, vonX, vonY, bisX, bisY)) continue;
+
+      // Wachsende Teilstücke ab dem Streckenanfang: das erste, das anschlägt,
+      // enthält die Küste. Zurück kommt sein ANFANG — der liegt noch auf
+      // Wasser und ist höchstens PROJECTILE_SAMPLE_SPACING davon entfernt.
+      const stufen = Math.max(1, Math.ceil(laenge / PROJECTILE_SAMPLE_SPACING));
+      for (let i = 1; i <= stufen; i += 1) {
+        const bis = i / stufen;
+        if (!segmentHitsPolygon(land.polygon, vonX, vonY, vonX + dx * bis, vonY + dy * bis)) {
+          continue;
+        }
+        const von = (i - 1) / stufen;
+        return { x: vonX + dx * von, y: vonY + dy * von };
+      }
+      // Unerreichbar, solange die Grobprüfung und die Teilstücke dieselbe
+      // Strecke meinen — der Vollständigkeit halber der Streckenanfang.
+      return { x: vonX, y: vonY };
+    }
+    return null;
+  }
+
+  /**
+   * Rammschaden für EINE Seite des Paars, mit dem Tick skaliert. Dieselbe
+   * Rechnung trägt die Grundberührung — Auflaufen soll sich anfühlen wie ein
+   * Zusammenstoß und nicht wie eine eigene Sonderregel. `killerId` ist dann
+   * `null`: die Küste versenkt niemanden, sie steht nur im Weg.
    *
    * Der Rumpf verliert COLLISION.hullFractionPerSecond seiner maximalen HP je
    * Sekunde; getragene Panzerung schluckt davon ihren Prozentsatz (dieselbe
@@ -862,7 +1078,7 @@ export class World {
    */
   private applyCollisionDamage(
     vessel: Vessel,
-    killerId: PlayerId,
+    killerId: PlayerId | null,
     deltaSeconds: number,
     events: WorldEvents,
     sunkThisStep: Set<PlayerId>,

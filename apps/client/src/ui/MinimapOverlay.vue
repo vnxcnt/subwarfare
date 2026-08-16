@@ -2,6 +2,7 @@
 import { torusDelta, wrapCoord } from '@subwarfare/shared';
 import { computed } from 'vue';
 import { GRID_CELL_METRES } from '../game/GridOverlay';
+import { currentIslands } from '../game/IslandField';
 import { currentMapInfo, hud } from '../state/hud';
 import { gridEnabled, minimapAlpha, setMinimapAlpha } from '../state/settings';
 
@@ -25,6 +26,23 @@ const eigene = computed(() => {
     kurs: hud.value.course,
   };
 });
+
+/**
+ * Landmassen als gefüllte Umrisse.
+ *
+ * KEINE Torus-Kopien: eine Insel darf die Naht nicht überqueren (Invariante in
+ * `Island`, vom Server beim Start geprüft), also liegt jede vollständig im
+ * gezeichneten Kartenquadrat. Genau daran unterscheidet sie sich von der
+ * Frachtroute, die als Schleife über die Kante läuft und deshalb zerlegt wird.
+ */
+const inseln = computed(() =>
+  karte.value
+    ? currentIslands().map((insel) => ({
+        id: insel.id,
+        punkte: insel.polygon.map((p) => `${p.x},${p.y}`).join(' '),
+      }))
+    : [],
+);
 
 /** Gitterlinien alle 5 km — Orientierung ohne Beschriftungslärm. */
 const gitter = computed(() => {
@@ -112,6 +130,13 @@ const emit = defineEmits<{ close: [] }>();
         preserveAspectRatio="xMidYMid meet"
       >
         <rect x="0" y="0" :width="karte.width" :height="karte.height" fill="#0a2233" />
+
+        <!-- Land: unter allem anderen, damit Gitter und Markierungen darüber
+             lesbar bleiben — wie auf einer Seekarte. -->
+        <g v-if="inseln.length" class="minimap__land">
+          <polygon v-for="insel in inseln" :key="insel.id" :points="insel.punkte" />
+        </g>
+
         <g stroke="#1c3d54" stroke-width="30">
           <line v-for="x in gitter" :key="`v${x}`" :x1="x" y1="0" :x2="x" :y2="karte.height" />
           <line v-for="y in gitter" :key="`h${y}`" x1="0" :y1="y" :x2="karte.width" :y2="y" />
@@ -261,6 +286,14 @@ const emit = defineEmits<{ close: [] }>();
   display: block;
   width: 100%;
   aspect-ratio: 1;
+}
+
+/* Ruhiges Khaki mit hellerer Uferlinie — Land, das sich vom Wasser abhebt,
+   ohne mit den Signalfarben der Extrakte und der eigenen Lage zu streiten. */
+.minimap__land polygon {
+  fill: #3b4630;
+  stroke: #61714b;
+  stroke-width: 45px;
 }
 
 .minimap__exitlabel {

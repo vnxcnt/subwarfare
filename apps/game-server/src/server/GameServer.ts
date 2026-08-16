@@ -52,7 +52,7 @@ interface Tube {
 }
 import { Server, type Socket } from 'socket.io';
 import { env } from '../env.js';
-import { ocean01, ocean01Weather } from '../maps/ocean01.js';
+import { mapById } from '../maps/index.js';
 import { AmmoCatalog } from '../sim/AmmoCatalog.js';
 import { ArmorCatalog } from '../sim/ArmorCatalog.js';
 import { Bots } from '../sim/Bots.js';
@@ -65,6 +65,17 @@ type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<stri
 
 /** Broadcasts pro Sekunde. Bewusst niedriger als der Simulationstakt. */
 const BROADCAST_HZ = 20;
+
+/**
+ * Karte und Wetterlage dieses Prozesses, gewählt über MAP_ID.
+ *
+ * Bewusst auf Modulebene und nicht im Feld: `world` und `weather` sind
+ * Feldinitialisierungen, und die laufen in Deklarationsreihenfolge — ein Feld,
+ * das die Karte hält, müsste zwingend über beiden stehen. Hier fällt die Wahl
+ * schon beim Laden des Moduls, und eine unbekannte MAP_ID bricht den Start ab,
+ * bevor überhaupt ein Server entsteht.
+ */
+const KARTE = mapById(env.mapId);
 
 /**
  * Hysterese der Ortung: erfasst wird bei `sensorRange`, verloren erst bei
@@ -86,12 +97,12 @@ export class GameServer {
   private readonly ships = new ShipCatalog();
   private readonly armor = new ArmorCatalog();
   private readonly ammoCatalog = new AmmoCatalog();
-  private readonly world = new World(ocean01, this.ships);
+  private readonly world = new World(KARTE.map, this.ships);
   /**
    * Wetterlage dieser Karte — Quelle für Seegang-Wirkung und Client-Optik.
    * Nicht `readonly`: das Entwicklermenü kann sie zur Laufzeit setzen.
    */
-  private weather: WeatherState = ocean01Weather;
+  private weather: WeatherState = KARTE.weather;
   /**
    * Wann die aktuelle Wetterlage gesetzt wurde (hrtime-Sekunden).
    *
@@ -179,9 +190,11 @@ export class GameServer {
 
     this.http = createServer((request, response) => this.handleHttp(request, response));
     this.io = new Server(this.http, {
-      // Fester Pfad, damit er hinter dem Reverse-Proxy eindeutig ist. Client
-      // und Server müssen hier zeichengenau übereinstimmen.
-      path: '/game/socket.io',
+      // Der Pfad macht diesen Prozess hinter dem Reverse-Proxy eindeutig — je
+      // Karte ein eigener (siehe env.socketPath). Client und Server müssen
+      // zeichengenau übereinstimmen; beim Client kommt der Pfad aus der
+      // Adresse im Ticket, hier aus der Umgebung.
+      path: env.socketPath,
       cors: { origin: env.corsOrigin, credentials: true },
       // Der Zustand ist ohnehin klein; Kompression kostet bei 20 Hz mehr als
       // sie spart.
@@ -195,8 +208,9 @@ export class GameServer {
 
     await new Promise<void>((resolve) => this.http!.listen(env.port, env.host, resolve));
     console.log(
-      `[game-server] hört auf ${env.host}:${env.port} — Karte "${this.world.map.id}", ` +
-        `${env.bots} Bots, ${Math.round(1 / SIM_STEP_SECONDS)} Ticks/s, Broadcast ${BROADCAST_HZ} Hz`,
+      `[game-server] hört auf ${env.host}:${env.port}${env.socketPath} — ` +
+        `Karte "${this.world.map.id}", ${env.bots} Bots, ` +
+        `${Math.round(1 / SIM_STEP_SECONDS)} Ticks/s, Broadcast ${BROADCAST_HZ} Hz`,
     );
 
     this.lastTickAt = process.hrtime.bigint();
